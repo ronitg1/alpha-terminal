@@ -29,7 +29,11 @@ from pathlib import Path
 from typing import Iterable
 
 from colorama import Fore, Style, init as colorama_init
+from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
+
+# Load .env BEFORE importing modules that read API keys at import time.
+load_dotenv()
 
 from src.config.portfolio_config import PORTFOLIO_SLEEVES, Sleeve
 from src.config.watchlist import get_watchlist
