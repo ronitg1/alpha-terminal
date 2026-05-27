@@ -75,7 +75,13 @@ FEOC_RULE_NOTES: dict[str, str] = {
 # ─── Output schema ───────────────────────────────────────────────────────────
 
 
-SubSector = Literal[
+# Canonical sub-sector vocabulary the prompt encourages, but the LLM is
+# allowed to invent new categories (e.g. 'nuclear', 'solar_inverter',
+# 'green_hydrogen') without failing schema validation. Earlier runs showed
+# the model legitimately wanted those values and the strict Literal made the
+# whole agent default to neutral. We keep the canonical list documented and
+# in the prompt; validation just accepts any non-empty string.
+CANONICAL_SUB_SECTORS: tuple[str, ...] = (
     "solar_manufacturing",
     "solar_developer",
     "residential_storage",
@@ -83,9 +89,11 @@ SubSector = Literal[
     "ev_charging",
     "grid_infrastructure",
     "utility_independent_power",
+    "nuclear",
+    "green_hydrogen",
     "vpp",
     "other",
-]
+)
 
 CreditStack = Literal["high", "medium", "low", "none", "unknown"]
 FEOCRisk = Literal["clean", "amber", "red", "unknown"]
@@ -103,7 +111,13 @@ class EnergyTransitionSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float = Field(..., ge=0, le=100)
 
-    sub_sector: SubSector
+    sub_sector: str = Field(
+        ...,
+        description=(
+            "Sub-sector classification. Prefer one of CANONICAL_SUB_SECTORS "
+            "but any short snake_case label is accepted."
+        ),
+    )
     ira_credit_stack: CreditStack = Field(
         ...,
         description="Strength of the company's IRA tax credit exposure (45X/48E/adders).",
