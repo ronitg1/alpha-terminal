@@ -11,6 +11,7 @@ import { SleevesProvider, useSleevesContext } from '@/contexts/sleeves-context';
 import { AlertCircle } from 'lucide-react';
 import { DashboardHeader } from './dashboard-header';
 import { HighConvictionStrip } from './high-conviction-strip';
+import { LiveActivityPanel } from './live-activity-panel';
 import { SleeveGrid } from './sleeve-grid';
 
 function SleevesContent() {
@@ -50,6 +51,7 @@ function SleevesContent() {
     <div className="h-full w-full flex flex-col bg-background">
       <DashboardHeader />
       <div className="flex-1 overflow-y-auto">
+        <LiveActivityPanel />
         <HighConvictionStrip />
         <SleeveGrid />
         {!latestScan && config && (

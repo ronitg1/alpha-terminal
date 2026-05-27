@@ -7,8 +7,13 @@ Phase 1 endpoints (read-only):
 * ``GET  /sleeves/scans/latest``  — parsed rows from the most recent scan.
 * ``GET  /sleeves/scans/{date}``  — parsed rows from a specific date.
 
-Phase 2/3 endpoints (``POST /sleeves/scan/run``, ``GET/PUT /sleeves/watchlist``)
-are intentionally not implemented here yet — they ship in follow-up phases.
+Phase 2 (live scan):
+
+* ``POST /sleeves/scan/run``      — kicks off a morning scan and streams
+  progress via Server-Sent Events. Event types: ``start``, ``progress``,
+  ``sleeve_complete``, ``complete``, ``error``.
+
+Phase 3 endpoints (``GET/PUT /sleeves/watchlist``) ship next.
 
 All scan CSVs are produced by ``src/run_morning_scan.py`` and live under
 ``outputs/YYYY-MM-DD_morning_scan.csv``. Each row carries an aggregated
@@ -17,16 +22,41 @@ parse back into a structured ``per_agent`` list for the UI.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
+import datetime
+import json
 import logging
 import re
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from dotenv import load_dotenv
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
+from app.backend.models.events import (
+    BaseEvent,
+    CompleteEvent,
+    ErrorEvent,
+    ProgressUpdateEvent,
+    StartEvent,
+)
 from src.config.portfolio_config import CASH_RESERVE_PCT, PORTFOLIO_SLEEVES
+from src.config.watchlist import get_watchlist
+from src.run_morning_scan import (
+    TickerRow,
+    aggregate_verdicts,
+    run_sleeve,
+    write_csv,
+)
+from src.utils.progress import progress
+
+# Load .env so agents can see DEEPSEEK_API_KEY etc. when invoked via the API.
+# Safe to call repeatedly; later loads don't override already-set values.
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -199,3 +229,242 @@ def _to_float(s: str | None, default: float) -> float:
 
 def _to_bool(s: str | None) -> bool:
     return (s or "").strip().lower() in {"true", "1", "yes"}
+
+
+# ─── /sleeves/scan/run (live SSE) ───────────────────────────────────────────
+
+
+class ScanRequest(BaseModel):
+    """Body for POST /sleeves/scan/run."""
+
+    sleeves: list[str] | None = Field(
+        default=None,
+        description="Sleeve names to run. None = all configured sleeves.",
+    )
+    tickers: list[str] | None = Field(
+        default=None,
+        description=(
+            "Filter each selected sleeve to its intersection with this list. "
+            "None = use each sleeve's full ticker list."
+        ),
+    )
+    include_watchlist: bool = Field(
+        default=False,
+        description="If true, opportunistic sleeve uses src/config/watchlist.py tickers.",
+    )
+    end_date: str | None = Field(
+        default=None, description="End date for data fetches (YYYY-MM-DD). Default: today."
+    )
+
+
+class SleeveCompleteEvent(BaseEvent):
+    """Emitted after one sleeve's rows are ready."""
+
+    type: str = "sleeve_complete"
+    sleeve: str
+    rows: list[dict[str, Any]]
+
+
+def _tickerrow_to_ui(r: TickerRow) -> dict[str, Any]:
+    """Mirror the CSV-derived row shape used by ``_row_to_ui``, but from the
+    in-memory dataclass. Keeping them aligned means the frontend has one
+    schema regardless of whether data came from disk or a live scan.
+    """
+    per_agent = [
+        {"agent": k, "signal": v.signal, "confidence": v.confidence}
+        for k, v in r.verdicts.items()
+    ]
+    return {
+        "ticker": r.ticker,
+        "sleeve": r.sleeve,
+        "consensus": r.consensus,
+        "weighted_score": r.weighted_score,
+        "avg_confidence": r.avg_confidence,
+        "highlight": r.highlight,
+        "position_type": r.position_type,
+        "hold_period": r.hold_period,
+        "has_variant_perception": r.has_variant_perception,
+        "variant_perception": r.variant_perception_text,
+        "per_agent": per_agent,
+    }
+
+
+def _resolve_selected_sleeves(req: ScanRequest) -> dict[str, dict[str, Any]]:
+    """Return ``{name: sleeve}`` for the sleeves we're going to run.
+
+    Applies sleeve filter, ticker filter, and watchlist override in a single
+    pass so the caller sees a uniform shape. Each sleeve dict is a fresh
+    copy — we never mutate the global PORTFOLIO_SLEEVES.
+    """
+    base = {
+        name: dict(sleeve)
+        for name, sleeve in PORTFOLIO_SLEEVES.items()
+        if (req.sleeves is None) or (name in req.sleeves)
+    }
+    if not base:
+        raise HTTPException(status_code=400, detail=f"No matching sleeves for {req.sleeves}.")
+
+    # Watchlist injection BEFORE ticker filtering, so a --tickers filter still
+    # excludes watchlist tickers it doesn't list.
+    if req.include_watchlist and "opportunistic" in base:
+        wl = get_watchlist()
+        base["opportunistic"] = {**base["opportunistic"], "tickers": wl}
+
+    if req.tickers:
+        wanted = {t.strip().upper() for t in req.tickers if t.strip()}
+        for name, sleeve in base.items():
+            base[name] = {
+                **sleeve,
+                "tickers": [t for t in sleeve["tickers"] if t.upper() in wanted],
+            }
+
+    return base
+
+
+@router.post(
+    "/scan/run",
+    responses={
+        200: {"description": "Streaming SSE response"},
+        400: {"description": "Invalid request"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def run_scan(req: ScanRequest, request: Request):
+    """Execute a morning scan, streaming progress + per-sleeve completion via SSE.
+
+    Events:
+
+    * ``start``           — fired immediately.
+    * ``progress``        — one per ``progress.update_status(agent, ticker, status)``
+                            call. Agent + ticker are present whenever the underlying
+                            agent reports them.
+    * ``sleeve_complete`` — fired after each sleeve finishes; payload has the
+                            sleeve name and its aggregated rows so the UI can
+                            update progressively.
+    * ``complete``        — final payload: all rows + CSV path.
+    * ``error``           — fatal failure during scan setup or aggregation. Per-agent
+                            failures are caught inside ``run_sleeve`` and never
+                            propagate to this event.
+    """
+    try:
+        selected = _resolve_selected_sleeves(req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Bad request: {exc}")
+
+    end_date = req.end_date or datetime.date.today().isoformat()
+
+    async def _detect_disconnect() -> bool:
+        try:
+            while True:
+                msg = await request.receive()
+                if msg["type"] == "http.disconnect":
+                    return True
+        except Exception:
+            return True
+
+    async def event_generator():
+        progress_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
+        scan_task: asyncio.Task | None = None
+        disconnect_task: asyncio.Task | None = None
+        all_rows: list[TickerRow] = []
+
+        # Progress handler matches the signature used by src/utils/progress.py:
+        #   handler(agent_name, ticker, status, analysis, timestamp)
+        # Called from worker thread when an agent invokes progress.update_status.
+        # asyncio.Queue.put_nowait is safe enough here (CPython deque append is
+        # atomic and we have one producer / one consumer). The same pattern is
+        # used by hedge_fund.py — keeping it consistent.
+        def progress_handler(agent_name, ticker, status, analysis, timestamp):
+            progress_queue.put_nowait(
+                ProgressUpdateEvent(
+                    agent=agent_name,
+                    ticker=ticker,
+                    status=status,
+                    timestamp=timestamp,
+                    analysis=analysis,
+                )
+            )
+
+        async def _run_all() -> list[TickerRow]:
+            """Run every selected sleeve sequentially. Each sleeve runs in a
+            worker thread so the event loop stays responsive for SSE."""
+            out: list[TickerRow] = []
+            for name, sleeve in selected.items():
+                if not sleeve["tickers"]:
+                    logger.info("Skipping sleeve '%s' — no tickers after filtering.", name)
+                    continue
+                rows: list[TickerRow] = await asyncio.to_thread(
+                    run_sleeve, name, sleeve, end_date, show_reasoning=False
+                )
+                out.extend(rows)
+                # Emit per-sleeve completion so the UI fills in as we go.
+                progress_queue.put_nowait(
+                    SleeveCompleteEvent(
+                        sleeve=name,
+                        rows=[_tickerrow_to_ui(r) for r in rows],
+                    )
+                )
+            return out
+
+        progress.register_handler(progress_handler)
+        try:
+            scan_task = asyncio.create_task(_run_all())
+            disconnect_task = asyncio.create_task(_detect_disconnect())
+
+            yield StartEvent().to_sse()
+
+            while not scan_task.done():
+                if disconnect_task.done():
+                    logger.info("Client disconnected, cancelling scan")
+                    scan_task.cancel()
+                    return
+
+                try:
+                    event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    yield event.to_sse()
+                except asyncio.TimeoutError:
+                    continue
+
+            # Drain any queued events the scan emitted between the last poll
+            # and task completion (sleeve_complete commonly lands here).
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait().to_sse()
+
+            try:
+                all_rows = await scan_task
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.exception("Scan failed")
+                yield ErrorEvent(message=f"Scan failed: {exc}").to_sse()
+                return
+
+            # Persist + emit final payload.
+            try:
+                csv_path = write_csv(all_rows, Path("outputs"), end_date)
+                csv_path_str = str(csv_path).replace("\\", "/")
+            except Exception as exc:
+                logger.exception("Failed to write CSV")
+                csv_path_str = ""
+
+            yield CompleteEvent(
+                data={
+                    "date": end_date,
+                    "row_count": len(all_rows),
+                    "rows": [_tickerrow_to_ui(r) for r in all_rows],
+                    "csv_path": csv_path_str,
+                }
+            ).to_sse()
+
+        except asyncio.CancelledError:
+            return
+        finally:
+            progress.unregister_handler(progress_handler)
+            if scan_task and not scan_task.done():
+                scan_task.cancel()
+            if disconnect_task and not disconnect_task.done():
+                disconnect_task.cancel()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -1,26 +1,37 @@
 /**
  * DashboardHeader — top strip of the Sleeves tab.
  *
- * Phase 1: scan timestamp + a disabled "Run Scan" button (live triggering
- * lands in Phase 2). Refresh button re-fetches the latest scan + config.
+ * Refresh button re-fetches the latest scan + config.
+ * Run Scan kicks off a live scan via SSE; while running it morphs into a
+ * Stop button. Counter shows live tickers complete during a scan.
  */
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { useSleevesContext } from '@/contexts/sleeves-context';
-import { Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw, Square } from 'lucide-react';
 
 function formatDate(iso: string | undefined | null): string {
   if (!iso) return 'no scan yet';
-  return iso; // YYYY-MM-DD is already legible; localize in Phase 4.
+  return iso;
 }
 
 export function DashboardHeader() {
-  const { latestScan, scanStatus, refresh } = useSleevesContext();
+  const { latestScan, scanStatus, refresh, runScan, stopScan, liveActivity } =
+    useSleevesContext();
 
   const rowCount = latestScan?.row_count ?? 0;
   const isLoading = scanStatus === 'loading';
+  const isRunning = scanStatus === 'running';
+
+  const handleRunScan = () => {
+    // Default to re-scanning whatever tickers were in the last scan so the
+    // run completes quickly during dev/iteration. Falls back to all sleeves
+    // when no prior scan exists.
+    const tickers = latestScan?.rows.map((r) => r.ticker);
+    void runScan({ tickers: tickers && tickers.length > 0 ? tickers : undefined });
+  };
 
   return (
     <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-border bg-background">
@@ -30,9 +41,14 @@ export function DashboardHeader() {
         <span className="text-sm text-muted-foreground">
           Morning scan · <span className="font-mono">{formatDate(latestScan?.date)}</span>
         </span>
-        {rowCount > 0 && (
+        {rowCount > 0 && !isRunning && (
           <Badge variant="secondary" className="font-mono">
             {rowCount} {rowCount === 1 ? 'row' : 'rows'}
+          </Badge>
+        )}
+        {isRunning && (
+          <Badge variant="secondary" className="font-mono animate-pulse">
+            running · {liveActivity.length} events
           </Badge>
         )}
       </div>
@@ -42,21 +58,22 @@ export function DashboardHeader() {
           variant="outline"
           size="sm"
           onClick={() => void refresh()}
-          disabled={isLoading}
+          disabled={isLoading || isRunning}
         >
           <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
-        {/* Phase 2 wires live scan triggering. Keeping the button visible but
-            disabled now sets user expectations without surprising them. */}
-        <Button
-          size="sm"
-          disabled
-          title="Coming in Phase 2 — for now run `poetry run python -m src.run_morning_scan` from the CLI"
-        >
-          <Play className="h-4 w-4 mr-2" />
-          Run Scan
-        </Button>
+        {isRunning ? (
+          <Button size="sm" variant="destructive" onClick={() => stopScan()}>
+            <Square className="h-4 w-4 mr-2 fill-current" />
+            Stop
+          </Button>
+        ) : (
+          <Button size="sm" onClick={handleRunScan}>
+            <Play className="h-4 w-4 mr-2 fill-current" />
+            Run Scan
+          </Button>
+        )}
       </div>
     </div>
   );
