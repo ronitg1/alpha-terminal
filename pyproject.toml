@@ -60,3 +60,11 @@ force_alphabetical_sort_within_sections = true
 
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"
+
+[tool.pytest.ini_options]
+# Put the project root on sys.path so tests can `import src...` without a
+# conftest hack. Limit collection to tests we maintain — upstream's
+# v2/event_study has a separately-pathed test file that pytest would
+# otherwise scoop up.
+pythonpath = ["."]
+testpaths = ["tests"]

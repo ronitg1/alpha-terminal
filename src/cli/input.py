@@ -25,9 +25,27 @@ def add_common_args(
         "--ticker",
         dest="tickers",
         type=str,
-        required=require_tickers,
+        # When --watchlist or --sleeve is supplied, tickers are pulled from
+        # config rather than the CLI, so the requirement is relaxed below
+        # in parse_cli_inputs.
+        required=False,
         help="Comma-separated list of stock ticker symbols (e.g., AAPL,MSFT,GOOGL)",
     )
+    parser.add_argument(
+        "--watchlist",
+        action="store_true",
+        help="Source tickers from src/config/watchlist.py (overrides --tickers).",
+    )
+    parser.add_argument(
+        "--sleeve",
+        dest="sleeve",
+        type=str,
+        help="Source tickers from a named portfolio sleeve in src/config/portfolio_config.py.",
+    )
+    # Stash whether --tickers was syntactically required for the calling entry
+    # point so parse_cli_inputs can enforce it only when no alternate ticker
+    # source (--watchlist / --sleeve) was given.
+    parser.set_defaults(_tickers_required=require_tickers)
     if include_analyst_flags:
         parser.add_argument(
             "--analysts",
@@ -264,8 +282,28 @@ def parse_cli_inputs(
 
     args = parser.parse_args()
 
-    # Normalize parsed values
+    # Resolve tickers from --tickers / --watchlist / --sleeve. Precedence:
+    #   1. explicit --tickers
+    #   2. --watchlist (src/config/watchlist.py)
+    #   3. --sleeve <name>
     tickers = parse_tickers(getattr(args, "tickers", None))
+    if not tickers and getattr(args, "watchlist", False):
+        from src.config.watchlist import get_watchlist
+        tickers = get_watchlist()
+        if not tickers:
+            print(f"{Fore.RED}--watchlist passed but src/config/watchlist.py is empty.{Style.RESET_ALL}")
+            sys.exit(1)
+    if not tickers and getattr(args, "sleeve", None):
+        from src.config.portfolio_config import PORTFOLIO_SLEEVES
+        sleeve = PORTFOLIO_SLEEVES.get(args.sleeve)
+        if sleeve is None:
+            print(f"{Fore.RED}Unknown sleeve '{args.sleeve}'.{Style.RESET_ALL}")
+            sys.exit(1)
+        tickers = list(sleeve["tickers"])
+    if not tickers and getattr(args, "_tickers_required", False):
+        print(f"{Fore.RED}One of --tickers, --watchlist, or --sleeve is required.{Style.RESET_ALL}")
+        sys.exit(1)
+
     selected_analysts = select_analysts({
         "analysts_all": getattr(args, "analysts_all", False),
         "analysts": getattr(args, "analysts", None),

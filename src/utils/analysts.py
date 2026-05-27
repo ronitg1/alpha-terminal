@@ -1,11 +1,14 @@
 """Constants and utilities related to analysts configuration."""
 
 from src.agents import portfolio_manager
+from src.agents.alpha_seeker import alpha_seeker_agent
 from src.agents.aswath_damodaran import aswath_damodaran_agent
 from src.agents.ben_graham import ben_graham_agent
 from src.agents.bill_ackman import bill_ackman_agent
 from src.agents.cathie_wood import cathie_wood_agent
 from src.agents.charlie_munger import charlie_munger_agent
+from src.agents.emerging_tech import emerging_tech_agent
+from src.agents.energy_transition import energy_transition_agent
 from src.agents.fundamentals import fundamentals_analyst_agent
 from src.agents.michael_burry import michael_burry_agent
 from src.agents.phil_fisher import phil_fisher_agent
@@ -174,6 +177,31 @@ ANALYST_CONFIG = {
         "agent_func": valuation_analyst_agent,
         "type": "analyst",
         "order": 18,
+    },
+    # ─── rg-alpha-engine custom agents ──────────────────────────────────────
+    "alpha_seeker": {
+        "display_name": "Alpha Seeker",
+        "description": "Multi-strategy alpha generator",
+        "investing_style": "Variant perception or skip — multi-strategy alpha across any sector with explicit catalyst, position, and kill-switch discipline.",
+        "agent_func": alpha_seeker_agent,
+        "type": "analyst",
+        "order": 19,
+    },
+    "energy_transition": {
+        "display_name": "Energy Transition",
+        "description": "IRA / FEOC sector specialist",
+        "investing_style": "Scores US clean-energy names against the IRA tax-credit stack (45X / 48E / adders) and FEOC compliance (Notice 2026-15).",
+        "agent_func": energy_transition_agent,
+        "type": "analyst",
+        "order": 20,
+    },
+    "emerging_tech": {
+        "display_name": "Emerging Tech",
+        "description": "AI infra / semis / quantum / defense / biotech / fintech",
+        "investing_style": "Crossover-fund analyst — scores moat durability, S-curve position, AI exposure, and valuation across the emerging-tech complex.",
+        "agent_func": emerging_tech_agent,
+        "type": "analyst",
+        "order": 21,
     },
 }
 
