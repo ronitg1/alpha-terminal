@@ -12,7 +12,7 @@
  */
 
 import { sleevesApi } from '@/services/sleeves-api';
-import { ScanSummary, SleevesConfig, TickerRow } from '@/types/sleeves';
+import { ScanSummary, SleevesConfig, TickerRow, WatchlistEntry } from '@/types/sleeves';
 import {
   createContext,
   ReactNode,
@@ -54,6 +54,11 @@ interface SleevesContextType {
   runScan: (opts?: RunScanOptions) => Promise<void>;
   stopScan: () => void;
   clearActivity: () => void;
+
+  // Watchlist
+  watchlist: WatchlistEntry[];
+  loadWatchlist: () => Promise<void>;
+  saveWatchlist: (entries: WatchlistEntry[]) => Promise<void>;
 }
 
 const SleevesContext = createContext<SleevesContextType | null>(null);
@@ -78,6 +83,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   const [scanError, setScanError] = useState<string | null>(null);
   const [liveActivity, setLiveActivity] = useState<ActivityEvent[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
 
   // Used to abort an in-flight SSE stream when the user clicks Stop or
   // unmounts. Stored in a ref so the abort doesn't trigger re-renders.
@@ -108,9 +114,24 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loadWatchlist = useCallback(async () => {
+    try {
+      const { entries } = await sleevesApi.getWatchlist();
+      setWatchlist(entries);
+    } catch (err) {
+      console.error('loadWatchlist failed:', err);
+    }
+  }, []);
+
+  const saveWatchlist = useCallback(async (entries: WatchlistEntry[]) => {
+    const { entries: persisted } = await sleevesApi.putWatchlist(entries);
+    setWatchlist(persisted);
+  }, []);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void loadWatchlist();
+  }, [refresh, loadWatchlist]);
 
   const clearActivity = useCallback(() => {
     setLiveActivity([]);
@@ -277,6 +298,9 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     runScan,
     stopScan,
     clearActivity,
+    watchlist,
+    loadWatchlist,
+    saveWatchlist,
   };
 
   return <SleevesContext.Provider value={value}>{children}</SleevesContext.Provider>;

@@ -7,6 +7,7 @@
  */
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -19,8 +20,10 @@ import {
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { cn } from '@/lib/utils';
 import { SleeveConfig, TickerRow } from '@/types/sleeves';
-import { Sparkles } from 'lucide-react';
+import { Pencil, Sparkles } from 'lucide-react';
+import { useState } from 'react';
 import { SignalPill } from './signal-pill';
+import { WatchlistEditor } from './watchlist-editor';
 
 interface SleeveCardProps {
   sleeve: SleeveConfig;
@@ -57,7 +60,9 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 export function SleeveCard({ sleeve }: SleeveCardProps) {
-  const { latestScan, selectTicker, selectedTicker } = useSleevesContext();
+  const { latestScan, selectTicker, selectedTicker, watchlist } = useSleevesContext();
+  const [watchlistOpen, setWatchlistOpen] = useState(false);
+  const isOpportunistic = sleeve.name === 'opportunistic';
 
   // Rows scoped to this sleeve. Filter from the flat latestScan list.
   const rowsBySleeve: TickerRow[] = (latestScan?.rows ?? []).filter(
@@ -65,15 +70,34 @@ export function SleeveCard({ sleeve }: SleeveCardProps) {
   );
   const rowsByTicker = new Map(rowsBySleeve.map((r) => [r.ticker, r]));
 
-  // Show all configured tickers, even if absent from the latest scan, so the
-  // user can see the full sleeve membership at a glance.
-  const tickers = sleeve.tickers.length > 0 ? sleeve.tickers : Array.from(rowsByTicker.keys());
+  // For the opportunistic sleeve, surface the watchlist as the ticker set
+  // even before a scan touches them — that way the user can see what
+  // they've queued up without having to click into the editor.
+  let tickers: string[];
+  if (isOpportunistic) {
+    tickers = watchlist.map((e) => e.ticker);
+  } else {
+    tickers = sleeve.tickers.length > 0 ? sleeve.tickers : Array.from(rowsByTicker.keys());
+  }
 
   return (
     <Card className="flex flex-col overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-baseline justify-between gap-2">
-          <CardTitle className="text-base">{sleeveDisplayName(sleeve.name)}</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            {sleeveDisplayName(sleeve.name)}
+            {isOpportunistic && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => setWatchlistOpen(true)}
+              >
+                <Pencil className="h-3 w-3 mr-1" />
+                Edit watchlist
+              </Button>
+            )}
+          </CardTitle>
           <span className="text-xs font-mono text-muted-foreground">
             {sleeve.allocation_pct.toFixed(0)}%
           </span>
@@ -93,9 +117,20 @@ export function SleeveCard({ sleeve }: SleeveCardProps) {
       <CardContent className="p-0 flex-1 overflow-auto">
         {tickers.length === 0 ? (
           <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No tickers in this sleeve.{' '}
-            {sleeve.name === 'opportunistic' && (
-              <>Add tickers via the watchlist (coming in Phase 3).</>
+            {isOpportunistic ? (
+              <>
+                No tickers in your watchlist.{' '}
+                <Button
+                  variant="link"
+                  className="text-sm p-0 h-auto"
+                  onClick={() => setWatchlistOpen(true)}
+                >
+                  Add some
+                </Button>
+                .
+              </>
+            ) : (
+              <>No tickers in this sleeve.</>
             )}
           </div>
         ) : (
@@ -153,6 +188,9 @@ export function SleeveCard({ sleeve }: SleeveCardProps) {
           </Table>
         )}
       </CardContent>
+      {isOpportunistic && (
+        <WatchlistEditor open={watchlistOpen} onOpenChange={setWatchlistOpen} />
+      )}
     </Card>
   );
 }

@@ -58,3 +58,8 @@ export interface ScanListItem {
   path: string;
   size_bytes: number;
 }
+
+export interface WatchlistEntry {
+  ticker: string;
+  comment: string;
+}

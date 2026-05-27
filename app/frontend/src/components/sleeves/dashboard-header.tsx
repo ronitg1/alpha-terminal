@@ -18,19 +18,25 @@ function formatDate(iso: string | undefined | null): string {
 }
 
 export function DashboardHeader() {
-  const { latestScan, scanStatus, refresh, runScan, stopScan, liveActivity } =
+  const { latestScan, scanStatus, refresh, runScan, stopScan, liveActivity, watchlist } =
     useSleevesContext();
 
   const rowCount = latestScan?.row_count ?? 0;
   const isLoading = scanStatus === 'loading';
   const isRunning = scanStatus === 'running';
+  const hasWatchlist = watchlist.length > 0;
 
   const handleRunScan = () => {
     // Default to re-scanning whatever tickers were in the last scan so the
     // run completes quickly during dev/iteration. Falls back to all sleeves
     // when no prior scan exists.
-    const tickers = latestScan?.rows.map((r) => r.ticker);
-    void runScan({ tickers: tickers && tickers.length > 0 ? tickers : undefined });
+    const priorTickers = latestScan?.rows.map((r) => r.ticker);
+    // Always include the watchlist when it has entries — running a scan
+    // without the user's queued candidates would be confusing.
+    void runScan({
+      tickers: priorTickers && priorTickers.length > 0 ? priorTickers : undefined,
+      includeWatchlist: hasWatchlist,
+    });
   };
 
   return (
@@ -69,7 +75,15 @@ export function DashboardHeader() {
             Stop
           </Button>
         ) : (
-          <Button size="sm" onClick={handleRunScan}>
+          <Button
+            size="sm"
+            onClick={handleRunScan}
+            title={
+              hasWatchlist
+                ? `Will include ${watchlist.length} watchlist ticker${watchlist.length === 1 ? '' : 's'}.`
+                : 'Run morning scan against the current ticker set.'
+            }
+          >
             <Play className="h-4 w-4 mr-2 fill-current" />
             Run Scan
           </Button>

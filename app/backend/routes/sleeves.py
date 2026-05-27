@@ -44,6 +44,10 @@ from app.backend.models.events import (
     ProgressUpdateEvent,
     StartEvent,
 )
+from app.backend.services.watchlist_service import (
+    read_watchlist_with_comments,
+    write_watchlist,
+)
 from src.config.portfolio_config import CASH_RESERVE_PCT, PORTFOLIO_SLEEVES
 from src.config.watchlist import get_watchlist
 from src.run_morning_scan import (
@@ -479,3 +483,34 @@ async def run_scan(req: ScanRequest, request: Request):
                 disconnect_task.cancel()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ─── /sleeves/watchlist (read + write) ──────────────────────────────────────
+
+
+class WatchlistEntry(BaseModel):
+    """One ticker, with optional free-text comment."""
+
+    ticker: str
+    comment: str = ""
+
+
+class WatchlistPayload(BaseModel):
+    entries: list[WatchlistEntry]
+
+
+@router.get("/watchlist")
+async def get_watchlist_endpoint() -> dict[str, Any]:
+    """Return the current watchlist with per-ticker comments."""
+    return {"entries": read_watchlist_with_comments()}
+
+
+@router.put("/watchlist")
+async def put_watchlist_endpoint(payload: WatchlistPayload) -> dict[str, Any]:
+    """Replace the watchlist. Atomic write, then reload the module.
+
+    Validation lives in ``watchlist_service.write_watchlist`` — bad tickers
+    raise ``HTTPException(400)``.
+    """
+    persisted = write_watchlist([e.model_dump() for e in payload.entries])
+    return {"entries": persisted}
