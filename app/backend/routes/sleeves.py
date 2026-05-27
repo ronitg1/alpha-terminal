@@ -267,11 +267,22 @@ class SleeveCompleteEvent(BaseEvent):
 
 def _tickerrow_to_ui(r: TickerRow) -> dict[str, Any]:
     """Mirror the CSV-derived row shape used by ``_row_to_ui``, but from the
-    in-memory dataclass. Keeping them aligned means the frontend has one
-    schema regardless of whether data came from disk or a live scan.
+    in-memory dataclass.
+
+    Includes each agent's raw output dict (variant_perception, catalysts,
+    kill_switch, IRA/FEOC fields, etc.) so the UI can render the drill
+    drawer without re-fetching. The CSV-only path loses this — that's
+    documented and the drawer falls back to showing the basic fields.
     """
     per_agent = [
-        {"agent": k, "signal": v.signal, "confidence": v.confidence}
+        {
+            "agent": k,
+            "signal": v.signal,
+            "confidence": v.confidence,
+            # raw is the full agent output dict (rich fields). Empty {} for
+            # agents that didn't carry one.
+            "raw": v.raw if isinstance(v.raw, dict) else {},
+        }
         for k, v in r.verdicts.items()
     ]
     return {

@@ -13,6 +13,10 @@ export interface PerAgentVerdict {
   agent: string;
   signal: Signal;
   confidence: number; // 0-100
+  /** Full agent output dict (variant_perception, catalysts, kill_switch,
+   *  ira_credit_stack, feoc_risk, s_curve_position, etc). Present on rows
+   *  from live scans; empty {} on rows hydrated from CSV (Phase 1 history). */
+  raw?: Record<string, unknown>;
 }
 
 export interface TickerRow {

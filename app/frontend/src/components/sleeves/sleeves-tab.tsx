@@ -13,6 +13,7 @@ import { DashboardHeader } from './dashboard-header';
 import { HighConvictionStrip } from './high-conviction-strip';
 import { LiveActivityPanel } from './live-activity-panel';
 import { SleeveGrid } from './sleeve-grid';
+import { TickerDrillDrawer } from './ticker-drill-drawer';
 
 function SleevesContent() {
   const { scanStatus, scanError, latestScan, config } = useSleevesContext();
@@ -68,6 +69,7 @@ function SleevesContent() {
           </div>
         )}
       </div>
+      <TickerDrillDrawer />
     </div>
   );
 }
