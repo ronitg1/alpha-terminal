@@ -12,14 +12,28 @@ import { cn } from '@/lib/utils';
 import { SidebarStorageService } from '@/services/sidebar-storage';
 import { TabService } from '@/services/tab-service';
 import { ReactFlowProvider } from '@xyflow/react';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { TopBar } from './layout/top-bar';
 
 // Create a LayoutContent component to access the FlowContext, TabsContext, and LayoutContext
 function LayoutContent({ children }: { children: ReactNode }) {
   const { reactFlowInstance } = useFlowContext();
-  const { openTab } = useTabsContext();
+  const { openTab, tabs } = useTabsContext();
   const { isBottomCollapsed, expandBottomPanel, collapseBottomPanel, toggleBottomPanel } = useLayoutContext();
+
+  // Auto-open the Sleeves dashboard tab on first load. The TabsProvider's
+  // restoration effect runs slightly after this one — if it restores prior
+  // tabs from localStorage, its setTabs() overrides our openTab here, so
+  // returning users keep the tabs they had open. Fresh users land directly
+  // on the dashboard rather than the empty "Welcome" screen.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (tabs.length === 0) {
+      openTab(TabService.createSleevesTab());
+    }
+    autoOpenedRef.current = true;
+  }, [tabs, openTab]);
   
   // Initialize sidebar states from storage service
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(() => 

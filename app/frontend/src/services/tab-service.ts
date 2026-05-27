@@ -1,10 +1,11 @@
 import { Settings } from '@/components/settings/settings';
+import { SleevesTab } from '@/components/sleeves/sleeves-tab';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings';
+  type: 'flow' | 'settings' | 'sleeves';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -18,10 +19,13 @@ export class TabService {
           throw new Error('Flow tab requires flow data');
         }
         return createElement(FlowTabContent, { flow: tabData.flow });
-      
+
       case 'settings':
         return createElement(Settings);
-      
+
+      case 'sleeves':
+        return createElement(SleevesTab);
+
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
     }
@@ -44,6 +48,14 @@ export class TabService {
     };
   }
 
+  static createSleevesTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'sleeves',
+      title: 'Sleeves',
+      content: TabService.createTabContent({ type: 'sleeves', title: 'Sleeves' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -57,10 +69,13 @@ export class TabService {
           throw new Error('Flow tab requires flow data for restoration');
         }
         return TabService.createFlowTab(savedTab.flow);
-      
+
       case 'settings':
         return TabService.createSettingsTab();
-      
+
+      case 'sleeves':
+        return TabService.createSleevesTab();
+
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);
     }
