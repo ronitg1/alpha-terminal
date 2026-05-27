@@ -328,6 +328,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Limit the scan to one or more sleeves (default: all).",
     )
     p.add_argument(
+        "--tickers",
+        type=str,
+        help=(
+            "Comma-separated tickers. Filters each sleeve to its intersection with "
+            "this list. Tickers not in any sleeve are dropped with a warning."
+        ),
+    )
+    p.add_argument(
         "--end-date",
         default=datetime.date.today().isoformat(),
         help="End date for data fetches (YYYY-MM-DD). Default: today.",
@@ -348,6 +356,36 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory to write the CSV (default: ./outputs).",
     )
     return p.parse_args(argv)
+
+
+def _apply_ticker_filter(
+    selected: dict[str, Sleeve],
+    ticker_filter: list[str] | None,
+) -> dict[str, Sleeve]:
+    """Filter each sleeve's tickers down to the intersection with ``ticker_filter``.
+
+    Returns a fresh dict so we don't mutate the global PORTFOLIO_SLEEVES.
+    Logs any tickers in ``ticker_filter`` that don't appear in any selected sleeve.
+    """
+    if not ticker_filter:
+        return selected
+    wanted = {t.strip().upper() for t in ticker_filter if t.strip()}
+    seen: set[str] = set()
+    out: dict[str, Sleeve] = {}
+    for name, sleeve in selected.items():
+        kept = [t for t in sleeve["tickers"] if t.upper() in wanted]
+        seen.update(t.upper() for t in kept)
+        # Always keep the sleeve entry — even if empty — so the scan reports
+        # accurately (no sleeve silently disappears).
+        new_sleeve = dict(sleeve)
+        new_sleeve["tickers"] = kept
+        out[name] = new_sleeve  # type: ignore[assignment]
+    missing = sorted(wanted - seen)
+    if missing:
+        logger.warning(
+            "--tickers requested but not in any selected sleeve: %s", ", ".join(missing)
+        )
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -373,6 +411,11 @@ def main(argv: list[str] | None = None) -> int:
             selected["opportunistic"] = opp  # type: ignore[assignment]
         else:
             logger.warning("--watchlist passed but src/config/watchlist.py is empty.")
+
+    # --tickers filter (applied AFTER --watchlist so users can intersect both).
+    if args.tickers:
+        ticker_list = [t.strip() for t in args.tickers.split(",") if t.strip()]
+        selected = _apply_ticker_filter(selected, ticker_list)
 
     all_rows: list[TickerRow] = []
     for sleeve_name, sleeve in selected.items():

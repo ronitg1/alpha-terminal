@@ -36,10 +36,11 @@ def main() -> int:
     ticker = "NVDA"
     end_date = datetime.date.today().isoformat()
 
+    provider = os.environ.get("DATA_PROVIDER", "auto")
     print(f"=== NVDA smoke test ({end_date}) ===")
     print("agent: alpha_seeker")
     print("LLM:   deepseek-reasoner (R1)")
-    print("data:  Massive (Polygon)")
+    print(f"data:  {provider}")
     print()
 
     state = {

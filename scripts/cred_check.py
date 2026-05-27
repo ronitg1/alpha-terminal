@@ -22,7 +22,7 @@ load_dotenv()
 
 
 def check_massive() -> bool:
-    print("=== Cred check 1/2: Massive (NVDA ticker details) ===")
+    print("=== Massive (NVDA ticker details) ===")
     try:
         from src.tools.massive import MassiveClient
 
@@ -37,12 +37,42 @@ def check_massive() -> bool:
         return True
     except Exception as exc:
         print(f"  FAIL  {type(exc).__name__}: {exc}")
-        traceback.print_exc()
+        return False
+
+
+def check_fds() -> bool:
+    """Hit the financialdatasets.ai prices endpoint for a 1-day NVDA bar."""
+    print("=== financialdatasets.ai (NVDA 1-day price) ===")
+    try:
+        import os
+
+        import requests
+
+        key = os.environ.get("FINANCIAL_DATASETS_API_KEY", "")
+        if not key:
+            print("  SKIP  FINANCIAL_DATASETS_API_KEY not set")
+            return True
+        headers = {"X-API-KEY": key}
+        url = (
+            "https://api.financialdatasets.ai/prices/"
+            "?ticker=NVDA&interval=day&interval_multiplier=1"
+            "&start_date=2026-05-20&end_date=2026-05-26"
+        )
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            print(f"  FAIL  status={resp.status_code} body={resp.text[:200]}")
+            return False
+        data = resp.json()
+        n = len(data.get("prices") or [])
+        print(f"  OK  returned {n} daily bars")
+        return True
+    except Exception as exc:
+        print(f"  FAIL  {type(exc).__name__}: {exc}")
         return False
 
 
 def check_deepseek() -> bool:
-    print("=== Cred check 2/2: DeepSeek (deepseek-chat, tiny ping) ===")
+    print("=== DeepSeek (deepseek-chat, tiny ping) ===")
     try:
         from src.llm.models import ModelProvider, get_model
 
@@ -53,19 +83,21 @@ def check_deepseek() -> bool:
         return True
     except Exception as exc:
         print(f"  FAIL  {type(exc).__name__}: {exc}")
-        traceback.print_exc()
         return False
 
 
 def main() -> int:
-    ok_massive = check_massive()
+    results = [
+        ("Massive", check_massive()),
+        ("FDS", check_fds()),
+        ("DeepSeek", check_deepseek()),
+    ]
     print()
-    ok_deepseek = check_deepseek()
-    print()
-    if ok_massive and ok_deepseek:
-        print("Both creds OK — safe to run agent.")
+    failed = [name for name, ok in results if not ok]
+    if not failed:
+        print("All creds OK — safe to run agent.")
         return 0
-    print("FAILED — fix above before running an agent.")
+    print(f"FAILED: {failed} — fix above before running an agent.")
     return 1
 
 
