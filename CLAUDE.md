@@ -1,0 +1,98 @@
+# CLAUDE.md — operating notes for AI coding sessions in this repo
+
+Read this before doing any work in this codebase. It captures the conventions baked into the existing 2,700 lines so new edits stay coherent.
+
+## What this project is
+
+`rg-alpha-engine` is a customized fork of `virattt/ai-hedge-fund` for retail alpha generation. Signals only — no execution. Primary stack:
+
+- **LLM:** DeepSeek (R1 for reasoning, V3 for cheap parsing) — defaults set in [`src/utils/llm.py`](src/utils/llm.py); task routing in [`src/utils/llm_router.py`](src/utils/llm_router.py).
+- **Data:** Massive (Polygon.io rebrand) via the adapter in [`src/tools/massive/`](src/tools/massive); legacy fallback is `financialdatasets.ai`. Switch with `DATA_PROVIDER=massive|fds`.
+- **Custom agents:** `alpha_seeker`, `energy_transition`, `emerging_tech` in [`src/agents/`](src/agents/).
+- **Sleeves + scan + attribution:** [`src/config/portfolio_config.py`](src/config/portfolio_config.py), [`src/run_morning_scan.py`](src/run_morning_scan.py), [`src/backtesting/sleeve_attribution.py`](src/backtesting/sleeve_attribution.py).
+
+## Run / test cheat sheet
+
+```powershell
+# always activate poetry env
+$env:Path += ";C:\Users\rdpadmin\AppData\Roaming\Python\Scripts"
+Set-Location "C:\Users\rdpadmin\Desktop\rg-alpha-engine"
+
+# tests (43 currently, all passing) — runs in <2s
+poetry run pytest tests/
+
+# morning scan
+poetry run python -m src.run_morning_scan                       # all sleeves
+poetry run python -m src.run_morning_scan --sleeve mega_tech    # one sleeve
+poetry run python -m src.run_morning_scan --watchlist           # ad-hoc tickers
+
+# legacy main entry (full LangGraph with risk + portfolio manager)
+poetry run python src/main.py --tickers NVDA --analysts alpha_seeker --show-reasoning
+```
+
+## Coding conventions enforced in this repo
+
+These aren't preferences — the existing code follows them. If you add code that violates these, you're creating drift.
+
+1. **Type hints on every public function.** `from __future__ import annotations` at the top of every module so we can use `|` syntax on Python 3.12.
+2. **Docstrings on every public function and module.** Module docstrings explain the *why*, not the *what*. Function docstrings cover non-obvious behavior.
+3. **No silently swallowed exceptions.** Either re-raise, log with `logger.warning`/`logger.exception`, or convert to a domain-specific error (see `MassiveError` in `src/tools/massive/client.py`).
+4. **Retries are explicit, not hidden.** Exponential backoff with jitter for external APIs (DeepSeek, Massive). Pattern: see `_sleep_for_retry` in `src/tools/massive/client.py` and `call_with_backoff` in `src/utils/llm_router.py`.
+5. **Validate at import time.** Config files (e.g. `src/config/portfolio_config.py`) call their validator at module load so a bad edit fails loudly instead of at runtime two hours into a scan.
+6. **Tests pin behavior, not implementation.** Schema construction tests catch typos in `Literal` enum values. Aggregation tests use hand-crafted fixtures rather than mocks. See `tests/test_morning_scan.py` for the pattern.
+7. **No emojis in code or docs.** The user did not ask for them.
+
+## Provider gotchas (Massive)
+
+Two coverage gaps to remember when reasoning about agent behavior:
+
+- **Insider trades** — Massive/Polygon doesn't publish bulk Form 4 data. `get_insider_trades()` returns `[]` and logs once. Agents that use it (Burry, Sentiment) handle the empty list. Switch `DATA_PROVIDER=fds` if real insider data is required.
+- **Growth-rate and turnover ratios** — Massive's `/ratios` endpoint omits revenue/earnings/FCF growth, asset/inventory turnover, DSO. The adapter leaves those as `None`. Agents that need growth read it from `search_line_items()` across multiple periods and compute it themselves.
+
+## Editing the agent registry
+
+If you add a new agent under `src/agents/`:
+
+1. Add the function + Pydantic schema following the pattern in `src/agents/alpha_seeker.py`.
+2. Register it in `src/utils/analysts.py` (import + `ANALYST_CONFIG` entry with a unique `order` number).
+3. Add a schema-construction test in `tests/test_custom_agents.py` mirroring the existing tests.
+4. If it should appear in a sleeve, edit `src/config/portfolio_config.py` and `pytest tests/test_portfolio_config.py` will catch agent-key typos via the registry cross-check.
+
+## Editing the Massive adapter
+
+The line-item field mapping in [`src/tools/massive/converters.py`](src/tools/massive/converters.py) is a dict (`LINE_ITEM_MAP`). To support a new field name an agent asks for, add one entry to that dict — no other changes needed. If the field has to be computed from multiple statements, add a branch in `_compute_field()` and use the `"computed"` kind.
+
+## Regulatory updates (energy_transition agent)
+
+The IRA and FEOC rule notes live in module-level dicts `IRA_RULE_NOTES` and `FEOC_RULE_NOTES` in [`src/agents/energy_transition.py`](src/agents/energy_transition.py). When Treasury issues a new notice (e.g. 45X clarification, FEOC threshold change), edit those dicts. Each value is one canonical sentence — keep it under one line so the LLM prompt stays cache-friendly.
+
+## Using ralph-wiggum for iterative work
+
+This repo benefits from the [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for tasks that have a clear pass/fail signal. Pattern:
+
+```
+/ralph-loop "Run pytest. If any test fails, fix the implementation (not the test) and re-run. When all 43 tests pass and no new test files have been created, output COMPLETE." --max-iterations 20 --completion-promise "COMPLETE"
+```
+
+**Good fits in this repo:**
+- "Make tests pass after refactor X" — automated pass/fail signal via `pytest`.
+- "Tighten a custom agent's prompt until the schema parses 5/5 runs on a fixture ticker" — runnable verification.
+- "Add a new field to `LINE_ITEM_MAP` and prove a Damodaran-style agent now sees it" — adapter + agent verifiable end-to-end.
+- "Fix the live NVDA smoke test until it returns a structured signal without errors" — single ticker, cheap to iterate, clear success criterion.
+
+**Bad fits (do not use ralph-loop for):**
+- Designing new agent frameworks or prompt structures — needs human taste, not iteration.
+- Anything where the success criterion is "does the user like this output?" — subjective, no machine-checkable signal.
+- Live runs that cost money per iteration without a hard `--max-iterations` cap.
+
+**Always set:**
+- `--max-iterations` (default to 10-20 unless the task is trivially bounded).
+- `--completion-promise` with a specific phrase the model only emits when it has actually finished.
+- A clear success criterion in the prompt itself — "tests pass" or "scan returns ≥1 high-conviction signal", not "looks good".
+
+## What's deferred / known follow-ups
+
+- Live NVDA smoke test (gated on `DEEPSEEK_API_KEY` + `MASSIVE_API_KEY` in `.env`).
+- 10-ticker verification scan against the spec universe.
+- Wiring `sleeve_attribution.py` to the upstream backtester output format.
+- GitHub push (project is local-only on `main` branch — two commits so far).
