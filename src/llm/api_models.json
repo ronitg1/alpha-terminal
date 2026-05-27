@@ -1,0 +1,42 @@
+[
+  {
+    "display_name": "DeepSeek R1 (deepseek-reasoner)",
+    "model_name": "deepseek-reasoner",
+    "provider": "DeepSeek"
+  },
+  {
+    "display_name": "DeepSeek V3 (deepseek-chat)",
+    "model_name": "deepseek-chat",
+    "provider": "DeepSeek"
+  },
+  {
+    "display_name": "DeepSeek V4 Pro",
+    "model_name": "deepseek-v4-pro",
+    "provider": "DeepSeek"
+  },
+  {
+    "display_name": "Grok 4.3",
+    "model_name": "grok-4.3",
+    "provider": "xAI"
+  },
+  {
+    "display_name": "GPT-5.5",
+    "model_name": "gpt-5.5",
+    "provider": "OpenAI"
+  },
+  {
+    "display_name": "Kimi K2.6",
+    "model_name": "kimi-k2.6",
+    "provider": "Kimi"
+  },
+  {
+    "display_name": "Claude Opus 4.7",
+    "model_name": "claude-opus-4-7",
+    "provider": "Anthropic"
+  },
+  {
+    "display_name": "Gemini 3.1 Pro",
+    "model_name": "gemini-3.1-pro-preview",
+    "provider": "Google"
+  }
+]
