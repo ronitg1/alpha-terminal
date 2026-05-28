@@ -18,8 +18,17 @@ function formatDate(iso: string | undefined | null): string {
 }
 
 export function DashboardHeader() {
-  const { latestScan, scanStatus, refresh, runScan, stopScan, liveActivity, watchlist } =
-    useSleevesContext();
+  const {
+    latestScan,
+    scanStatus,
+    refresh,
+    runScan,
+    stopScan,
+    liveActivity,
+    watchlist,
+    scanHistory,
+    loadScanByDate,
+  } = useSleevesContext();
 
   const rowCount = latestScan?.row_count ?? 0;
   const isLoading = scanStatus === 'loading';
@@ -44,9 +53,32 @@ export function DashboardHeader() {
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold">Sleeves Dashboard</h1>
         <Separator orientation="vertical" className="h-5" />
-        <span className="text-sm text-muted-foreground">
-          Morning scan · <span className="font-mono">{formatDate(latestScan?.date)}</span>
-        </span>
+        <span className="text-sm text-muted-foreground">Morning scan ·</span>
+        {scanHistory.length > 1 ? (
+          // Multiple scans on disk → render a dropdown for switching dates.
+          // Plain <select> styled with Tailwind — no Shadcn select primitive
+          // is shipped in this fork, and the cmdk-based Command would be
+          // overkill for a date list.
+          <select
+            value={latestScan?.date ?? ''}
+            onChange={(e) => {
+              const d = e.target.value;
+              if (d) void loadScanByDate(d);
+            }}
+            disabled={isRunning}
+            className="font-mono text-sm bg-background border border-border rounded px-2 py-1 hover:bg-accent disabled:opacity-50"
+          >
+            {scanHistory.map((s) => (
+              <option key={s.date} value={s.date}>
+                {s.date}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="font-mono text-sm text-muted-foreground">
+            {formatDate(latestScan?.date)}
+          </span>
+        )}
         {rowCount > 0 && !isRunning && (
           <Badge variant="secondary" className="font-mono">
             {rowCount} {rowCount === 1 ? 'row' : 'rows'}

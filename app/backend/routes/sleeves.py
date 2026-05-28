@@ -122,48 +122,56 @@ async def list_scans(limit: int = 30) -> dict[str, Any]:
 
 @router.get("/scans/latest")
 async def get_latest_scan() -> dict[str, Any]:
-    """Return the most recent scan, fully parsed."""
+    """Return the most recent scan, fully parsed (JSON sidecar preferred)."""
     files = _list_scan_files()
     if not files:
         raise HTTPException(
             status_code=404,
             detail=(
-                "No scans found in outputs/. Run `poetry run python -m src.run_morning_scan` "
-                "(or use the Run Scan button when Phase 2 ships) to produce one."
+                "No scans found in outputs/. Click Run Scan, or run "
+                "`poetry run python -m src.run_morning_scan` from the CLI."
             ),
         )
-    return _read_scan_csv(files[0])
+    path = files[0]
+    return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
 
 
 @router.get("/scans/{scan_date}")
 async def get_scan_by_date(scan_date: str) -> dict[str, Any]:
-    """Return the scan for a specific date (YYYY-MM-DD)."""
+    """Return the scan for a specific date (YYYY-MM-DD). JSON sidecar preferred."""
     try:
         date.fromisoformat(scan_date)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid date '{scan_date}': {exc}")
-    path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"No scan for {scan_date}")
-    return _read_scan_csv(path)
+    json_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.json"
+    csv_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv"
+    if json_path.exists():
+        return _read_scan_json(json_path)
+    if csv_path.exists():
+        return _read_scan_csv(csv_path)
+    raise HTTPException(status_code=404, detail=f"No scan for {scan_date}")
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
 
 def _list_scan_files() -> list[Path]:
-    """Return all morning_scan CSVs in outputs/, sorted newest first by name.
+    """Return all morning_scan files in outputs/, sorted newest first by name.
 
-    Filenames are ``YYYY-MM-DD_morning_scan.csv`` so reverse-sort on name
-    is equivalent to reverse-sort on date — avoids touching mtimes.
+    Filenames are ``YYYY-MM-DD_morning_scan.{csv,json}`` so reverse-sort on
+    name is equivalent to reverse-sort on date. Each date may have a CSV
+    (always written) plus an optional JSON sidecar (written when the scan
+    runs through /sleeves/scan/run). Dedupe by date stem, preferring JSON.
     """
     if not _OUTPUTS_DIR.exists():
         return []
-    return sorted(
-        _OUTPUTS_DIR.glob("*_morning_scan.csv"),
-        key=lambda p: p.name,
-        reverse=True,
-    )
+    by_date: dict[str, Path] = {}
+    # Sort so CSV is seen first, then JSON overwrites it — JSON wins.
+    for path in sorted(_OUTPUTS_DIR.glob("*_morning_scan.csv")):
+        by_date[_date_from_path(path)] = path
+    for path in sorted(_OUTPUTS_DIR.glob("*_morning_scan.json")):
+        by_date[_date_from_path(path)] = path
+    return sorted(by_date.values(), key=lambda p: p.name, reverse=True)
 
 
 def _date_from_path(path: Path) -> str:
@@ -187,6 +195,46 @@ def _read_scan_csv(path: Path) -> dict[str, Any]:
         "row_count": len(rows),
         "rows": rows,
     }
+
+
+def _read_scan_json(path: Path) -> dict[str, Any]:
+    """Load a scan JSON sidecar (full UI shape including agent raw fields).
+
+    The JSON is written by /sleeves/scan/run alongside the CSV. Schema matches
+    what /scans/latest returns from a live scan, so the drill drawer's rich
+    fields work on historical data too.
+    """
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    # Ensure path is the on-disk path the caller asked about, not whatever
+    # was serialized at write time (which may use a different cwd).
+    data["path"] = str(path.relative_to(_PROJECT_ROOT)).replace("\\", "/")
+    return data
+
+
+def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -> Path:
+    """Companion to write_csv — persist the full UI shape (with agent raw)."""
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    path = outputs_dir / f"{scan_date}_morning_scan.json"
+    payload = {
+        "date": scan_date,
+        "path": str(path).replace("\\", "/"),
+        "row_count": len(rows),
+        "rows": [_tickerrow_to_ui(r) for r in rows],
+    }
+    # Atomic write: temp file in same dir + os.replace.
+    fd, tmp = __import__("tempfile").mkstemp(prefix=".scan.", suffix=".tmp", dir=str(outputs_dir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(payload, f, indent=2, default=str)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 def _row_to_ui(raw: dict[str, str]) -> dict[str, Any]:
@@ -456,13 +504,21 @@ async def run_scan(req: ScanRequest, request: Request):
                 yield ErrorEvent(message=f"Scan failed: {exc}").to_sse()
                 return
 
-            # Persist + emit final payload.
+            # Persist CSV + JSON sidecar + emit final payload. CSV stays the
+            # source of truth for backwards compat / CLI use; JSON carries
+            # the full UI shape including each agent's raw output dict so
+            # the drill drawer's rich fields work on historical scans too.
+            outputs_dir = _PROJECT_ROOT / "outputs"
             try:
-                csv_path = write_csv(all_rows, Path("outputs"), end_date)
+                csv_path = write_csv(all_rows, outputs_dir, end_date)
                 csv_path_str = str(csv_path).replace("\\", "/")
-            except Exception as exc:
+            except Exception:
                 logger.exception("Failed to write CSV")
                 csv_path_str = ""
+            try:
+                _write_scan_json(all_rows, outputs_dir, end_date)
+            except Exception:
+                logger.exception("Failed to write JSON sidecar (CSV still written)")
 
             yield CompleteEvent(
                 data={

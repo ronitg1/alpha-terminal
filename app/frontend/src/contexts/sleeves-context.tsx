@@ -12,7 +12,13 @@
  */
 
 import { sleevesApi } from '@/services/sleeves-api';
-import { ScanSummary, SleevesConfig, TickerRow, WatchlistEntry } from '@/types/sleeves';
+import {
+  ScanListItem,
+  ScanSummary,
+  SleevesConfig,
+  TickerRow,
+  WatchlistEntry,
+} from '@/types/sleeves';
 import {
   createContext,
   ReactNode,
@@ -59,6 +65,11 @@ interface SleevesContextType {
   watchlist: WatchlistEntry[];
   loadWatchlist: () => Promise<void>;
   saveWatchlist: (entries: WatchlistEntry[]) => Promise<void>;
+
+  // Scan history
+  scanHistory: ScanListItem[];
+  loadScanHistory: () => Promise<void>;
+  loadScanByDate: (date: string) => Promise<void>;
 }
 
 const SleevesContext = createContext<SleevesContextType | null>(null);
@@ -84,6 +95,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   const [liveActivity, setLiveActivity] = useState<ActivityEvent[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [scanHistory, setScanHistory] = useState<ScanListItem[]>([]);
 
   // Used to abort an in-flight SSE stream when the user clicks Stop or
   // unmounts. Stored in a ref so the abort doesn't trigger re-renders.
@@ -128,10 +140,29 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     setWatchlist(persisted);
   }, []);
 
+  const loadScanHistory = useCallback(async () => {
+    try {
+      const { scans } = await sleevesApi.listScans(30);
+      setScanHistory(scans);
+    } catch (err) {
+      console.error('loadScanHistory failed:', err);
+    }
+  }, []);
+
+  const loadScanByDate = useCallback(async (date: string) => {
+    try {
+      const scan = await sleevesApi.getScanByDate(date);
+      setLatestScan(scan);
+    } catch (err) {
+      console.error(`loadScanByDate(${date}) failed:`, err);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
     void loadWatchlist();
-  }, [refresh, loadWatchlist]);
+    void loadScanHistory();
+  }, [refresh, loadWatchlist, loadScanHistory]);
 
   const clearActivity = useCallback(() => {
     setLiveActivity([]);
@@ -264,6 +295,10 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
               rows: payload.rows ?? [],
             });
             setScanStatus('idle');
+            // Refresh the scan list so a brand-new scan immediately appears
+            // in the history dropdown. Fire-and-forget — the user will see
+            // the new option after a brief tick.
+            void loadScanHistory();
             return;
           }
           case 'error':
@@ -276,7 +311,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [clearActivity, pushActivity, scanStatus]
+    [clearActivity, loadScanHistory, pushActivity, scanStatus]
   );
 
   // Abort any in-flight scan when the provider unmounts.
@@ -301,6 +336,9 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     watchlist,
     loadWatchlist,
     saveWatchlist,
+    scanHistory,
+    loadScanHistory,
+    loadScanByDate,
   };
 
   return <SleevesContext.Provider value={value}>{children}</SleevesContext.Provider>;
