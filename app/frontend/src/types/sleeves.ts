@@ -63,3 +63,11 @@ export interface WatchlistEntry {
   ticker: string;
   comment: string;
 }
+
+export interface AnalystMetadata {
+  key: string;
+  display_name: string;
+  description: string;
+  investing_style: string;
+  order: number;
+}

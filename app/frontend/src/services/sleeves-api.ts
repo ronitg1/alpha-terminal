@@ -8,7 +8,13 @@
  * (`POST /sleeves/scan/run`, `PUT /sleeves/watchlist`) land in Phase 2/3.
  */
 
-import { ScanListItem, ScanSummary, SleevesConfig, WatchlistEntry } from '@/types/sleeves';
+import {
+  AnalystMetadata,
+  ScanListItem,
+  ScanSummary,
+  SleevesConfig,
+  WatchlistEntry,
+} from '@/types/sleeves';
 
 // Same base URL convention as the other services. Override at build time via
 // VITE_API_URL if you ever expose the backend off-host.
@@ -38,6 +44,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 
 export const sleevesApi = {
   getConfig: () => getJSON<SleevesConfig>('/sleeves/config'),
+  getAnalysts: () => getJSON<{ analysts: AnalystMetadata[] }>('/sleeves/analysts'),
   getLatestScan: () => getJSON<ScanSummary>('/sleeves/scans/latest'),
   listScans: (limit = 30) => getJSON<{ scans: ScanListItem[] }>(`/sleeves/scans?limit=${limit}`),
   getScanByDate: (date: string) => getJSON<ScanSummary>(`/sleeves/scans/${date}`),

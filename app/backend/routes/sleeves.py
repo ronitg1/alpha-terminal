@@ -56,6 +56,7 @@ from src.run_morning_scan import (
     run_sleeve,
     write_csv,
 )
+from src.utils.analysts import get_agents_list
 from src.utils.progress import progress
 
 # Load .env so agents can see DEEPSEEK_API_KEY etc. when invoked via the API.
@@ -77,6 +78,21 @@ _PER_AGENT_RE = re.compile(r"\s*([a-zA-Z0-9_]+)\s*=\s*([a-z]+)\s*\(\s*(-?\d+(?:\
 
 
 # ─── /sleeves/config ────────────────────────────────────────────────────────
+
+
+# ─── /sleeves/analysts ──────────────────────────────────────────────────────
+
+
+@router.get("/analysts")
+async def get_analysts() -> dict[str, Any]:
+    """Return analyst metadata (display_name, description, investing_style)
+    for every registered analyst.
+
+    Sourced from ``src.utils.analysts.ANALYST_CONFIG`` via the existing
+    ``get_agents_list()`` helper — no new computation, just expose what's
+    already there so the UI can render tooltips on agent badges.
+    """
+    return {"analysts": get_agents_list()}
 
 
 @router.get("/config")

@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { SleeveConfig, TickerRow } from '@/types/sleeves';
 import { Pencil, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { AnalystChip } from './analyst-chip';
 import { SignalPill } from './signal-pill';
 import { WatchlistEditor } from './watchlist-editor';
 
@@ -38,6 +39,24 @@ const HIGHLIGHT_ROW_CLASS: Record<string, string> = {
 
 function sleeveDisplayName(name: string): string {
   return name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Pick the dominant agent (highest confidence) and return a one-sentence
+ *  preview of its reasoning. Falls back to variant_perception or a synthetic
+ *  "agent: signal" line when reasoning isn't in raw (CSV-loaded rows). Used
+ *  for the native browser title= tooltip on each ticker row so hovering a
+ *  neutral pill explains WHY it's neutral without opening the drawer. */
+function dominantReasoning(row: TickerRow): string {
+  if (!row.per_agent.length) return row.variant_perception || '';
+  const dominant = [...row.per_agent].sort((a, b) => b.confidence - a.confidence)[0];
+  const raw = dominant.raw ?? {};
+  const r = (raw.reasoning as string | undefined) ?? '';
+  if (r) {
+    const firstSent = r.match(/^[^.!?\n]+[.!?]?/)?.[0] ?? r;
+    return firstSent.length > 200 ? firstSent.slice(0, 200) + '…' : firstSent;
+  }
+  if (row.variant_perception) return row.variant_perception;
+  return `${dominant.agent.replace(/_/g, ' ')}: ${dominant.signal} (${Math.round(dominant.confidence)}%)`;
 }
 
 function ScoreBar({ score }: { score: number }) {
@@ -104,12 +123,7 @@ export function SleeveCard({ sleeve }: SleeveCardProps) {
         </div>
         <div className="flex flex-wrap gap-1 mt-1">
           {sleeve.agents.map((a) => (
-            <Badge key={a} variant="outline" className="text-[10px] font-mono px-1.5 py-0">
-              {a.replace(/_analyst$/, '').replace(/_/g, ' ')}{' '}
-              <span className="opacity-60 ml-1">
-                {Math.round((sleeve.agent_weights[a] ?? 0) * 100)}%
-              </span>
-            </Badge>
+            <AnalystChip key={a} agentKey={a} weight={sleeve.agent_weights[a]} />
           ))}
         </div>
       </CardHeader>
@@ -156,7 +170,7 @@ export function SleeveCard({ sleeve }: SleeveCardProps) {
                       row && HIGHLIGHT_ROW_CLASS[row.highlight],
                       isSelected && 'ring-1 ring-primary/40'
                     )}
-                    title={row?.variant_perception || undefined}
+                    title={row ? dominantReasoning(row) : undefined}
                   >
                     <TableCell className="font-mono font-medium text-sm py-1.5">
                       <span className="inline-flex items-center gap-1">

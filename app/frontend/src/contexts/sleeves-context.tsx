@@ -13,6 +13,7 @@
 
 import { sleevesApi } from '@/services/sleeves-api';
 import {
+  AnalystMetadata,
   ScanListItem,
   ScanSummary,
   SleevesConfig,
@@ -70,6 +71,9 @@ interface SleevesContextType {
   scanHistory: ScanListItem[];
   loadScanHistory: () => Promise<void>;
   loadScanByDate: (date: string) => Promise<void>;
+
+  // Analyst metadata (display_name / description / investing_style) keyed by analyst key.
+  analystMeta: Record<string, AnalystMetadata>;
 }
 
 const SleevesContext = createContext<SleevesContextType | null>(null);
@@ -96,6 +100,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [scanHistory, setScanHistory] = useState<ScanListItem[]>([]);
+  const [analystMeta, setAnalystMeta] = useState<Record<string, AnalystMetadata>>({});
 
   // Used to abort an in-flight SSE stream when the user clicks Stop or
   // unmounts. Stored in a ref so the abort doesn't trigger re-renders.
@@ -158,11 +163,26 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loadAnalystMeta = useCallback(async () => {
+    try {
+      const { analysts } = await sleevesApi.getAnalysts();
+      // Index by key for O(1) lookup in render paths (sleeve card agent badges,
+      // drill drawer accordion headers, live activity feed).
+      const byKey: Record<string, AnalystMetadata> = {};
+      for (const a of analysts) byKey[a.key] = a;
+      setAnalystMeta(byKey);
+    } catch (err) {
+      // Non-fatal — UI degrades to plain badges without tooltips.
+      console.error('loadAnalystMeta failed:', err);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
     void loadWatchlist();
     void loadScanHistory();
-  }, [refresh, loadWatchlist, loadScanHistory]);
+    void loadAnalystMeta();
+  }, [refresh, loadWatchlist, loadScanHistory, loadAnalystMeta]);
 
   const clearActivity = useCallback(() => {
     setLiveActivity([]);
@@ -339,6 +359,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     scanHistory,
     loadScanHistory,
     loadScanByDate,
+    analystMeta,
   };
 
   return <SleevesContext.Provider value={value}>{children}</SleevesContext.Provider>;

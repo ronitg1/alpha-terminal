@@ -36,8 +36,22 @@ import {
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { PerAgentVerdict, TickerRow } from '@/types/sleeves';
 import { Sparkles } from 'lucide-react';
+import { AnalystChip } from './analyst-chip';
 import { SignalPill } from './signal-pill';
 import { TrafficLight } from './traffic-light';
+
+/** Pull a short preview of an agent's reasoning so the user sees the gist
+ *  without expanding the accordion. CSV-only verdicts have no raw fields;
+ *  fall back to the variant_perception text on the row when present.
+ */
+function reasoningPreview(verdict: PerAgentVerdict, fallback?: string): string {
+  const raw = verdict.raw ?? {};
+  const r = (raw.reasoning as string | undefined) ?? fallback ?? '';
+  if (!r) return '';
+  // First sentence or first ~140 chars, whichever comes first.
+  const firstSentence = r.match(/^[^.!?\n]+[.!?]?/)?.[0] ?? r;
+  return firstSentence.length > 140 ? firstSentence.slice(0, 140).trimEnd() + '…' : firstSentence;
+}
 
 export function TickerDrillDrawer() {
   const { selectedTicker, selectTicker, latestScan } = useSleevesContext();
@@ -122,23 +136,33 @@ function DrawerBody({ row }: { row: TickerRow }) {
         <div className="text-sm text-muted-foreground italic">No agent verdicts.</div>
       ) : (
         <Accordion type="multiple" className="w-full">
-          {row.per_agent.map((v) => (
-            <AccordionItem key={v.agent} value={v.agent}>
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-3 flex-1 pr-3">
-                  <span className="font-mono text-sm">{v.agent.replace(/_/g, ' ')}</span>
-                  <div className="flex-1" />
-                  <SignalPill signal={v.signal} confidence={v.confidence} compact />
-                  <span className="font-mono text-xs text-muted-foreground tabular-nums w-8 text-right">
-                    {Math.round(v.confidence)}
-                  </span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="pt-2">
-                <AgentRichFields verdict={v} />
-              </AccordionContent>
-            </AccordionItem>
-          ))}
+          {row.per_agent.map((v) => {
+            const preview = reasoningPreview(v, row.variant_perception);
+            return (
+              <AccordionItem key={v.agent} value={v.agent}>
+                <AccordionTrigger className="hover:no-underline py-2">
+                  <div className="flex flex-col flex-1 pr-3 gap-1.5">
+                    <div className="flex items-center gap-3">
+                      <AnalystChip agentKey={v.agent} variant="inline" className="text-sm" />
+                      <div className="flex-1" />
+                      <SignalPill signal={v.signal} confidence={v.confidence} compact />
+                      <span className="font-mono text-xs text-muted-foreground tabular-nums w-8 text-right">
+                        {Math.round(v.confidence)}
+                      </span>
+                    </div>
+                    {preview && (
+                      <div className="text-[11px] text-muted-foreground text-left leading-snug pr-2">
+                        {preview}
+                      </div>
+                    )}
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="pt-2">
+                  <AgentRichFields verdict={v} />
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
         </Accordion>
       )}
     </>
@@ -206,7 +230,7 @@ function AgentRichFields({ verdict }: { verdict: PerAgentVerdict }) {
           {feocRisk && (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">FEOC risk</div>
-              <TrafficLight status={feocRisk} />
+              <TrafficLight status={feocRisk} field="feoc risk" />
             </div>
           )}
           {unitEcon && <KVChip label="Unit econ" value={unitEcon} span={2} />}

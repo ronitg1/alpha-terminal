@@ -38,30 +38,34 @@ export function HighConvictionStrip() {
     return null; // dashboard-level empty state handles "no scan yet"
   }
 
-  if (highlights.length === 0) {
-    return (
-      <div className="px-6 py-4 border-b border-border">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-          High-Conviction Signals
-        </div>
-        <Card className="p-4 bg-muted/30 border-dashed">
-          <div className="text-sm text-muted-foreground">
-            No high-conviction signals — last scan returned 0 above threshold across {rows.length} tickers.
-            Disciplined abstention is a feature, not a bug; consider widening the watchlist or re-running after a catalyst.
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  // When no real high-conviction signals exist, fall back to the top 3 by
+  // avg_confidence so the user still gets a "what should I look at first?"
+  // surface. Mark them as "soft" to make clear they're not the real thing.
+  const isFallback = highlights.length === 0;
+  const displayed = isFallback
+    ? [...rows].sort((a, b) => b.avg_confidence - a.avg_confidence).slice(0, 3)
+    : highlights;
 
   return (
     <div className="px-6 py-4 border-b border-border">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-        High-Conviction Signals · {highlights.length}
+      <div className="flex items-center gap-3 mb-2">
+        <span className="text-xs uppercase tracking-wide text-muted-foreground">
+          {isFallback
+            ? `Top by Confidence (no high-conviction signals · ${rows.length} tickers scanned)`
+            : `High-Conviction Signals · ${highlights.length}`}
+        </span>
       </div>
+      {isFallback && (
+        <div className="mb-3 text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+          Every signal came back neutral — agents found no edge above their thresholds. The cards
+          below show the three tickers with the highest agent confidence anyway, in case you want
+          to drill into the reasoning. Disciplined abstention is a feature; consider widening the
+          watchlist or re-running after a catalyst.
+        </div>
+      )}
       <TooltipProvider delayDuration={150}>
         <div className="flex gap-3 overflow-x-auto pb-1">
-          {highlights.map((row) => (
+          {displayed.map((row) => (
             <Tooltip key={row.ticker}>
               <TooltipTrigger asChild>
                 <button
