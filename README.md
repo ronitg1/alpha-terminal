@@ -94,13 +94,33 @@ jitter for DeepSeek's rate-limit behavior under load. The existing
 `call_with_backoff` when you call the LLM client directly (outside
 `call_llm`).
 
-## What's next
+## Sleeves Dashboard (web UI)
 
-Planned phases:
+```powershell
+# terminal 1 — backend (FastAPI, port 8000)
+poetry run uvicorn app.backend.main:app --reload
+
+# terminal 2 — frontend (Vite, port 5173)
+cd app/frontend; npm install; npm run dev
+```
+
+Then open http://localhost:5173 — the **Sleeves tab** opens automatically. From the dashboard:
+
+- **Run Scan** kicks off a morning scan and streams per-agent progress live into the activity feed at the top of the page.
+- **Click any ticker row** opens the drill-down drawer with per-agent verdicts: variant perception, catalysts, kill-switch, IRA credit stack badge, FEOC traffic light, S-curve position, AI exposure, etc.
+- **Edit watchlist** on the Opportunistic sleeve card lets you add/remove tickers (with comments). Saves to `src/config/watchlist.py` atomically — comments survive future saves and `git diff` shows the change.
+- **Morning scan ·** dropdown switches between past scans once you've accumulated more than one.
+
+Each scan dual-writes to `outputs/`:
+- `YYYY-MM-DD_morning_scan.csv` — source of truth, CLI-compatible
+- `YYYY-MM-DD_morning_scan.json` — full per-agent rich fields for the drill drawer
+
+## Progress
 
 1. ✅ **Foundation** — data layer, LLM defaults, project structure
-2. ⬜ **Custom agents** — alpha_seeker, energy_transition, emerging_tech
-3. ⬜ **Portfolio config** — sleeves, agent weights, ticker lists
-4. ⬜ **Morning scan** — ranked signal table, CSV output, highlights
-5. ⬜ **Backtester** — sleeve attribution, win-rate warnings
-6. ⬜ **Opportunistic watchlist** — CLI hook for ad-hoc tickers
+2. ✅ **Custom agents** — alpha_seeker, energy_transition, emerging_tech
+3. ✅ **Portfolio config** — sleeves, agent weights, ticker lists
+4. ✅ **Morning scan** — ranked signal table, CSV output, highlights
+5. ✅ **Backtester attribution module** — sleeve metrics + underperform warnings (separate reporter from upstream backtester)
+6. ✅ **Opportunistic watchlist** — CLI hook + UI editor
+7. ✅ **Sleeves Dashboard UI** — live scan trigger, SSE activity feed, drill drawer, watchlist editor, history dropdown

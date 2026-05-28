@@ -10,6 +10,7 @@ Read this before doing any work in this codebase. It captures the conventions ba
 - **Data:** Massive (Polygon.io rebrand) via the adapter in [`src/tools/massive/`](src/tools/massive); legacy fallback is `financialdatasets.ai`. Switch with `DATA_PROVIDER=massive|fds`.
 - **Custom agents:** `alpha_seeker`, `energy_transition`, `emerging_tech` in [`src/agents/`](src/agents/).
 - **Sleeves + scan + attribution:** [`src/config/portfolio_config.py`](src/config/portfolio_config.py), [`src/run_morning_scan.py`](src/run_morning_scan.py), [`src/backtesting/sleeve_attribution.py`](src/backtesting/sleeve_attribution.py).
+- **UI (Sleeves Dashboard):** React 18 + Vite + Shadcn/UI in [`app/frontend/src/components/sleeves/`](app/frontend/src/components/sleeves/); FastAPI SSE backend in [`app/backend/routes/sleeves.py`](app/backend/routes/sleeves.py). One context (`sleeves-context.tsx`) owns scan/watchlist/history state.
 
 ## Run / test cheat sheet
 
@@ -28,6 +29,13 @@ poetry run python -m src.run_morning_scan --watchlist           # ad-hoc tickers
 
 # legacy main entry (full LangGraph with risk + portfolio manager)
 poetry run python src/main.py --tickers NVDA --analysts alpha_seeker --show-reasoning
+
+# Sleeves Dashboard UI — two terminals
+# 1) backend with hot reload
+poetry run uvicorn app.backend.main:app --host 127.0.0.1 --port 8000 --reload
+# 2) frontend dev server
+cd app/frontend; npm run dev
+# Then open http://localhost:5173 — Sleeves tab auto-opens on first load.
 ```
 
 ## Coding conventions enforced in this repo
@@ -90,9 +98,22 @@ This repo benefits from the [ralph-wiggum plugin](https://github.com/anthropics/
 - `--completion-promise` with a specific phrase the model only emits when it has actually finished.
 - A clear success criterion in the prompt itself — "tests pass" or "scan returns ≥1 high-conviction signal", not "looks good".
 
+## Sleeves Dashboard — what's where
+
+The UI is a single new tab type (`'sleeves'`) that auto-opens on first load. All new dashboard code lives in:
+
+- **Backend**: [`app/backend/routes/sleeves.py`](app/backend/routes/sleeves.py) — config/scan-list/scan-by-date/scan-run/watchlist endpoints. SSE pattern mirrors `/hedge-fund/run`.
+- **Backend service**: [`app/backend/services/watchlist_service.py`](app/backend/services/watchlist_service.py) — atomic file rewrite + `importlib.reload` for `src/config/watchlist.py`.
+- **Frontend types**: [`app/frontend/src/types/sleeves.ts`](app/frontend/src/types/sleeves.ts) — wire-format mirror of backend responses.
+- **Frontend API client**: [`app/frontend/src/services/sleeves-api.ts`](app/frontend/src/services/sleeves-api.ts) — thin `fetch` wrapper; SSE consumer lives in the context.
+- **Frontend context**: [`app/frontend/src/contexts/sleeves-context.tsx`](app/frontend/src/contexts/sleeves-context.tsx) — single source of truth for `config / latestScan / scanStatus / liveActivity / watchlist / scanHistory / selectedTicker`. Owns `runScan / stopScan / loadScanByDate / saveWatchlist`.
+- **Frontend components**: [`app/frontend/src/components/sleeves/`](app/frontend/src/components/sleeves/) — atomic to composite. `signal-pill` and `traffic-light` are reusable atoms; everything else is a one-place component.
+
+Scan output is dual-written: `outputs/YYYY-MM-DD_morning_scan.csv` (always, for CLI compat) plus `outputs/YYYY-MM-DD_morning_scan.json` (when run via the UI; carries full per-agent raw fields the drill drawer needs). The backend prefers JSON when both exist.
+
 ## What's deferred / known follow-ups
 
-- Live NVDA smoke test (gated on `DEEPSEEK_API_KEY` + `MASSIVE_API_KEY` in `.env`).
-- 10-ticker verification scan against the spec universe.
+- Sparkline of weighted_score per sleeve over time (needs ≥3 historical scans before it's meaningful).
+- Diff highlighting between consecutive scans (needs ≥2 historical scans).
 - Wiring `sleeve_attribution.py` to the upstream backtester output format.
-- GitHub push (project is local-only on `main` branch — two commits so far).
+- GitHub push (project is local-only on `main` branch).
