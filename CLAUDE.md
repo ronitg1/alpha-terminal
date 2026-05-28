@@ -2,6 +2,8 @@
 
 Read this before doing any work in this codebase. It captures the conventions baked into the existing 2,700 lines so new edits stay coherent.
 
+**If you are starting a fresh session, read [HANDOFF.md](HANDOFF.md) FIRST** — it has the current status, the dirty git state, what was in flight when the prior session ended, and exactly where to pick up.
+
 ## What this project is
 
 `rg-alpha-engine` is a customized fork of `virattt/ai-hedge-fund` for retail alpha generation. Signals only — no execution. Primary stack:
