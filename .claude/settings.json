@@ -1,0 +1,5 @@
+{
+  "$comment": "Project-scoped Claude Code defaults. See CLAUDE.md → Model routing playbook for when to use which model.",
+  "model": "sonnet",
+  "effortLevel": "high"
+}

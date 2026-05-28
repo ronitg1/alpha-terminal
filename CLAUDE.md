@@ -74,6 +74,38 @@ The line-item field mapping in [`src/tools/massive/converters.py`](src/tools/mas
 
 The IRA and FEOC rule notes live in module-level dicts `IRA_RULE_NOTES` and `FEOC_RULE_NOTES` in [`src/agents/energy_transition.py`](src/agents/energy_transition.py). When Treasury issues a new notice (e.g. 45X clarification, FEOC threshold change), edit those dicts. Each value is one canonical sentence — keep it under one line so the LLM prompt stays cache-friendly.
 
+## Model routing playbook
+
+The project default in `.claude/settings.json` is **Sonnet** + `effortLevel: high`. This balances cost against the high-frequency work (file edits, scaffolding, test runs, type checks) that dominates a typical session in this repo. Opus is reserved for explicit reach-for moments.
+
+**Default to Sonnet for:**
+- File edits, refactors, scaffolding new components or routes
+- Running tests, lint, type checks; reading their output
+- API client wiring, type definitions, glue code
+- Diagnostic work where the answer is one or two `Grep` calls away
+- Anything the existing patterns in this repo already cover (look at neighboring files first)
+
+**Switch to Opus (`/model opus`) for:**
+- Designing a new agent prompt or substantially reworking an existing one (alpha_seeker / energy_transition / emerging_tech)
+- Cross-cutting refactors that touch the data adapter + agents + UI in one pass
+- Hard debugging where the failure mode isn't obvious from logs (e.g. SSE race conditions, threading issues across `asyncio.to_thread` boundaries)
+- Architectural decisions about phases that haven't been planned yet
+
+**Delegation pattern (the bigger win):**
+
+The main session model handles whatever it's set to. Most of the cost optimization comes from **delegating routine work to model-pinned subagents** so the main agent can stay focused. Two are defined in this repo:
+
+| Subagent | Model | Use for |
+| --- | --- | --- |
+| `explorer` ([.claude/agents/explorer.md](.claude/agents/explorer.md)) | Sonnet | File maps, "where is X defined", grep-style searches, directory summaries. Read-only. Use liberally — it's cheap. |
+| `architect` ([.claude/agents/architect.md](.claude/agents/architect.md)) | Opus | Plans only (not code). Multi-file design, prompt rework, hard debug recommendations. Returns trade-offs + recommended approach + self-skepticism. |
+
+**Rule of thumb:** if you'd be tempted to do five `Grep` + `Read` calls in a row to map something out, delegate to `explorer` instead and continue with just the summary. If you're about to spend a turn weighing two architectures, delegate to `architect`, then execute its recommendation yourself.
+
+**What auto-routing does NOT exist:** the harness will never pick a model for you based on task complexity. Routing is your responsibility (`/model` mid-session, the `model:` parameter on `Agent` tool calls, or these subagent definitions).
+
+**Tracking usage:** `/usage` shows total session cost + breakdown by subagent. There is no per-model attribution within a single conversation, but you can infer it from which subagents got called heavily.
+
 ## Using ralph-wiggum for iterative work
 
 This repo benefits from the [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for tasks that have a clear pass/fail signal. Pattern:
