@@ -63,7 +63,12 @@ _insider_warning_emitted = False
 
 
 def _provider() -> str:
-    """Return the active data provider name (``"massive"`` or ``"fds"``)."""
+    """Return the active data provider name (``"massive"`` or ``"fds"``).
+
+    Legacy single-choice selector. New code should use ``_provider_for(...)``
+    so price + news data routes through Massive (broad coverage) while
+    fundamentals stay on FDS (Massive plan doesn't include ratios).
+    """
     value = (os.environ.get("DATA_PROVIDER") or "").strip().lower()
     if value in {"massive", "polygon"}:
         return "massive"
@@ -73,6 +78,45 @@ def _provider() -> str:
     if os.environ.get("MASSIVE_API_KEY"):
         return "massive"
     return "fds"
+
+
+def _provider_for(data_type: str) -> str:
+    """Per-data-type provider routing.
+
+    The user's plan combos historically broke when ``DATA_PROVIDER=fds`` was
+    blanket-applied: FDS doesn't cover newer / smaller tickers (ASTS, NBIS,
+    etc.) so agents saw "no momentum, no fundamentals, no news" and abstained
+    everywhere. Massive (Polygon) has prices + news + reference for the full
+    US universe but doesn't include the Financials & Ratios expansion on
+    the user's plan tier.
+
+    Routing rules:
+      * prices, news, market_cap, reference  → Massive (broad coverage)
+      * fundamentals, line_items, insider    → FDS (Massive lacks them on plan)
+
+    If ``MASSIVE_API_KEY`` isn't set, every type falls back to FDS. If
+    ``FINANCIAL_DATASETS_API_KEY`` isn't set, fundamentals fall back to
+    Massive (and likely return ``None``, but better than crashing).
+    """
+    explicit = (os.environ.get("DATA_PROVIDER") or "").strip().lower()
+    has_massive = bool(os.environ.get("MASSIVE_API_KEY"))
+    has_fds = bool(os.environ.get("FINANCIAL_DATASETS_API_KEY"))
+
+    massive_first = {"prices", "news", "market_cap"}
+    fds_first = {"fundamentals", "line_items", "insider_trades"}
+
+    if data_type in massive_first:
+        if has_massive:
+            return "massive"
+        return "fds"
+    if data_type in fds_first:
+        if has_fds:
+            return "fds"
+        return "massive"
+    # Fall back to the legacy global picker for anything else.
+    if explicit:
+        return _provider()
+    return _provider()
 
 
 def _massive_client() -> MassiveClient:
@@ -124,10 +168,18 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None 
     if cached_data := _cache.get_prices(cache_key):
         return [Price(**price) for price in cached_data]
 
-    if _provider() == "massive":
+    # Per-data-type routing: prices always try Massive first (broad coverage
+    # for tickers FDS misses — ASTS, NBIS, smaller caps). If Massive returns
+    # empty (or isn't configured), fall back to FDS so legacy plans still work.
+    primary = _provider_for("prices")
+    if primary == "massive":
         prices = _massive_prices(ticker, start_date, end_date)
+        if not prices and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+            prices = _fds_prices(ticker, start_date, end_date, api_key)
     else:
         prices = _fds_prices(ticker, start_date, end_date, api_key)
+        if not prices and os.environ.get("MASSIVE_API_KEY"):
+            prices = _massive_prices(ticker, start_date, end_date)
 
     if not prices:
         return []
@@ -175,10 +227,18 @@ def get_financial_metrics(
     if cached_data := _cache.get_financial_metrics(cache_key):
         return [FinancialMetrics(**metric) for metric in cached_data]
 
-    if _provider() == "massive":
-        metrics = _massive_financial_metrics(ticker, end_date, period, limit)
-    else:
+    # Fundamentals route via FDS first (Massive plan tier doesn't include
+    # the Financials & Ratios expansion). Fall back to Massive if FDS misses
+    # — better than nothing for the agents' downstream reasoning.
+    primary = _provider_for("fundamentals")
+    if primary == "fds":
         metrics = _fds_financial_metrics(ticker, end_date, period, limit, api_key)
+        if not metrics and os.environ.get("MASSIVE_API_KEY"):
+            metrics = _massive_financial_metrics(ticker, end_date, period, limit)
+    else:
+        metrics = _massive_financial_metrics(ticker, end_date, period, limit)
+        if not metrics and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+            metrics = _fds_financial_metrics(ticker, end_date, period, limit, api_key)
 
     if not metrics:
         return []
@@ -243,9 +303,16 @@ def search_line_items(
     api_key: str | None = None,
 ) -> list[LineItem]:
     """Fetch specific income/balance/cash-flow fields, joined by period."""
-    if _provider() == "massive":
-        return _massive_line_items(ticker, line_items, end_date, period, limit)
-    return _fds_line_items(ticker, line_items, end_date, period, limit, api_key)
+    primary = _provider_for("line_items")
+    if primary == "fds":
+        items = _fds_line_items(ticker, line_items, end_date, period, limit, api_key)
+        if not items and os.environ.get("MASSIVE_API_KEY"):
+            items = _massive_line_items(ticker, line_items, end_date, period, limit)
+        return items
+    items = _massive_line_items(ticker, line_items, end_date, period, limit)
+    if not items and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        items = _fds_line_items(ticker, line_items, end_date, period, limit, api_key)
+    return items
 
 
 def _massive_line_items(
@@ -316,13 +383,15 @@ def get_insider_trades(
     limit: int = 1000,
     api_key: str | None = None,
 ) -> list[InsiderTrade]:
-    """Form-4-style insider trades. Empty under the Massive provider."""
-    if _provider() == "massive":
+    """Form-4-style insider trades. Massive doesn't publish them; route to
+    FDS when available, return empty otherwise."""
+    if not os.environ.get("FINANCIAL_DATASETS_API_KEY"):
         global _insider_warning_emitted
         if not _insider_warning_emitted:
             logger.warning(
-                "Massive/Polygon does not publish insider trades — returning []. "
-                "Set DATA_PROVIDER=fds to use financialdatasets.ai for insider data."
+                "Insider trades unavailable: Massive/Polygon doesn't publish them "
+                "and FINANCIAL_DATASETS_API_KEY is not set. Returning [] for all "
+                "future calls this session."
             )
             _insider_warning_emitted = True
         return []
@@ -378,10 +447,15 @@ def get_company_news(
     if cached_data := _cache.get_company_news(cache_key):
         return [CompanyNews(**news) for news in cached_data]
 
-    if _provider() == "massive":
+    primary = _provider_for("news")
+    if primary == "massive":
         news = _massive_news(ticker, start_date, end_date, limit)
+        if not news and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+            news = _fds_news(ticker, start_date, end_date, limit, api_key)
     else:
         news = _fds_news(ticker, start_date, end_date, limit, api_key)
+        if not news and os.environ.get("MASSIVE_API_KEY"):
+            news = _massive_news(ticker, start_date, end_date, limit)
 
     if not news:
         return []
@@ -448,27 +522,42 @@ def get_market_cap(ticker: str, end_date: str, api_key: str | None = None) -> fl
     today = datetime.datetime.now().strftime("%Y-%m-%d")
 
     if end_date == today:
-        if _provider() == "massive":
+        primary = _provider_for("market_cap")
+        # Try the primary provider first, fall back to the other if it returns
+        # None. Massive's ticker-reference endpoint covers the full US
+        # universe; FDS company facts have spotty coverage for smaller names.
+        if primary == "massive" and os.environ.get("MASSIVE_API_KEY"):
             try:
                 details = _massive_client().get_ticker_details(ticker)
+                facts = convert_company_facts(details)
+                mcap = facts.market_cap if facts else None
+                if mcap is not None:
+                    return mcap
             except MassiveError as exc:
                 logger.warning("Massive get_market_cap failed for %s: %s", ticker, exc)
-                return None
-            facts = convert_company_facts(details)
-            return facts.market_cap if facts else None
 
-        # FDS path
-        headers = _fds_headers(api_key)
-        url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
-        response = _make_fds_request(url, headers)
-        if response.status_code != 200:
-            print(f"Error fetching company facts: {ticker} - {response.status_code}")
-            return None
-        try:
-            return CompanyFactsResponse(**response.json()).company_facts.market_cap
-        except Exception as exc:
-            logger.warning("Failed to parse FDS company facts for %s: %s", ticker, exc)
-            return None
+        if os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+            headers = _fds_headers(api_key)
+            url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
+            response = _make_fds_request(url, headers)
+            if response.status_code == 200:
+                try:
+                    mcap = CompanyFactsResponse(**response.json()).company_facts.market_cap
+                    if mcap is not None:
+                        return mcap
+                except Exception as exc:
+                    logger.warning("Failed to parse FDS company facts for %s: %s", exc, ticker)
+
+        # Final fallback: try Massive even if primary was FDS, in case it
+        # wasn't tried above.
+        if primary != "massive" and os.environ.get("MASSIVE_API_KEY"):
+            try:
+                details = _massive_client().get_ticker_details(ticker)
+                facts = convert_company_facts(details)
+                return facts.market_cap if facts else None
+            except MassiveError as exc:
+                logger.warning("Massive get_market_cap fallback failed for %s: %s", ticker, exc)
+        return None
 
     metrics = get_financial_metrics(ticker, end_date, api_key=api_key)
     return metrics[0].market_cap if metrics else None

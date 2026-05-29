@@ -13,7 +13,7 @@ interface OutputTabProps {
 export function OutputTab({ className }: OutputTabProps) {
   const { currentFlowId } = useFlowContext();
   const { getAgentNodeDataForFlow, getOutputNodeDataForFlow } = useNodeContext();
-  const [updateTrigger, setUpdateTrigger] = useState(0);
+  const [, setUpdateTrigger] = useState(0);
   
   // Get current flow data
   const agentData = getAgentNodeDataForFlow(currentFlowId?.toString() || null);

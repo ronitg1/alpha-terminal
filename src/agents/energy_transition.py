@@ -356,19 +356,38 @@ def _generate_energy_output(
                    adders. "high" = multiple stackable credits and meets domestic
                    content threshold; "low" = qualifies but small revenue share;
                    "none" = no material credit exposure.
-                3. FEOC risk — "clean" = no material China/Russia/Iran/NK
-                   supplier exposure in public disclosures; "amber" = some
-                   exposure or pending MACR concerns; "red" = explicit PFE
-                   exposure or recapture risk on 48E credits.
+                3. FEOC risk — pick the best fit:
+                   • "clean" = no material China/Russia/Iran/NK supplier exposure.
+                     This can be inferred from industry knowledge of the company's
+                     supply chain when the news flow is silent or supportive:
+                     e.g. FSLR runs US/Vietnam thin-film with no Chinese poly,
+                     NEE / utility-scale developers procure mostly Tier-1
+                     domestic-content-eligible modules. Use this path when you
+                     have confident industry knowledge AND zero FEOC-flagged
+                     headlines in the regulatory flow.
+                   • "amber" = some exposure or pending MACR concerns, OR the
+                     name is in a sub-sector with known China-supply-chain
+                     dependence (residential solar inverters, lithium-ion cells)
+                     without explicit disclosure of US sourcing.
+                   • "red" = explicit PFE exposure in disclosures, FEOC headline
+                     hits flagging the name, or recapture risk on 48E credits.
+                   • "unknown" = genuinely ambiguous — early-stage, opaque
+                     supply chain, NO confident industry-knowledge prior.
                 4. Unit economics — one sentence on $/kWh, LCOE, or
                    contracted-vs-merchant revenue mix.
                 5. Variant perception — "Consensus is wrong because [X]". If
-                   you cannot find one, you may set signal=neutral.
+                   you cannot find one, you may still produce a directional read
+                   based on the IRA/FEOC scorecard + capex/leverage profile —
+                   set signal accordingly with low/medium conviction. Reserve
+                   signal=neutral for genuinely conflicted setups.
                 6. Signal + position type + conviction.
 
                 Be specific. Cite numbers from the analysis data and from the
-                regulatory headline flow when available. If you do not have
-                evidence on FEOC status, mark it "unknown" — do not guess.
+                regulatory headline flow when available. Industry-knowledge FEOC
+                inference is allowed and encouraged when the headline flow is
+                silent — only fall back to "unknown" when you lack a confident
+                prior. State your inference path in the reasoning field so the
+                reader can audit it.
                 """,
             ),
             (

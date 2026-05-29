@@ -2,7 +2,7 @@ import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 // Define tab types
-export type TabType = 'flow' | 'settings' | 'sleeves';
+export type TabType = 'flow' | 'settings' | 'sleeves' | 'options' | 'backtest' | 'stocks';
 
 export interface Tab {
   id: string;
@@ -73,6 +73,16 @@ export function TabsProvider({ children }: TabsProviderProps) {
       // Singleton tab. Reusing the same id means re-opening focuses the
       // existing tab instead of duplicating it.
       return 'sleeves';
+    }
+    if (type === 'options') {
+      // Same singleton trick — Options is a global-state view.
+      return 'options';
+    }
+    if (type === 'backtest') {
+      return 'backtest';
+    }
+    if (type === 'stocks') {
+      return 'stocks';
     }
     return `${type}-${Date.now()}`;
   }, []);

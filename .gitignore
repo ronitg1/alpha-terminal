@@ -1,4 +1,4 @@
-# Python
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,45 +19,59 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Virtual Environment
+# Virtual environments
 venv/
 ENV/
+.venv/
 
-# Environment Variables
+# ─── Secrets ─────────────────────────────────────────────────────────────────
+# .env carries DEEPSEEK_API_KEY, MASSIVE_API_KEY, FINANCIAL_DATASETS_API_KEY,
+# and optional ANTHROPIC_API_KEY. NEVER commit. Use .env.example as the template.
 .env
+.env.local
+.env.*.local
 
-# IDE
+# ─── IDE / editor ────────────────────────────────────────────────────────────
 .idea/
 .vscode/
 .cursor/
+.claude/
 *.swp
 *.swo
 .cursorrules
 .cursorignore
 .cursorindexingignore
 
-# OS
+# ─── OS ──────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# graph
+# ─── Generated graphs (langgraph PNGs etc.) ──────────────────────────────────
+# Ignore all PNGs by default but allow docs/ illustrations.
 *.png
+!docs/**/*.png
 
-# Txt files
+# ─── Misc generated files ────────────────────────────────────────────────────
 *.txt
-
-# PDF files
+!.well-known/**
 *.pdf
+*.log
 
-# Frontend
-node_modules
+# ─── Frontend ────────────────────────────────────────────────────────────────
+node_modules/
+app/frontend/dist/
+app/frontend/.vite/
+*.tsbuildinfo
 
-# Outputs
+# ─── Scan outputs (per-day CSV + JSON sidecars) ──────────────────────────────
 outputs/
 /scratchpad/
 
-# Database files (users will have their own local databases)
+# ─── Database files ──────────────────────────────────────────────────────────
 *.db
 *.db-journal
 *.db-wal
@@ -65,5 +79,10 @@ outputs/
 *.sqlite
 *.sqlite3
 
-# Alembic (keep migration files, but ignore generated/cache files)
+# ─── Alembic ─────────────────────────────────────────────────────────────────
 app/backend/alembic/versions/__pycache__/
+
+# ─── Dev scratch ─────────────────────────────────────────────────────────────
+_smoke*.py
+_test_*.py
+scratch_*.py

@@ -227,3 +227,103 @@ class MassiveClient:
             "/stocks/financials/v1/ratios",
             {"ticker": ticker.upper(), "limit": limit},
         )
+
+    def list_options_contracts(
+        self,
+        *,
+        underlying: str,
+        as_of: str | None = None,
+        expiration_date_gte: str | None = None,
+        expiration_date_lte: str | None = None,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+        contract_type: str | None = None,
+        expired: bool = True,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Reference-data list of option contracts active as of ``as_of``.
+
+        Wraps Polygon's ``/v3/reference/options/contracts``. Polygon evaluates
+        the ``expired`` flag *relative to* ``as_of`` when both are present, so
+        a backtest looking up contracts active on a past entry date should
+        pass ``expired=False`` (the contract wasn't expired yet on that date).
+        ``expired=True + as_of`` returns zero rows — it would mean "contracts
+        that had already expired by ``as_of``", which is rarely useful.
+        """
+        params: dict[str, Any] = {
+            "underlying_ticker": underlying.upper(),
+            "expired": "true" if expired else "false",
+            "limit": limit,
+        }
+        if as_of:
+            params["as_of"] = as_of
+        if expiration_date_gte:
+            params["expiration_date.gte"] = expiration_date_gte
+        if expiration_date_lte:
+            params["expiration_date.lte"] = expiration_date_lte
+        if strike_price_gte is not None:
+            params["strike_price.gte"] = strike_price_gte
+        if strike_price_lte is not None:
+            params["strike_price.lte"] = strike_price_lte
+        if contract_type:
+            params["contract_type"] = contract_type
+        return self._get("/v3/reference/options/contracts", params)
+
+    def get_option_aggregates(
+        self,
+        option_ticker: str,
+        from_date: str,
+        to_date: str,
+        *,
+        multiplier: int = 1,
+        timespan: str = "day",
+    ) -> dict[str, Any]:
+        """Daily OHLCV bars for a single option contract.
+
+        ``option_ticker`` is the Polygon-formatted contract symbol
+        (e.g. ``O:NVDA260620C00500000``). Wraps
+        ``/v2/aggs/ticker/{option_ticker}/range/{m}/{tspan}/{from}/{to}``.
+        """
+        path = (
+            f"/v2/aggs/ticker/{option_ticker.upper()}/range/"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}"
+        )
+        return self._get(path, {"adjusted": "true", "sort": "asc"})
+
+    def get_options_chain(
+        self,
+        underlying: str,
+        *,
+        expiration_date: str | None = None,
+        expiration_date_gte: str | None = None,
+        expiration_date_lte: str | None = None,
+        contract_type: str | None = None,
+        strike_price_gte: float | None = None,
+        strike_price_lte: float | None = None,
+        limit: int = 250,
+    ) -> dict[str, Any]:
+        """Snapshot of the options chain for ``underlying``.
+
+        Wraps Polygon's ``/v3/snapshot/options/{underlying}``. The endpoint
+        returns one row per contract with strike, expiry, last quote/trade,
+        greeks (delta/gamma/theta/vega), implied vol, OI, and day volume.
+
+        Date filters take ISO ``YYYY-MM-DD``. ``contract_type`` is ``call``
+        or ``put``; omit to receive both. We don't paginate here — 250 rows
+        comfortably covers the ATM-window the screener cares about.
+        """
+        path = f"/v3/snapshot/options/{underlying.upper()}"
+        params: dict[str, Any] = {"limit": limit}
+        if expiration_date:
+            params["expiration_date"] = expiration_date
+        if expiration_date_gte:
+            params["expiration_date.gte"] = expiration_date_gte
+        if expiration_date_lte:
+            params["expiration_date.lte"] = expiration_date_lte
+        if contract_type:
+            params["contract_type"] = contract_type
+        if strike_price_gte is not None:
+            params["strike_price.gte"] = strike_price_gte
+        if strike_price_lte is not None:
+            params["strike_price.lte"] = strike_price_lte
+        return self._get(path, params)

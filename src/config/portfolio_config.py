@@ -43,30 +43,40 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
         "allocation_pct": 50.0,
         "agents": ["energy_transition", "aswath_damodaran", "michael_burry"],
         "agent_weights": {
-            "energy_transition": 0.50,
-            "aswath_damodaran": 0.30,
-            "michael_burry": 0.20,
+            "energy_transition": 0.3333333333333333,
+            "aswath_damodaran": 0.3333333333333333,
+            "michael_burry": 0.33333333333333337,
         },
         "tickers": [
-            # ── solar ──
-            "FSLR", "CSIQ", "JKS", "ARRY", "SEDG", "ENPH",
-            # ── EV charging ──
-            "CHPT", "BLNK", "EVGO",
-            # ── residential storage ──
-            "RUN", "NOVA", "SUNW",
-            # ── C&I storage ──
-            "STEM", "BE",
-            # ── grid / utilities ──
-            "PLPC", "POWL", "VST", "CEG", "NEE", "AES",
+            "FSLR",
+            "CSIQ",
+            "JKS",
+            "ARRY",
+            "SEDG",
+            "ENPH",
+            "CHPT",
+            "BLNK",
+            "EVGO",
+            "RUN",
+            "NOVA",
+            "SUNW",
+            "STEM",
+            "BE",
+            "PLPC",
+            "POWL",
+            "VST",
+            "CEG",
+            "NEE",
+            "AES",
         ],
     },
     "mega_tech": {
         "allocation_pct": 20.0,
         "agents": ["alpha_seeker", "aswath_damodaran", "fundamentals_analyst"],
         "agent_weights": {
-            "alpha_seeker": 0.40,
-            "aswath_damodaran": 0.35,
-            "fundamentals_analyst": 0.25,
+            "alpha_seeker": 0.3333333333333333,
+            "aswath_damodaran": 0.3333333333333333,
+            "fundamentals_analyst": 0.33333333333333337,
         },
         "tickers": ["NVDA", "MSFT", "GOOGL", "META", "AAPL", "AMZN", "TSLA"],
     },
@@ -74,33 +84,37 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
         "allocation_pct": 20.0,
         "agents": ["emerging_tech", "alpha_seeker", "michael_burry"],
         "agent_weights": {
-            "emerging_tech": 0.50,
-            "alpha_seeker": 0.30,
-            "michael_burry": 0.20,
+            "emerging_tech": 0.3333333333333333,
+            "alpha_seeker": 0.3333333333333333,
+            "michael_burry": 0.33333333333333337,
         },
         "tickers": [
-            # ── AI infra / semis ──
-            "ARM", "AVGO", "ALAB", "SMCI",
-            # ── quantum ──
-            "IONQ", "RGTI",
-            # ── space / defense tech ──
-            "RKLB", "LUNR",
-            # ── biotech / longevity ──
-            "RXRX", "NVAX",
-            # ── fintech ──
-            "HOOD", "AFRM", "NU",
+            "ARM",
+            "AVGO",
+            "ALAB",
+            "SMCI",
+            "IONQ",
+            "RGTI",
+            "RKLB",
+            "LUNR",
+            "RXRX",
+            "NVAX",
+            "HOOD",
+            "AFRM",
+            "NU",
         ],
     },
     "opportunistic": {
         "allocation_pct": 10.0,
-        "agents": ["alpha_seeker", "michael_burry"],
+        "agents": ["alpha_seeker", "stanley_druckenmiller", "charlie_munger", "aswath_damodaran", "ben_graham"],
         "agent_weights": {
-            "alpha_seeker": 0.60,
-            "michael_burry": 0.40,
+            "alpha_seeker": 0.2,
+            "stanley_druckenmiller": 0.2,
+            "charlie_munger": 0.2,
+            "aswath_damodaran": 0.2,
+            "ben_graham": 0.19999999999999996,
         },
-        # Populated dynamically from src/config/watchlist.py or via the
-        # --watchlist CLI flag. Intentionally empty at rest.
-        "tickers": [],
+        "tickers": ["NBIS", "ASTS", "DELL", "MU"],
     },
 }
 

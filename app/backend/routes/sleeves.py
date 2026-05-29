@@ -27,7 +27,9 @@ import csv
 import datetime
 import json
 import logging
+import math
 import re
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -48,8 +50,38 @@ from app.backend.services.watchlist_service import (
     read_watchlist_with_comments,
     write_watchlist,
 )
-from src.config.portfolio_config import CASH_RESERVE_PCT, PORTFOLIO_SLEEVES
+import src.config.portfolio_config as _portfolio_config_module
+from src.config.portfolio_config import CASH_RESERVE_PCT  # noqa: F401  (re-read fresh below)
+
+
+def _live_sleeves() -> dict:
+    """Always read the current PORTFOLIO_SLEEVES through the module attribute
+    so importlib.reload (from the sleeve-config service) takes effect mid-process.
+
+    A bare ``from ... import PORTFOLIO_SLEEVES`` binds the name at import time
+    and survives reloads — that's what we're sidestepping here.
+    """
+    return _portfolio_config_module.PORTFOLIO_SLEEVES
+
+
+def _live_cash_reserve() -> float:
+    return _portfolio_config_module.CASH_RESERVE_PCT
+
+
+# Backwards-compatible alias so legacy ``PORTFOLIO_SLEEVES`` references resolve.
+# Each access goes through ``_live_sleeves()`` via __getattr__-style indirection,
+# but Python module-level names can't lazy-load. So we keep this as a plain
+# alias and rely on _live_sleeves() at every call site that needs freshness.
+PORTFOLIO_SLEEVES = _portfolio_config_module.PORTFOLIO_SLEEVES
 from src.config.watchlist import get_watchlist
+from src.tools.api import get_financial_metrics
+from src.tools.massive import (
+    MassiveClient,
+    MassiveError,
+    convert_company_news,
+    convert_prices,
+)
+from src.tools.massive.options import split_calls_puts
 from src.run_morning_scan import (
     TickerRow,
     aggregate_verdicts,
@@ -95,6 +127,138 @@ async def get_analysts() -> dict[str, Any]:
     return {"analysts": get_agents_list()}
 
 
+# ─── /sleeves/ticker/{ticker} ───────────────────────────────────────────────
+
+# Per-ticker payload cache: ``{symbol: (monotonic_inserted_at, payload)}``.
+# Drill drawer opens fire this endpoint; a short TTL keeps repeat opens cheap
+# without holding stale data long enough to mislead. Bumped to ~1h if FDS or
+# Massive credit burn becomes an issue (see plan §Risks).
+_TICKER_CACHE_TTL_SECONDS = 300
+_ticker_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+@router.get("/ticker/{ticker}")
+async def get_ticker_data(ticker: str) -> dict[str, Any]:
+    """90-day price history, latest TTM fundamentals, and top-5 recent news.
+
+    Backs the drill drawer's sparkline / fundamentals card / news list so the
+    drawer renders without needing a fresh agent scan.
+
+    Sources (per HANDOFF.md gotcha #4):
+    - Prices + news come from Massive (Polygon) — the user's plan covers both.
+    - Fundamentals route via ``get_financial_metrics``, which respects
+      ``DATA_PROVIDER`` (FDS in this env, since the Massive plan lacks the
+      Financials & Ratios expansion).
+
+    Each source is independently try/except'd — a failure in one leaves the
+    others intact and the drawer renders around the gap. Results are cached
+    per ticker for 5 minutes.
+    """
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    now = time.monotonic()
+    cached = _ticker_cache.get(symbol)
+    if cached and (now - cached[0]) < _TICKER_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    today = datetime.date.today()
+    end_date = today.isoformat()
+    # Two-year lookback so the frontend's interactive timeframe selector
+    # (1W → 2Y) can slice client-side without an additional fetch. 2y of
+    # daily bars per ticker ≈ 500 rows × ~80 bytes = ~40KB JSON; well within
+    # the 5-min server cache budget. News window stays at 90d (older flow
+    # isn't useful for the drill view).
+    start_date = (today - datetime.timedelta(days=730)).isoformat()
+    news_start = (today - datetime.timedelta(days=90)).isoformat()
+
+    price_history: list[dict[str, Any]] = []
+    try:
+        client = MassiveClient()
+        aggs = await asyncio.to_thread(
+            client.get_daily_aggregates, symbol, start_date, end_date
+        )
+        price_history = [p.model_dump() for p in convert_prices(aggs)]
+    except MassiveError as exc:
+        logger.warning("Massive prices failed for %s: %s", symbol, exc)
+    except Exception:
+        logger.exception("Unexpected price fetch failure for %s", symbol)
+
+    fundamentals: dict[str, Any] | None = None
+    try:
+        metrics = await asyncio.to_thread(
+            get_financial_metrics, symbol, end_date, "ttm", 1
+        )
+        if metrics:
+            fundamentals = metrics[0].model_dump()
+    except Exception:
+        logger.exception("Fundamentals fetch failed for %s", symbol)
+
+    recent_news: list[dict[str, Any]] = []
+    try:
+        client = MassiveClient()
+        news_response = await asyncio.to_thread(
+            client.get_company_news,
+            symbol,
+            start_date=news_start,
+            end_date=end_date,
+            limit=5,
+        )
+        recent_news = [
+            n.model_dump()
+            for n in convert_company_news(news_response, ticker=symbol)
+        ]
+    except MassiveError as exc:
+        logger.warning("Massive news failed for %s: %s", symbol, exc)
+    except Exception:
+        logger.exception("Unexpected news fetch failure for %s", symbol)
+
+    # Company reference data — name, description, industry. Used by the
+    # ticker-detail card to render a "what does this company do" overview.
+    details: dict[str, Any] | None = None
+    try:
+        client = MassiveClient()
+        ref = await asyncio.to_thread(client.get_ticker_details, symbol)
+        results = (ref or {}).get("results") or {}
+        if results:
+            details = {
+                "name": results.get("name"),
+                "description": results.get("description"),
+                "sic_description": results.get("sic_description"),
+                "homepage_url": results.get("homepage_url"),
+                "primary_exchange": results.get("primary_exchange"),
+                "list_date": results.get("list_date"),
+                "total_employees": results.get("total_employees"),
+                "share_class_shares_outstanding": results.get(
+                    "share_class_shares_outstanding"
+                ),
+                # Polygon publishes market_cap on the reference endpoint for
+                # most tickers. Surface it so the frontend can fall back to
+                # it when the FDS fundamentals call returns nothing (e.g.,
+                # small/foreign listings outside FDS coverage). Frontend
+                # uses fundamentals.market_cap first, this second.
+                "market_cap": results.get("market_cap"),
+                # Currency the reference values are denominated in. Polygon
+                # reports CAD for Canadian Solar etc. — useful to label.
+                "currency_name": results.get("currency_name"),
+            }
+    except MassiveError as exc:
+        logger.warning("Massive ticker reference failed for %s: %s", symbol, exc)
+    except Exception:
+        logger.exception("Unexpected ticker-reference failure for %s", symbol)
+
+    payload: dict[str, Any] = {
+        "ticker": symbol,
+        "price_history": price_history,
+        "fundamentals": fundamentals,
+        "recent_news": recent_news,
+        "details": details,
+    }
+    _ticker_cache[symbol] = (now, payload)
+    return payload
+
+
 @router.get("/config")
 async def get_config() -> dict[str, Any]:
     """Return sleeve definitions + cash-reserve floor.
@@ -104,7 +268,7 @@ async def get_config() -> dict[str, Any]:
     and display weights.
     """
     sleeves = []
-    for name, sleeve in PORTFOLIO_SLEEVES.items():
+    for name, sleeve in _live_sleeves().items():
         sleeves.append(
             {
                 "name": name,
@@ -114,7 +278,86 @@ async def get_config() -> dict[str, Any]:
                 "tickers": list(sleeve["tickers"]),
             }
         )
-    return {"sleeves": sleeves, "cash_reserve_pct": CASH_RESERVE_PCT}
+    return {"sleeves": sleeves, "cash_reserve_pct": _live_cash_reserve()}
+
+
+# ─── /sleeves/config/sleeve — CRUD ──────────────────────────────────────────
+
+
+class SleeveDefinition(BaseModel):
+    """Body for create/update. Allocation must keep the total at 100%
+    across all sleeves (validated server-side)."""
+
+    allocation_pct: float = Field(ge=0, le=100, description="0..100, summed across sleeves must = 100.")
+    agents: list[str] = Field(min_length=1, description="Canonical analyst keys (e.g. 'alpha_seeker').")
+    agent_weights: dict[str, float] = Field(description="Per-agent weight; must sum to 1.0 and cover every agent.")
+    tickers: list[str] = Field(default_factory=list, description="Uppercase tickers. May be empty (opportunistic-style).")
+
+
+def _serialize_sleeves(snapshot: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Helper — turn the in-memory snapshot into the wire shape used by /config."""
+    return [
+        {
+            "name": name,
+            "allocation_pct": sleeve["allocation_pct"],
+            "agents": list(sleeve["agents"]),
+            "agent_weights": dict(sleeve["agent_weights"]),
+            "tickers": list(sleeve["tickers"]),
+        }
+        for name, sleeve in snapshot.items()
+    ]
+
+
+class BulkSleevesPayload(BaseModel):
+    """Body for atomic bulk replace. Wraps the dict so OpenAPI documents it
+    properly (instead of an opaque ``Dict[str, Any]``)."""
+
+    sleeves: dict[str, SleeveDefinition] = Field(
+        description="Full sleeves dict — name → definition. Total allocation must sum to 100%.",
+    )
+
+
+@router.put("/config")
+async def replace_all_sleeves_endpoint(payload: BulkSleevesPayload) -> dict[str, Any]:
+    """Atomic bulk replace of the entire PORTFOLIO_SLEEVES dict.
+
+    Use when an edit spans multiple sleeves (e.g. shrinking one to make room
+    for another). One round-trip — no transient out-of-balance states.
+    """
+    from app.backend.services import sleeve_config_service
+
+    raw = {name: defn.model_dump() for name, defn in payload.sleeves.items()}
+    updated = sleeve_config_service.replace_all_sleeves(raw)
+    return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
+
+
+@router.post("/config/sleeve/{name}")
+async def create_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[str, Any]:
+    """Create a new sleeve. Returns the updated full config."""
+    from app.backend.services import sleeve_config_service
+
+    updated = sleeve_config_service.create_sleeve(name, payload.model_dump())
+    return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
+
+
+@router.put("/config/sleeve/{name}")
+async def update_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[str, Any]:
+    """Replace an existing sleeve's definition. Name in the URL is the target."""
+    from app.backend.services import sleeve_config_service
+
+    updated = sleeve_config_service.update_sleeve(name, payload.model_dump())
+    return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
+
+
+@router.delete("/config/sleeve/{name}")
+async def delete_sleeve_endpoint(name: str) -> dict[str, Any]:
+    """Delete a sleeve. Caller must re-balance allocation_pct first if the
+    deleted sleeve had non-zero allocation; the service refuses to leave the
+    totals off 100%."""
+    from app.backend.services import sleeve_config_service
+
+    updated = sleeve_config_service.delete_sleeve(name)
+    return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
 
 # ─── /sleeves/scans ─────────────────────────────────────────────────────────
@@ -377,7 +620,7 @@ def _resolve_selected_sleeves(req: ScanRequest) -> dict[str, dict[str, Any]]:
     """
     base = {
         name: dict(sleeve)
-        for name, sleeve in PORTFOLIO_SLEEVES.items()
+        for name, sleeve in _live_sleeves().items()
         if (req.sleeves is None) or (name in req.sleeves)
     }
     if not base:
@@ -557,6 +800,2350 @@ async def run_scan(req: ScanRequest, request: Request):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# ─── /sleeves/options/* (screener + chain) ──────────────────────────────────
+
+# Conviction-signal screener cache: 5 min. The underlying daily-bar inputs
+# don't change intraday, so a fresher TTL would just burn API calls.
+_SCREENER_CACHE_TTL_SECONDS = 300
+_screener_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+# Option chain cache: 60s. Quotes move, so refresh aggressively — but spammy
+# expansions of one ticker shouldn't pin Massive's per-minute limit.
+_CHAIN_CACHE_TTL_SECONDS = 60
+_chain_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+# Benchmark for the lagging-mega-tech screen. Hard-coded since the screener's
+# definition is "lagging QQQ" — changing the benchmark would change the
+# strategy, not a config knob.
+_BENCHMARK_TICKER = "QQQ"
+
+
+def _compute_rsi(closes: list[float], period: int = 14) -> float | None:
+    """Standard 14-day RSI from a closes list (oldest → newest).
+
+    Returns ``None`` if there aren't enough bars. Uses the simple-average
+    seed (Wilder smoothing not applied) — appropriate for a short window
+    where the difference is in noise.
+    """
+    if len(closes) <= period:
+        return None
+    gains: list[float] = []
+    losses: list[float] = []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        if diff >= 0:
+            gains.append(diff)
+            losses.append(0.0)
+        else:
+            gains.append(0.0)
+            losses.append(-diff)
+    # Use the trailing ``period`` bars for the average.
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _return_over(closes: list[float], days: int) -> float | None:
+    """Pct change over the last ``days`` trading bars. Returns fractional
+    (0.05 = +5%). ``None`` if not enough history."""
+    if len(closes) <= days:
+        return None
+    end = closes[-1]
+    start = closes[-(days + 1)]
+    if start == 0:
+        return None
+    return (end - start) / start
+
+
+def _fetch_closes(client: MassiveClient, ticker: str, start: str, end: str) -> list[float]:
+    """Daily closes for ``ticker`` between dates. Empty on any failure —
+    the screener row will just report ``None`` for affected signals."""
+    try:
+        aggs = client.get_daily_aggregates(ticker, start, end)
+    except MassiveError as exc:
+        logger.warning("Massive prices failed for %s: %s", ticker, exc)
+        return []
+    return [p.close for p in convert_prices(aggs)]
+
+
+def _fetch_bars(client: MassiveClient, ticker: str, start: str, end: str):
+    """Daily OHLCV bars for ``ticker``. Returns ``list[Price]`` — same model
+    convert_prices emits. Empty on any failure.
+
+    Returns full bars because the new technical-pattern scorers (breakout,
+    volume spike, etc) need volume + high + low in addition to close.
+    """
+    try:
+        aggs = client.get_daily_aggregates(ticker, start, end)
+    except MassiveError as exc:
+        logger.warning("Massive prices failed for %s: %s", ticker, exc)
+        return []
+    return convert_prices(aggs)
+
+
+# ─── Screener strategies ────────────────────────────────────────────────────
+
+# Each scorer returns a generic dict:
+#   {
+#     "conviction": int (0..3),
+#     "signals":    list of {label, value_text, fired, tooltip},
+#     "sort_key":   float (lower = ranks earlier within same conviction),
+#     "last_price": float | None,
+#   }
+#
+# The frontend renders the chips directly from `signals` so adding a new
+# strategy here automatically lights up its chips in the UI — no template
+# changes required.
+
+
+def _mean(xs: list[float]) -> float:
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def _stddev(xs: list[float], mean: float) -> float:
+    if len(xs) < 2:
+        return 0.0
+    var = sum((x - mean) ** 2 for x in xs) / (len(xs) - 1)
+    return math.sqrt(var)
+
+
+def _signal(label: str, value_text: str, fired: bool, tooltip: str) -> dict[str, Any]:
+    return {"label": label, "value_text": value_text, "fired": fired, "tooltip": tooltip}
+
+
+def _recommendation(
+    *,
+    direction: str,
+    strike_offset_pct: float = 0.0,
+    expiry_lean: str = "near",
+    reasoning: str,
+) -> dict[str, Any]:
+    """Per-strategy contract recommendation packaged for the frontend.
+
+    The chain viewer uses ``direction`` ('call' | 'put') to pick which side
+    of the chain to highlight, ``strike_offset_pct`` to find the strike
+    closest to ``spot × (1 + offset/100)``, and renders ``reasoning`` as the
+    explanation banner. ``expiry_lean`` is a hint ('near' = weeklies, 'mid'
+    = 2-4 weeks, 'far' = monthlies+) shown alongside the highlighted row.
+    """
+    return {
+        "direction": direction,
+        "strike_offset_pct": strike_offset_pct,
+        "expiry_lean": expiry_lean,
+        "reasoning": reasoning,
+    }
+
+
+def _fmt_pct(n: float | None) -> str:
+    if n is None or not math.isfinite(n):
+        return "—"
+    sign = "+" if n >= 0 else ""
+    return f"{sign}{n * 100:.1f}%"
+
+
+def _fmt_num(n: float | None, digits: int = 1) -> str:
+    if n is None or not math.isfinite(n):
+        return "—"
+    return f"{n:.{digits}f}"
+
+
+def _closes(bars: list) -> list[float]:
+    return [b.close for b in bars]
+
+
+def _volumes(bars: list) -> list[int]:
+    return [b.volume for b in bars]
+
+
+def _highs(bars: list) -> list[float]:
+    return [b.high for b in bars]
+
+
+def _lows(bars: list) -> list[float]:
+    return [b.low for b in bars]
+
+
+# ─── Existing four scorers (now bars-based) ─────────────────────────────────
+#
+# All scorers take ``(bars, qqq_bars, **kwargs)`` so the dispatcher can pass
+# optional context (ticker, client) for strategies that need to fetch the
+# options chain inline. Most scorers ignore the kwargs.
+
+
+def _score_weakness(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Lagging QQQ + oversold. Bounce-trade calls or continuation puts."""
+    closes = _closes(bars)
+    qqq_closes = _closes(qqq_bars)
+    last_price = closes[-1] if closes else None
+    r20 = _return_over(closes, 20)
+    r5 = _return_over(closes, 5)
+    rsi = _compute_rsi(closes, 14)
+    q20 = _return_over(qqq_closes, 20)
+    q5 = _return_over(qqq_closes, 5)
+    d20 = (r20 - q20) if (r20 is not None and q20 is not None) else None
+    d5 = (r5 - q5) if (r5 is not None and q5 is not None) else None
+
+    signals = [
+        _signal(
+            "20d vs QQQ",
+            _fmt_pct(d20),
+            d20 is not None and d20 < -0.02,
+            f"Ticker {_fmt_pct(r20)} vs QQQ {_fmt_pct(q20)} over 20 trading days. Fires when gap is worse than −2%.",
+        ),
+        _signal(
+            "5d vs QQQ",
+            _fmt_pct(d5),
+            d5 is not None and d5 < -0.01,
+            f"Ticker {_fmt_pct(r5)} vs QQQ {_fmt_pct(q5)} over 5 trading days. Fires when gap is worse than −1%.",
+        ),
+        _signal(
+            "RSI",
+            _fmt_num(rsi, 0),
+            rsi is not None and rsi < 45,
+            f"Relative Strength Index (14d). Fires when below 45 (approaching oversold). Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = d20 if d20 is not None else 0.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="call",
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                "Oversold name lagging QQQ — bounce trade. ATM call captures the "
+                "snap-back with ~0.5 delta exposure. Near-term weekly keeps theta "
+                "manageable; if the bounce hasn't started in 1–2 weeks, the thesis is wrong."
+            ),
+        ),
+    }
+
+
+def _score_strength(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Leading QQQ + overbought. Breakout calls or mean-reversion puts."""
+    closes = _closes(bars)
+    qqq_closes = _closes(qqq_bars)
+    last_price = closes[-1] if closes else None
+    r20 = _return_over(closes, 20)
+    r5 = _return_over(closes, 5)
+    rsi = _compute_rsi(closes, 14)
+    q20 = _return_over(qqq_closes, 20)
+    q5 = _return_over(qqq_closes, 5)
+    d20 = (r20 - q20) if (r20 is not None and q20 is not None) else None
+    d5 = (r5 - q5) if (r5 is not None and q5 is not None) else None
+
+    signals = [
+        _signal(
+            "20d vs QQQ",
+            _fmt_pct(d20),
+            d20 is not None and d20 > 0.02,
+            f"Ticker {_fmt_pct(r20)} vs QQQ {_fmt_pct(q20)} over 20 trading days. Fires when gap is better than +2%.",
+        ),
+        _signal(
+            "5d vs QQQ",
+            _fmt_pct(d5),
+            d5 is not None and d5 > 0.01,
+            f"Ticker {_fmt_pct(r5)} vs QQQ {_fmt_pct(q5)} over 5 trading days. Fires when gap is better than +1%.",
+        ),
+        _signal(
+            "RSI",
+            _fmt_num(rsi, 0),
+            rsi is not None and rsi > 55,
+            f"Relative Strength Index (14d). Fires when above 55 (approaching overbought). Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -d20 if d20 is not None else 0.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="put",
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                "Overbought name leading QQQ — mean-reversion fade. ATM put "
+                "captures the pullback. Use a near-term weekly so you're not "
+                "fighting theta if the trend keeps running."
+            ),
+        ),
+    }
+
+
+def _score_momentum(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Pure absolute trend follow. No benchmark — just up-and-to-the-right."""
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+    r20 = _return_over(closes, 20)
+    r5 = _return_over(closes, 5)
+    rsi = _compute_rsi(closes, 14)
+
+    signals = [
+        _signal(
+            "20d return",
+            _fmt_pct(r20),
+            r20 is not None and r20 > 0.05,
+            f"Absolute 20-day return. Fires when > +5%. Current: {_fmt_pct(r20)}.",
+        ),
+        _signal(
+            "5d return",
+            _fmt_pct(r5),
+            r5 is not None and r5 > 0.02,
+            f"Absolute 5-day return. Fires when > +2%. Current: {_fmt_pct(r5)}.",
+        ),
+        _signal(
+            "RSI",
+            _fmt_num(rsi, 0),
+            rsi is not None and rsi > 60,
+            f"RSI (14d). Fires when > 60 (strong momentum, not yet exhausted). Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -r20 if r20 is not None else 0.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="call",
+            strike_offset_pct=2.0,
+            expiry_lean="mid",
+            reasoning=(
+                "Trending up with momentum — ride the move. 2% OTM call gives "
+                "leverage on continuation while keeping premium reasonable. Use a "
+                "2–4 week expiry so theta isn't punishing if the move stalls a few days."
+            ),
+        ),
+    }
+
+
+def _score_mean_reversion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Stretched far from 20-day average. Bet on a snap-back in either direction."""
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+    rsi = _compute_rsi(closes, 14)
+
+    z = None
+    pct_from_ma = None
+    if len(closes) >= 20:
+        window = closes[-20:]
+        mean = _mean(window)
+        sd = _stddev(window, mean)
+        if sd > 0 and last_price is not None:
+            z = (last_price - mean) / sd
+            pct_from_ma = (last_price - mean) / mean
+
+    r5 = _return_over(closes, 5)
+
+    signals = [
+        _signal(
+            "Z-score (20d)",
+            _fmt_num(z, 2),
+            z is not None and abs(z) > 1.5,
+            f"How many 20-day standard deviations the price is from its 20-day mean. Fires when |z| > 1.5 (statistically stretched). "
+            f"Current: z={_fmt_num(z, 2)} ({_fmt_pct(pct_from_ma)} from 20d MA).",
+        ),
+        _signal(
+            "5d move",
+            _fmt_pct(r5),
+            r5 is not None and abs(r5) > 0.05,
+            f"Absolute 5-day return. Fires when |move| > 5% (large recent swing). Current: {_fmt_pct(r5)}.",
+        ),
+        _signal(
+            "RSI extreme",
+            _fmt_num(rsi, 0),
+            rsi is not None and (rsi > 70 or rsi < 30),
+            f"RSI (14d). Fires when > 70 (overbought, snap-back via puts) or < 30 (oversold, snap-back via calls). Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -abs(z) if z is not None else 0.0
+    # Direction inverts based on which side of the mean the price has stretched
+    # to: above-mean → expect pullback (puts), below-mean → expect bounce (calls).
+    if z is not None and z > 0:
+        direction = "put"
+        why = "Price stretched above the 20-day mean — fade with a put expecting reversion."
+    else:
+        direction = "call"
+        why = "Price stretched below the 20-day mean — bounce trade with a call."
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction=direction,
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                f"{why} ATM strike for ~0.5 delta — symmetric exposure to the "
+                "snap-back. Near-term weekly: if reversion doesn't start fast, the setup decays."
+            ),
+        ),
+    }
+
+
+# ─── New: technical-pattern scorers ─────────────────────────────────────────
+
+
+def _score_breakout(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Near 52-week high + volume surge + RSI momentum. Bullish continuation
+    setup — calls on the breakout. Reliable in trending markets, less so in chop."""
+    closes = _closes(bars)
+    highs = _highs(bars)
+    vols = _volumes(bars)
+    last_price = closes[-1] if closes else None
+    rsi = _compute_rsi(closes, 14)
+
+    # 52-week high (up to ~252 trading days)
+    yr = highs[-252:] if len(highs) >= 252 else highs
+    high_52w = max(yr) if yr else None
+    pct_to_high = ((last_price - high_52w) / high_52w) if (last_price and high_52w) else None
+    # negative = below high; near-high means pct_to_high in [-0.05, 0]
+    near_high = pct_to_high is not None and -0.05 <= pct_to_high <= 0.005
+
+    # Volume surge: today vs trailing 20d average (excluding today)
+    vol_ratio = None
+    if len(vols) >= 21:
+        baseline = sum(vols[-21:-1]) / 20
+        if baseline > 0:
+            vol_ratio = vols[-1] / baseline
+
+    signals = [
+        _signal(
+            "near 52w high",
+            _fmt_pct(pct_to_high),
+            near_high,
+            f"Distance from the trailing 52-week high. Fires when within 5% of the high (and not already above by >0.5%). "
+            f"52w high: {_fmt_num(high_52w, 2)}, current: {_fmt_num(last_price, 2)}.",
+        ),
+        _signal(
+            "volume surge",
+            f"{_fmt_num(vol_ratio, 2)}×" if vol_ratio is not None else "—",
+            vol_ratio is not None and vol_ratio > 1.5,
+            f"Today's volume vs trailing 20-day average. Fires when > 1.5× (participation confirms the move). "
+            f"Current: {_fmt_num(vol_ratio, 2)}×.",
+        ),
+        _signal(
+            "RSI",
+            _fmt_num(rsi, 0),
+            rsi is not None and rsi > 60,
+            f"RSI (14d). Fires when > 60 — momentum behind the breakout, not yet overbought. Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -pct_to_high if pct_to_high is not None else 0.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="call",
+            strike_offset_pct=2.0,
+            expiry_lean="mid",
+            reasoning=(
+                "Pressing the 52-week high on volume — momentum breakout. "
+                "2% OTM call above the breakout level: cheap leverage that pays "
+                "if the breakout sticks. 2–4 week expiry gives the trend room "
+                "without bleeding theta on a failed breakout."
+            ),
+        ),
+    }
+
+
+def _score_breakdown(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Near 52-week low + volume surge + downside momentum. Bearish mirror
+    of Breakout — puts on the continuation."""
+    closes = _closes(bars)
+    lows = _lows(bars)
+    vols = _volumes(bars)
+    last_price = closes[-1] if closes else None
+    rsi = _compute_rsi(closes, 14)
+
+    yr_lows = lows[-252:] if len(lows) >= 252 else lows
+    low_52w = min(yr_lows) if yr_lows else None
+    pct_above_low = ((last_price - low_52w) / low_52w) if (last_price and low_52w) else None
+    near_low = pct_above_low is not None and -0.005 <= pct_above_low <= 0.05
+
+    vol_ratio = None
+    if len(vols) >= 21:
+        baseline = sum(vols[-21:-1]) / 20
+        if baseline > 0:
+            vol_ratio = vols[-1] / baseline
+
+    signals = [
+        _signal(
+            "near 52w low",
+            _fmt_pct(pct_above_low),
+            near_low,
+            f"Distance above the trailing 52-week low. Fires when within 5% of the low. "
+            f"52w low: {_fmt_num(low_52w, 2)}, current: {_fmt_num(last_price, 2)}.",
+        ),
+        _signal(
+            "volume surge",
+            f"{_fmt_num(vol_ratio, 2)}×" if vol_ratio is not None else "—",
+            vol_ratio is not None and vol_ratio > 1.5,
+            f"Today's volume vs trailing 20-day average. Fires when > 1.5× (capitulation flow). "
+            f"Current: {_fmt_num(vol_ratio, 2)}×.",
+        ),
+        _signal(
+            "RSI",
+            _fmt_num(rsi, 0),
+            rsi is not None and rsi < 40,
+            f"RSI (14d). Fires when < 40 — sustained downside momentum. Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = pct_above_low if pct_above_low is not None else 0.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="put",
+            strike_offset_pct=-2.0,
+            expiry_lean="mid",
+            reasoning=(
+                "Breaking 52-week support on volume — capitulation in motion. "
+                "2% OTM put below current price: leveraged downside if the "
+                "breakdown continues. 2–4 week expiry to outlast a dead-cat bounce."
+            ),
+        ),
+    }
+
+
+def _score_volume_spike(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Unusual volume + big move + close at the wick extreme. Direction-agnostic:
+    surfaces "something is happening" names. User picks calls or puts based on
+    whether the close is at the day's high (bullish) or low (bearish)."""
+    closes = _closes(bars)
+    highs = _highs(bars)
+    lows = _lows(bars)
+    vols = _volumes(bars)
+
+    if not bars:
+        return {"conviction": 0, "signals": [], "sort_key": 0.0, "last_price": None}
+
+    last_price = closes[-1]
+    # Today's move vs yesterday's close.
+    today_return = ((closes[-1] - closes[-2]) / closes[-2]) if len(closes) >= 2 and closes[-2] else None
+
+    # Volume ratio
+    vol_ratio = None
+    if len(vols) >= 21:
+        baseline = sum(vols[-21:-1]) / 20
+        if baseline > 0:
+            vol_ratio = vols[-1] / baseline
+
+    # Close-in-range: 0 = closed at day's low, 1 = closed at day's high.
+    today_hi = highs[-1]
+    today_lo = lows[-1]
+    rng = today_hi - today_lo
+    close_in_range = ((closes[-1] - today_lo) / rng) if rng > 0 else 0.5
+    # Conviction in either direction: top 25% bullish, bottom 25% bearish.
+    wick_extreme = close_in_range >= 0.75 or close_in_range <= 0.25
+
+    signals = [
+        _signal(
+            "volume",
+            f"{_fmt_num(vol_ratio, 2)}×" if vol_ratio is not None else "—",
+            vol_ratio is not None and vol_ratio > 2.0,
+            f"Today's volume vs trailing 20-day average. Fires when > 2× (real flow, not noise). "
+            f"Current: {_fmt_num(vol_ratio, 2)}×.",
+        ),
+        _signal(
+            "today move",
+            _fmt_pct(today_return),
+            today_return is not None and abs(today_return) > 0.03,
+            f"Today's return vs prior close. Fires when |move| > 3%. Current: {_fmt_pct(today_return)}.",
+        ),
+        _signal(
+            "close-at-wick",
+            f"{close_in_range:.0%} of range",
+            wick_extreme,
+            "Where today's close sits inside today's high–low range. Fires when in the top 25% "
+            "(close-on-high → bullish conviction) or bottom 25% (close-on-low → bearish). "
+            f"Current: {close_in_range:.0%}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    direction_sign = 1 if close_in_range >= 0.5 else -1
+    score = (vol_ratio or 0) * abs(today_return or 0) * direction_sign
+    sort_key = -score
+    # Direction follows the close: top of day's range → bullish flow → calls;
+    # bottom of range → bearish flow → puts.
+    if close_in_range >= 0.5:
+        rec_dir, rec_why = "call", "Closed near the high of the day on unusual volume — bullish flow."
+    else:
+        rec_dir, rec_why = "put", "Closed near the low of the day on unusual volume — bearish flow."
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction=rec_dir,
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                f"{rec_why} ATM strike captures direction with maximum gamma. "
+                "Near-term weekly: ride the day's flow into the next 1–5 sessions."
+            ),
+        ),
+    }
+
+
+def _score_pullback(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Price near 20/50d MA + above 200d MA + mild RSI dip. The "buy the dip"
+    retail setup — calls on the bounce off the moving average."""
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+    rsi = _compute_rsi(closes, 14)
+
+    sma20 = _mean(closes[-20:]) if len(closes) >= 20 else None
+    sma50 = _mean(closes[-50:]) if len(closes) >= 50 else None
+    sma200 = _mean(closes[-200:]) if len(closes) >= 200 else None
+
+    near_ma_pct = None
+    if last_price is not None:
+        dists = []
+        if sma20 is not None:
+            dists.append(abs(last_price - sma20) / sma20)
+        if sma50 is not None:
+            dists.append(abs(last_price - sma50) / sma50)
+        if dists:
+            near_ma_pct = min(dists)
+    near_ma = near_ma_pct is not None and near_ma_pct < 0.03
+
+    above_200 = sma200 is not None and last_price is not None and last_price > sma200
+
+    signals = [
+        _signal(
+            "near 20/50d MA",
+            _fmt_pct(near_ma_pct),
+            near_ma,
+            f"Distance to the closer of the 20d or 50d moving average. Fires when within 3% — price is testing support. "
+            f"Current: {_fmt_pct(near_ma_pct)} away.",
+        ),
+        _signal(
+            "uptrend (>200d MA)",
+            "yes" if above_200 else "no",
+            above_200,
+            f"Price > 200-day MA confirms the longer-term uptrend, so the pullback is a dip in a bull, not a downtrend. "
+            f"200d MA: {_fmt_num(sma200, 2)}, current: {_fmt_num(last_price, 2)}.",
+        ),
+        _signal(
+            "RSI dip",
+            _fmt_num(rsi, 0),
+            rsi is not None and 35 <= rsi <= 55,
+            f"RSI (14d) in the 35–55 band. Fires when momentum has cooled but isn't crashing. "
+            f"Current: {_fmt_num(rsi, 1)}.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = near_ma_pct if near_ma_pct is not None else 1.0
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction="call",
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                "Buy-the-dip in an uptrend — price has retraced to support at the "
+                "20/50d MA. ATM call captures the bounce with ~0.5 delta. "
+                "Near-term weekly: the bounce off support usually happens within 3–5 sessions."
+            ),
+        ),
+    }
+
+
+def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """50d/200d MA cross context + accelerating gap. Slow, strategic signal —
+    pairs naturally with longer-dated options. Direction follows whichever side
+    the 50d is on relative to the 200d.
+
+    All three signals look the same in either direction; the user reads the
+    sign of the chip values to know which way to lean.
+    """
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+
+    if len(closes) < 210:
+        return {
+            "conviction": 0,
+            "signals": [
+                _signal("50/200d cross", "—", False, "Need ≥210 bars of history to compute the 200d MA."),
+                _signal("price vs 50d MA", "—", False, "Need ≥50 bars of history."),
+                _signal("gap widening", "—", False, "Need ≥10 bars of history past the cross."),
+            ],
+            "sort_key": 0.0,
+            "last_price": last_price,
+            "recommendation": _recommendation(
+                direction="call",
+                strike_offset_pct=0.0,
+                expiry_lean="far",
+                reasoning="Not enough history to compute a Trend Bias recommendation.",
+            ),
+        }
+
+    sma50_now = _mean(closes[-50:])
+    sma200_now = _mean(closes[-200:])
+    cross_gap = sma50_now - sma200_now
+    cross_state = "Golden" if cross_gap > 0 else "Death"
+
+    sma50_then = _mean(closes[-60:-10])
+    sma200_then = _mean(closes[-210:-10])
+    cross_gap_then = sma50_then - sma200_then
+
+    # Widening: gap has grown (in the direction of the current cross) over the last 10 days.
+    widening = (cross_gap - cross_gap_then) * (1 if cross_gap > 0 else -1) > 0
+
+    price_vs_50 = (last_price - sma50_now) / sma50_now if sma50_now > 0 else 0.0
+    price_trend_aligned = (price_vs_50 > 0 and cross_gap > 0) or (price_vs_50 < 0 and cross_gap < 0)
+
+    signals = [
+        _signal(
+            "50/200d cross",
+            cross_state,
+            True,  # always informational — fired = "we have a stance"
+            f"50d MA {_fmt_num(sma50_now, 2)} vs 200d MA {_fmt_num(sma200_now, 2)}. "
+            f"50d above = Golden Cross (uptrend); below = Death Cross (downtrend). "
+            f"Current gap: {_fmt_num(cross_gap, 2)}.",
+        ),
+        _signal(
+            "price vs 50d",
+            _fmt_pct(price_vs_50),
+            price_trend_aligned,
+            f"Price {_fmt_pct(price_vs_50)} from 50d MA. Fires when price is on the same side of the 50d MA as "
+            f"the trend (above in Golden, below in Death) — riding the trend, not fading it.",
+        ),
+        _signal(
+            "trend accelerating",
+            "yes" if widening else "no",
+            widening,
+            f"50d–200d gap has widened in the trend's direction over the last 10 days. "
+            f"Fires when the trend is gaining strength, not stalling.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -abs(cross_gap) if cross_gap is not None else 0.0
+    # Direction follows the cross state.
+    if cross_gap > 0:
+        rec_dir, cross_label = "call", "Golden Cross"
+    else:
+        rec_dir, cross_label = "put", "Death Cross"
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction=rec_dir,
+            strike_offset_pct=0.0,
+            expiry_lean="far",
+            reasoning=(
+                f"{cross_label} regime — long-term trend signal. ATM strike with "
+                "a 1–2 month expiry: this is a strategic position, not a tactical "
+                "one. Give it time to play out."
+            ),
+        ),
+    }
+
+
+def _realized_vol(closes: list[float], window: int) -> float | None:
+    """Annualized realized vol from log returns over the trailing ``window`` bars.
+
+    Returns ``None`` when there isn't enough history. Annualized via √252.
+    """
+    if len(closes) <= window:
+        return None
+    rets: list[float] = []
+    for i in range(len(closes) - window, len(closes)):
+        if i == 0 or closes[i - 1] <= 0:
+            continue
+        rets.append(math.log(closes[i] / closes[i - 1]))
+    if len(rets) < 2:
+        return None
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(var) * math.sqrt(252)
+
+
+def _score_vol_expansion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+    """Realized-vol regime change. Surfaces names where short-term vol has
+    blown out relative to the trailing baseline — options are likely rich
+    and the underlying is moving enough to make either premium-selling or
+    long-vol plays interesting.
+
+    We use realized vol as an IV proxy because the screener doesn't have
+    historical IV rank wired (would need a separate vol-history pipeline).
+    Realized-vol expansion is a strong leading indicator of IV expansion in
+    practice.
+    """
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+    rv5 = _realized_vol(closes, 5)
+    rv30 = _realized_vol(closes, 30)
+    today_return = ((closes[-1] - closes[-2]) / closes[-2]) if len(closes) >= 2 and closes[-2] else None
+    vol_ratio = (rv5 / rv30) if (rv5 is not None and rv30 is not None and rv30 > 0) else None
+
+    signals = [
+        _signal(
+            "vol expansion",
+            f"{_fmt_num(vol_ratio, 2)}×" if vol_ratio is not None else "—",
+            vol_ratio is not None and vol_ratio > 1.5,
+            f"5-day realized vol vs trailing 30-day. Fires when > 1.5× (regime change in motion). "
+            f"5d realized vol {_fmt_num((rv5 or 0) * 100, 1)}% annualized, 30d {_fmt_num((rv30 or 0) * 100, 1)}%.",
+        ),
+        _signal(
+            "5d realized vol",
+            f"{_fmt_num((rv5 or 0) * 100, 0)}%",
+            rv5 is not None and rv5 > 0.40,
+            f"Annualized 5-day realized vol. Fires when > 40% (premium is rich in absolute terms — good for selling).",
+        ),
+        _signal(
+            "today move",
+            _fmt_pct(today_return),
+            today_return is not None and abs(today_return) > 0.02,
+            f"Today's return vs prior close. Fires when |move| > 2% (the trigger that's driving the vol regime change).",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -rv5 if rv5 is not None else 0.0
+    # Direction follows today's trigger move — wherever the regime is breaking.
+    if today_return is not None and today_return >= 0:
+        rec_dir, rec_why = "call", "Vol regime expanding to the upside — follow with calls."
+    else:
+        rec_dir, rec_why = "put", "Vol regime expanding to the downside — follow with puts."
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction=rec_dir,
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                f"{rec_why} ATM strike for maximum gamma into the next move. "
+                "Near-term weekly: realized vol blowouts usually mean-revert within "
+                "1–2 weeks, so don't pay for more time than you need."
+            ),
+        ),
+    }
+
+
+def _score_unusual_options_activity(
+    bars: list,
+    _qqq_bars: list,
+    *,
+    ticker: str | None = None,
+    client: MassiveClient | None = None,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    """Unusual options activity — scans the underlying's chain looking for
+    individual contracts with volume that significantly exceeds open interest
+    (vol/OI > 2 = new positioning, often called 'sweep' or 'flow').
+
+    Cost: one chain HTTP call per ticker. The screener caches its full result
+    so a refresh only pays once per (sleeve, strategy, min_price) per 5 min.
+
+    Surfaces tickers where smart-money may be establishing a directional
+    position. The chain viewer below the card shows the actual contracts so
+    the user can spot which strikes are being bought.
+    """
+    closes = _closes(bars)
+    last_price = closes[-1] if closes else None
+
+    # Degenerate / harness inputs: return an empty scorecard rather than
+    # making an HTTP call we can't satisfy.
+    if ticker is None or client is None or last_price is None:
+        return {
+            "conviction": 0,
+            "signals": [
+                _signal("max vol/OI", "—", False, "No chain context available."),
+                _signal("max contract vol", "—", False, "No chain context available."),
+                _signal("OTM concentration", "—", False, "No chain context available."),
+            ],
+            "sort_key": 0.0,
+            "last_price": last_price,
+            "recommendation": _recommendation(
+                direction="call",
+                strike_offset_pct=0.0,
+                expiry_lean="near",
+                reasoning="No chain data available — recommendation unavailable.",
+            ),
+        }
+
+    # Pull the chain across the next 30 days at a wider strike band (±15%)
+    # so we catch OTM activity — speculative flow lives OTM.
+    today = datetime.date.today()
+    horizon_end = (today + datetime.timedelta(days=30)).isoformat()
+    low_strike = last_price * 0.85
+    high_strike = last_price * 1.15
+
+    try:
+        raw = client.get_options_chain(
+            ticker,
+            expiration_date_gte=today.isoformat(),
+            expiration_date_lte=horizon_end,
+            strike_price_gte=low_strike,
+            strike_price_lte=high_strike,
+            limit=250,
+        )
+    except MassiveError as exc:
+        logger.warning("UOA chain fetch failed for %s: %s", ticker, exc)
+        return {
+            "conviction": 0,
+            "signals": [
+                _signal("max vol/OI", "—", False, f"Chain fetch failed: {exc}"),
+                _signal("max contract vol", "—", False, ""),
+                _signal("OTM concentration", "—", False, ""),
+            ],
+            "sort_key": 0.0,
+            "last_price": last_price,
+            "recommendation": _recommendation(
+                direction="call",
+                strike_offset_pct=0.0,
+                expiry_lean="near",
+                reasoning=f"Chain fetch failed — recommendation unavailable. {exc}",
+            ),
+        }
+
+    rows = raw.get("results") or []
+    if not rows:
+        return {
+            "conviction": 0,
+            "signals": [
+                _signal("max vol/OI", "—", False, "No contracts in window."),
+                _signal("max contract vol", "—", False, ""),
+                _signal("OTM concentration", "—", False, ""),
+            ],
+            "sort_key": 0.0,
+            "last_price": last_price,
+            "recommendation": _recommendation(
+                direction="call",
+                strike_offset_pct=0.0,
+                expiry_lean="near",
+                reasoning="No contracts in the scan window — recommendation unavailable.",
+            ),
+        }
+
+    max_vol_oi = 0.0
+    max_contract_vol = 0
+    total_vol = 0
+    otm_vol = 0
+    otm_call_vol = 0
+    otm_put_vol = 0
+    for r in rows:
+        day = r.get("day") or {}
+        vol = day.get("volume") or 0
+        oi = r.get("open_interest") or 0
+        details = r.get("details") or {}
+        strike = details.get("strike_price")
+        contract_type = details.get("contract_type")
+        if vol > max_contract_vol:
+            max_contract_vol = vol
+        if oi > 0 and vol > 0:
+            ratio = vol / oi
+            if ratio > max_vol_oi:
+                max_vol_oi = ratio
+        total_vol += vol
+        if strike is not None and contract_type is not None:
+            is_otm_call = contract_type == "call" and strike > last_price
+            is_otm_put = contract_type == "put" and strike < last_price
+            if is_otm_call:
+                otm_vol += vol
+                otm_call_vol += vol
+            elif is_otm_put:
+                otm_vol += vol
+                otm_put_vol += vol
+
+    otm_pct = (otm_vol / total_vol) if total_vol > 0 else None
+
+    signals = [
+        _signal(
+            "max vol/OI",
+            f"{_fmt_num(max_vol_oi, 2)}×",
+            max_vol_oi > 2.0,
+            f"Highest volume-to-open-interest ratio on any contract in the chain. Fires when > 2× — "
+            f"contracts are trading at double their outstanding count, a sign new positions are being opened.",
+        ),
+        _signal(
+            "max contract vol",
+            f"{max_contract_vol:,}" if max_contract_vol < 10000 else f"{max_contract_vol / 1000:.1f}k",
+            max_contract_vol > 500,
+            f"Single most-traded contract today. Fires when > 500 contracts — real flow, not noise. "
+            f"Open the chain to see which strikes are seeing the action.",
+        ),
+        _signal(
+            "OTM concentration",
+            _fmt_pct(otm_pct),
+            otm_pct is not None and otm_pct > 0.6,
+            f"Share of today's volume in out-of-the-money strikes. Fires when > 60% — speculative directional bets, "
+            f"not boring at-the-money rolls. Current: {_fmt_pct(otm_pct)} of {total_vol:,} contracts.",
+        ),
+    ]
+    conviction = sum(1 for s in signals if s["fired"])
+    sort_key = -max_vol_oi
+    # Recommendation: follow the OTM volume skew. More OTM call volume = smart
+    # money is betting up. More OTM put volume = betting down.
+    if otm_call_vol > otm_put_vol * 1.2:
+        rec_dir, rec_why = "call", f"OTM call volume ({otm_call_vol:,}) significantly exceeds OTM put volume ({otm_put_vol:,}) — flow is bullish."
+    elif otm_put_vol > otm_call_vol * 1.2:
+        rec_dir, rec_why = "put", f"OTM put volume ({otm_put_vol:,}) significantly exceeds OTM call volume ({otm_call_vol:,}) — flow is bearish."
+    else:
+        rec_dir, rec_why = "call", f"OTM call/put volume mixed ({otm_call_vol:,} calls vs {otm_put_vol:,} puts). Default to calls; check the chain to confirm direction."
+    return {
+        "conviction": conviction,
+        "signals": signals,
+        "sort_key": sort_key,
+        "last_price": last_price,
+        "recommendation": _recommendation(
+            direction=rec_dir,
+            strike_offset_pct=0.0,
+            expiry_lean="near",
+            reasoning=(
+                f"{rec_why} Highlighted ATM strike anchors your position; open the "
+                "chain and look for the specific OTM strikes with the highest vol/OI — "
+                "that's where the conviction lies."
+            ),
+        ),
+    }
+
+
+_STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {
+    "weakness": {
+        "label": "Weakness",
+        "subtitle": "lagging QQQ + oversold",
+        "description": "Names trailing QQQ that are oversold. Natural plays: bounce calls or continuation puts.",
+        "scorer": _score_weakness,
+    },
+    "strength": {
+        "label": "Strength",
+        "subtitle": "leading QQQ + overbought",
+        "description": "Names beating QQQ that are overbought. Natural plays: breakout calls or mean-reversion puts.",
+        "scorer": _score_strength,
+    },
+    "momentum": {
+        "label": "Momentum",
+        "subtitle": "strong absolute trend",
+        "description": "Pure trend-follow, no benchmark. Up >5% over 20d and >2% over 5d with RSI above 60. Plays: ride the trend with calls.",
+        "scorer": _score_momentum,
+    },
+    "mean_reversion": {
+        "label": "Mean Reversion",
+        "subtitle": "stretched from 20d mean",
+        "description": "Price >1.5 σ from its 20-day mean + RSI extreme. Bet the move overshoots and snaps back. Direction depends on which side it's stretched.",
+        "scorer": _score_mean_reversion,
+    },
+    "breakout": {
+        "label": "Breakout",
+        "subtitle": "near 52w high + volume",
+        "description": "Near 52-week high + volume surge + RSI > 60. Classic momentum continuation. Plays: calls.",
+        "scorer": _score_breakout,
+    },
+    "breakdown": {
+        "label": "Breakdown",
+        "subtitle": "near 52w low + volume",
+        "description": "Near 52-week low + volume surge + downside momentum. Bearish mirror of Breakout. Plays: puts.",
+        "scorer": _score_breakdown,
+    },
+    "volume_spike": {
+        "label": "Volume Spike",
+        "subtitle": "unusual volume + big move",
+        "description": "Today's volume > 2× trailing average + |move| > 3% + close at the wick extreme. Direction-agnostic — pick calls or puts based on the move's direction.",
+        "scorer": _score_volume_spike,
+    },
+    "pullback": {
+        "label": "Pullback",
+        "subtitle": "dip in an uptrend",
+        "description": "Price within 3% of 20d or 50d MA, still above 200d MA, RSI in 35–55 (mild dip). The 'buy the dip' setup. Plays: calls on the bounce.",
+        "scorer": _score_pullback,
+    },
+    "trend_bias": {
+        "label": "Trend Bias",
+        "subtitle": "50/200d MA cross context",
+        "description": "Golden/Death cross + price riding the trend + accelerating gap. Slower, strategic signal — good for longer-dated calls (Golden) or puts (Death).",
+        "scorer": _score_trend_bias,
+    },
+    "vol_expansion": {
+        "label": "Vol Expansion",
+        "subtitle": "realized vol regime change",
+        "description": "5-day realized vol vs 30-day baseline. Surfaces names where the vol regime is changing. High realized vol = options premium is rich (sell premium); paired with a fresh big move = continuation candidate.",
+        "scorer": _score_vol_expansion,
+    },
+    "unusual_options_activity": {
+        "label": "Unusual Options Activity",
+        "subtitle": "vol/OI extremes in the chain",
+        "description": "Scans the underlying's option chain for individual contracts with volume far above open interest — a sign of new directional positioning. Plays: follow the flow (calls if OTM call activity, puts if OTM puts).",
+        "scorer": _score_unusual_options_activity,
+    },
+}
+
+_VALID_STRATEGIES = set(_STRATEGY_REGISTRY.keys())
+
+
+# Legacy single-strategy scorer kept for the BSM options-strategy backtest,
+# which calls it with closes-only lists. Internally builds bar-shaped objects
+# so the bars-based scorer works without an HTTP roundtrip.
+class _ClosesOnlyBar:
+    __slots__ = ("close", "high", "low", "volume")
+
+    def __init__(self, close: float):
+        self.close = close
+        self.high = close
+        self.low = close
+        self.volume = 0
+
+
+def _score_ticker(closes: list[float], qqq_closes: list[float]) -> dict[str, Any]:
+    bars = [_ClosesOnlyBar(c) for c in closes]
+    qqq_bars = [_ClosesOnlyBar(c) for c in qqq_closes]
+    return _score_weakness(bars, qqq_bars)
+
+
+# Ordered registry for UI rendering. Adding a strategy here + its scorer
+# above is the only change needed to surface a new pill.
+_STRATEGY_ORDER = [
+    "weakness",
+    "strength",
+    "momentum",
+    "mean_reversion",
+    "breakout",
+    "breakdown",
+    "volume_spike",
+    "pullback",
+    "trend_bias",
+    "vol_expansion",
+    "unusual_options_activity",
+]
+
+
+@router.get("/options/strategies")
+async def list_options_strategies() -> dict[str, Any]:
+    """Catalog of available screener strategies, in display order."""
+    return {
+        "strategies": [
+            {
+                "key": k,
+                "label": _STRATEGY_REGISTRY[k]["label"],
+                "subtitle": _STRATEGY_REGISTRY[k]["subtitle"],
+                "description": _STRATEGY_REGISTRY[k]["description"],
+            }
+            for k in _STRATEGY_ORDER
+            if k in _STRATEGY_REGISTRY
+        ]
+    }
+
+
+# Default min-price filter: skip names under $10 since their option chains
+# typically have brutal bid-ask spreads. Configurable per request.
+_DEFAULT_MIN_PRICE = 10.0
+
+
+@router.get("/options/screener")
+async def get_options_screener(
+    sleeve: str = "mega_tech",
+    strategy: str = "weakness",
+    min_price: float = _DEFAULT_MIN_PRICE,
+) -> dict[str, Any]:
+    """Rank a sleeve's tickers by a 0–3 conviction score under a strategy.
+
+    Strategies are registered in ``_STRATEGY_REGISTRY``; each defines its own
+    three signals + sort order. See ``GET /sleeves/options/strategies`` for
+    the live catalog.
+
+    ``min_price`` filters out tickers whose last close is under that dollar
+    amount before scoring — keeps the list focused on names with tradeable
+    option chains. Default $10. Set to 0 to disable.
+
+    Sort: conviction desc, then by per-strategy extremity. Cached per
+    (sleeve, strategy, min_price) for 5 minutes.
+    """
+    sleeves_cfg = _live_sleeves()
+    if sleeve not in sleeves_cfg:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown sleeve '{sleeve}'. Known: {list(sleeves_cfg.keys())}",
+        )
+    if strategy not in _VALID_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy '{strategy}'. Known: {sorted(_VALID_STRATEGIES)}",
+        )
+
+    cache_key = f"{sleeve}|{strategy}|{min_price}"
+    now = time.monotonic()
+    cached = _screener_cache.get(cache_key)
+    if cached and (now - cached[0]) < _SCREENER_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    today = datetime.date.today()
+    end_date = today.isoformat()
+    # 400 calendar days back: ~280 trading bars, plenty for 52-week and
+    # 200d-MA lookbacks. Polygon caps at 5000 bars/call so this is comfortable.
+    start_date = (today - datetime.timedelta(days=400)).isoformat()
+
+    tickers = list(sleeves_cfg[sleeve]["tickers"])
+    scorer = _STRATEGY_REGISTRY[strategy]["scorer"]
+
+    def _compute() -> dict[str, Any]:
+        client = MassiveClient()
+        qqq_bars = _fetch_bars(client, _BENCHMARK_TICKER, start_date, end_date)
+        if not qqq_bars:
+            raise MassiveError(0, f"failed to fetch {_BENCHMARK_TICKER} benchmark prices", "")
+
+        candidates: list[dict[str, Any]] = []
+        for ticker in tickers:
+            bars = _fetch_bars(client, ticker, start_date, end_date)
+            if not bars:
+                continue
+            # Price filter — skip cheap names where the option chain is unusable.
+            last_price = bars[-1].close
+            if min_price > 0 and last_price < min_price:
+                continue
+            # Pass ticker + client so strategies that need the options chain
+            # (e.g. unusual_options_activity) can fetch it. Most strategies
+            # ignore the extras via **_kwargs.
+            scored = scorer(bars, qqq_bars, ticker=ticker, client=client)
+            candidates.append({"ticker": ticker, **scored})
+
+        candidates.sort(key=lambda c: (-c["conviction"], c["sort_key"]))
+        return {
+            "sleeve": sleeve,
+            "strategy": strategy,
+            "benchmark": _BENCHMARK_TICKER,
+            "min_price": min_price,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "candidates": candidates,
+        }
+
+    try:
+        payload = await asyncio.to_thread(_compute)
+    except MassiveError as exc:
+        raise HTTPException(status_code=502, detail=f"Massive: {exc}")
+
+    _screener_cache[cache_key] = (now, payload)
+    return payload
+
+
+@router.get("/options/chain/{ticker}")
+async def get_options_chain(
+    ticker: str,
+    *,
+    atm_window_pct: float = 2.0,
+    expiration: str | None = None,
+    horizon_days: int = 60,
+) -> dict[str, Any]:
+    """Calls + puts near spot for ``ticker``.
+
+    Returns:
+    * ``expiration`` — the expiry actually rendered (the one requested, or
+      nearest available if ``expiration`` was None).
+    * ``available_expirations`` — every expiry in the next ``horizon_days``
+      that has at least one strike inside the ATM window. Frontends use this
+      to populate an expiry dropdown.
+    * ``calls`` / ``puts`` — flattened contracts at the selected expiry only.
+
+    Pulls one snapshot, partitions client-side. Caches per
+    (ticker, atm_window_pct, expiration, horizon_days) for 60 seconds.
+    """
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+    if horizon_days < 1 or horizon_days > 365:
+        raise HTTPException(status_code=400, detail="horizon_days must be 1..365.")
+    if expiration:
+        try:
+            datetime.date.fromisoformat(expiration)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Bad expiration: {exc}")
+
+    cache_key = f"{symbol}|{atm_window_pct}|{expiration or ''}|{horizon_days}"
+    now = time.monotonic()
+    cached = _chain_cache.get(cache_key)
+    if cached and (now - cached[0]) < _CHAIN_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    today = datetime.date.today()
+
+    def _compute() -> dict[str, Any]:
+        client = MassiveClient()
+
+        spot_closes = _fetch_closes(
+            client,
+            symbol,
+            (today - datetime.timedelta(days=10)).isoformat(),
+            today.isoformat(),
+        )
+        if not spot_closes:
+            raise MassiveError(0, f"failed to resolve spot for {symbol}", "")
+        spot = spot_closes[-1]
+
+        low = spot * (1 - atm_window_pct / 100.0)
+        high = spot * (1 + atm_window_pct / 100.0)
+
+        # Pull all near-the-money contracts across the horizon in one call.
+        # Polygon caps at limit=250 — for highly liquid mega-tech names with
+        # weekly expiries over a long horizon, this can clip. Keeping 60d
+        # default is a comfortable balance for the UI use case.
+        chain = client.get_options_chain(
+            symbol,
+            expiration_date_gte=today.isoformat(),
+            expiration_date_lte=(today + datetime.timedelta(days=horizon_days)).isoformat(),
+            strike_price_gte=low,
+            strike_price_lte=high,
+            limit=250,
+        )
+        rows = chain.get("results") or []
+        expiries = sorted({(r.get("details") or {}).get("expiration_date") for r in rows if r.get("details")})
+        expiries = [e for e in expiries if e]
+
+        # Resolve the expiration to render: explicit request → nearest available.
+        selected = expiration if expiration in expiries else (expiries[0] if expiries else None)
+        filtered = (
+            [r for r in rows if (r.get("details") or {}).get("expiration_date") == selected]
+            if selected else []
+        )
+
+        calls, puts = split_calls_puts(filtered)
+
+        return {
+            "ticker": symbol,
+            "spot": spot,
+            "expiration": selected,
+            "available_expirations": expiries,
+            "atm_window_pct": atm_window_pct,
+            "horizon_days": horizon_days,
+            "strike_low": low,
+            "strike_high": high,
+            "calls": calls,
+            "puts": puts,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+
+    try:
+        payload = await asyncio.to_thread(_compute)
+    except MassiveError as exc:
+        raise HTTPException(status_code=502, detail=f"Massive: {exc}")
+
+    _chain_cache[cache_key] = (now, payload)
+    return payload
+
+
+# ─── /sleeves/backtest/options-strategy (BSM-proxy SSE) ─────────────────────
+
+# Why a BSM proxy and not real historical chains: constructing valid Polygon
+# option tickers per backtest day is brittle (strike rounding, weekly-expiry
+# existence, listing gaps), and the resulting backtest would be lumpy with
+# missing data. Black-Scholes against the underlying's realized vol gives a
+# deterministic premium that's good enough to rank straddle / calls / puts
+# directional bets across conviction tiers. The endpoint surfaces this
+# assumption in the SSE 'start' event so the UI can label it.
+
+from src.backtesting.options_historical import (  # noqa: E402
+    NoAggregateData,
+    NoSuchContract,
+    bsm_premium_series,
+    bsm_straddle_series,
+    get_premium_series,
+    pick_close,
+    scan_stop_loss,
+)
+from src.backtesting.options_proxy import (  # noqa: E402  (sits with the related code)
+    RISK_FREE_RATE,
+    bsm_price,
+    realized_vol,
+    straddle_price,
+)
+from src.backtesting.sleeve_attribution import (  # noqa: E402
+    Trade,
+    compute_agent_attribution,
+    compute_sleeve_metrics,
+    extract_trades_from_day_results,
+    warn_underperforming_agents,
+)
+
+
+class OptionsBacktestRequest(BaseModel):
+    """Body for POST /sleeves/backtest/options-strategy.
+
+    Generalized to support any of the 11 screener strategies. Backward-
+    compatible defaults: ``strategy='weakness'``, ``tickers=None`` (whole
+    sleeve), ``direction='straddle'`` (price both legs uniformly).
+    """
+
+    start_date: str = Field(description="Backtest start (YYYY-MM-DD).")
+    end_date: str = Field(description="Backtest end (YYYY-MM-DD), inclusive.")
+    sleeve: str = Field(default="mega_tech", description="Which sleeve's tickers to screen.")
+    tickers: list[str] | None = Field(
+        default=None,
+        description=(
+            "Restrict to a subset of the sleeve's tickers. None = use the whole "
+            "sleeve. Tickers must already exist in the chosen sleeve."
+        ),
+    )
+    strategy: str = Field(
+        default="weakness",
+        description=(
+            "Screener strategy to backtest. Any registered strategy except "
+            "unusual_options_activity (which needs historical option chain data we "
+            "don't have on this plan)."
+        ),
+    )
+    conviction_min: int = Field(
+        default=2, ge=0, le=3, description="Only open trades when conviction >= this."
+    )
+    direction: str = Field(
+        default="straddle",
+        description=(
+            "'auto' | 'straddle' | 'calls' | 'puts'. 'auto' uses each candidate's "
+            "strategy-recommended direction (call vs put). Others force one leg."
+        ),
+    )
+    hold_days: int = Field(
+        default=5, ge=1, le=30, description="Trading days to hold before close-out."
+    )
+    pricing: str = Field(
+        default="real",
+        description=(
+            "'real' = fetch historical option chain + per-contract OHLC from "
+            "Polygon (requires Options plan). 'bsm' = Black-Scholes proxy using "
+            "trailing realized vol — deterministic, no API calls. 'real' falls "
+            "back to BSM per-trade when a contract or bar is missing, and flags "
+            "those trades as synthetic in the output."
+        ),
+    )
+    stop_loss_pct: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=0.99,
+        description=(
+            "Per-contract drawdown stop, expressed as a positive fraction "
+            "(e.g. 0.50 = exit at -50% of entry premium). None = no stop, "
+            "always hold to ``hold_days``. The check runs on each trading "
+            "day's close (real fills) or walk-forward BSM premium (proxy "
+            "mode). Straddles stop on combined premium, not per leg."
+        ),
+    )
+
+
+# Strategies that the BSM-proxy backtest can simulate. UOA needs per-day
+# historical option chain volume — not available without a dedicated data
+# pull that's outside the current Massive plan's reasonable cost envelope.
+_BACKTESTABLE_STRATEGIES = _VALID_STRATEGIES - {"unusual_options_activity"}
+
+
+class TradeRecord(BaseModel):
+    """One simulated trade emitted via SSE."""
+
+    ticker: str
+    strategy: str
+    direction: str
+    open_date: str
+    close_date: str
+    conviction: int
+    strike: float
+    sigma: float
+    entry_spot: float
+    exit_spot: float
+    entry_premium: float
+    exit_premium: float
+    pnl: float
+    return_pct: float
+    # Real-fill metadata. ``synthetic=True`` when this trade fell back to
+    # BSM (either pricing='bsm' or a real-fill miss). ``contract_ticker``
+    # and ``contract_expiry`` are populated only for real fills.
+    synthetic: bool = True
+    contract_ticker: str | None = None
+    contract_expiry: str | None = None
+    # Stop-loss bookkeeping. ``stopped_out=True`` means the trade exited
+    # early because the drawdown breached ``stop_loss_pct``. ``exit_reason``
+    # is 'stop' or 'time'.
+    stopped_out: bool = False
+    exit_reason: str = "time"
+
+
+@router.post("/backtest/options-strategy")
+async def backtest_options_strategy(req: OptionsBacktestRequest, request: Request):
+    """Backtest the lagging-mega-tech options strategy with Black-Scholes pricing.
+
+    For each trading day in [start, end]:
+      1. Apply the Phase-E conviction screener using prices up to that day.
+      2. For each candidate with ``conviction >= conviction_min``, open a
+         simulated ATM position in ``direction`` and hold ``hold_days``.
+      3. Price entry + exit via BSM against trailing 30-day realized vol.
+      4. P&L = exit premium - entry premium (per share).
+
+    Stream events:
+      start            — assumptions banner.
+      progress         — per-day "Processing YYYY-MM-DD" message.
+      trade            — emitted each time a trade closes.
+      complete         — summary stats (total trades, win rate, mean / total P&L,
+                         breakdown per direction and conviction tier).
+      error            — fatal failure.
+    """
+    sleeves_cfg = _live_sleeves()
+    if req.sleeve not in sleeves_cfg:
+        raise HTTPException(status_code=400, detail=f"Unknown sleeve '{req.sleeve}'.")
+    if req.strategy not in _BACKTESTABLE_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Strategy '{req.strategy}' not backtestable. Available: "
+                f"{sorted(_BACKTESTABLE_STRATEGIES)}."
+            ),
+        )
+    if req.direction not in {"auto", "straddle", "calls", "puts"}:
+        raise HTTPException(
+            status_code=400,
+            detail="direction must be one of: auto, straddle, calls, puts.",
+        )
+
+    try:
+        start_d = datetime.date.fromisoformat(req.start_date)
+        end_d = datetime.date.fromisoformat(req.end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Bad date: {exc}")
+    if end_d < start_d:
+        raise HTTPException(status_code=400, detail="end_date < start_date")
+
+    # Resolve ticker scope: whole sleeve, or user-supplied subset.
+    full_ticker_set = list(sleeves_cfg[req.sleeve]["tickers"])
+    if req.tickers:
+        wanted = {t.strip().upper() for t in req.tickers if t.strip()}
+        tickers = [t for t in full_ticker_set if t.upper() in wanted]
+        if not tickers:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"None of the requested tickers {sorted(wanted)} are in sleeve "
+                    f"'{req.sleeve}'. Sleeve members: {full_ticker_set}."
+                ),
+            )
+    else:
+        tickers = full_ticker_set
+
+    scorer = _STRATEGY_REGISTRY[req.strategy]["scorer"]
+
+    async def _detect_disconnect() -> bool:
+        try:
+            while True:
+                msg = await request.receive()
+                if msg["type"] == "http.disconnect":
+                    return True
+        except Exception:
+            return True
+
+    async def event_generator():
+        disconnect_task = asyncio.create_task(_detect_disconnect())
+
+        # Pre-fetch full bars (OHLCV) — needed for breakout/breakdown/volume_spike
+        # scorers that read highs/lows/volume in addition to closes. Window
+        # padded for the 52-week / 200-day lookbacks the technical strategies use.
+        client = MassiveClient()
+        pad_start = (start_d - datetime.timedelta(days=400)).isoformat()
+        fetch_end = end_d.isoformat()
+
+        # bars_by_ticker maps ticker → ordered list of Price bars.
+        bars_by_ticker: dict[str, list] = {}
+
+        def _fetch_one(t: str) -> list:
+            try:
+                aggs = client.get_daily_aggregates(t, pad_start, fetch_end)
+            except MassiveError as exc:
+                logger.warning("Backtest prefetch failed for %s: %s", t, exc)
+                return []
+            return convert_prices(aggs)
+
+        try:
+            if req.pricing == "real":
+                pricing_label = "real Polygon historical fills"
+                assumption_text = (
+                    "Premiums fetched from Polygon's historical option-contract "
+                    "aggregates (daily close per contract). Falls back to BSM "
+                    "per-trade if the contract or bar is missing (flagged "
+                    "synthetic in the trades table). Daily-close fills don't "
+                    "model bid/ask spread — Polygon Advanced is needed for NBBO."
+                )
+            else:
+                pricing_label = "Black-Scholes proxy"
+                assumption_text = (
+                    "Premiums priced via BSM against trailing 30-day realized vol "
+                    "of the underlying. No real historical chain quotes used."
+                )
+            if req.stop_loss_pct:
+                assumption_text += (
+                    f" Stop-loss: exit early when premium ≤ entry × "
+                    f"(1 − {req.stop_loss_pct:.0%})."
+                )
+            yield StartEvent(data={
+                "message": (
+                    f"Options backtest — strategy={req.strategy}, "
+                    f"direction={req.direction}, pricing={pricing_label}"
+                    + (f", stop=-{req.stop_loss_pct:.0%}" if req.stop_loss_pct else "")
+                ),
+                "assumption": assumption_text,
+                "sleeve": req.sleeve,
+                "tickers": tickers,
+                "strategy": req.strategy,
+                "start_date": req.start_date,
+                "end_date": req.end_date,
+                "direction": req.direction,
+                "conviction_min": req.conviction_min,
+                "hold_days": req.hold_days,
+                "pricing": req.pricing,
+                "stop_loss_pct": req.stop_loss_pct,
+            }).to_sse()
+
+            for t in ["QQQ", *tickers]:
+                if disconnect_task.done():
+                    return
+                bars = await asyncio.to_thread(_fetch_one, t)
+                if not bars:
+                    yield ProgressUpdateEvent(
+                        agent="backtest", ticker=t, status="no price history; skipping"
+                    ).to_sse()
+                bars_by_ticker[t] = bars
+
+            qqq_bars_all = bars_by_ticker.get("QQQ", [])
+            qqq_dates = [datetime.date.fromisoformat(p.time) for p in qqq_bars_all]
+            if not qqq_dates:
+                yield ErrorEvent(message="QQQ benchmark data unavailable; aborting.").to_sse()
+                return
+
+            # Cache parsed date per bar so we don't re-parse on every slice.
+            bar_dates: dict[str, list[datetime.date]] = {
+                t: [datetime.date.fromisoformat(p.time) for p in bars]
+                for t, bars in bars_by_ticker.items()
+            }
+
+            # Iterate trading days in window. QQQ's date set is the canonical
+            # trading-day calendar.
+            window_days = [d for d in qqq_dates if start_d <= d <= end_d]
+
+            trades: list[TradeRecord] = []
+            for i, d in enumerate(window_days):
+                if disconnect_task.done():
+                    return
+                if i % 5 == 0:
+                    yield ProgressUpdateEvent(
+                        agent="backtest",
+                        ticker=None,
+                        status=f"Processing {d.isoformat()} ({i + 1}/{len(window_days)})",
+                    ).to_sse()
+
+                # QQQ bars sliced up to d (inclusive).
+                qqq_slice = [
+                    p for p, dd in zip(qqq_bars_all, qqq_dates) if dd <= d
+                ]
+                if len(qqq_slice) < 21:
+                    continue
+
+                # Score each ticker as of d.
+                for ticker in tickers:
+                    bars = bars_by_ticker.get(ticker, [])
+                    dates_t = bar_dates.get(ticker, [])
+                    bars_to_d = [b for b, dd in zip(bars, dates_t) if dd <= d]
+                    if len(bars_to_d) < 31:
+                        continue
+
+                    scored = scorer(bars_to_d, qqq_slice)
+                    if scored["conviction"] < req.conviction_min:
+                        continue
+
+                    closes_to_d = [b.close for b in bars_to_d]
+                    sigma = realized_vol(closes_to_d, window=30)
+                    if sigma is None or sigma <= 0:
+                        continue
+                    spot = closes_to_d[-1]
+
+                    # Exit date: hold_days trading days forward, clipped to
+                    # window. If not enough forward bars, skip — can't close.
+                    forward_dates = [dd for dd in dates_t if dd > d][: req.hold_days]
+                    if len(forward_dates) < req.hold_days:
+                        continue
+                    exit_date = forward_dates[-1]
+                    exit_spot = next(b.close for b, dd in zip(bars, dates_t) if dd == exit_date)
+
+                    # Direction resolution: explicit override OR auto from
+                    # the strategy's recommendation.
+                    if req.direction == "auto":
+                        rec = scored.get("recommendation") or {}
+                        rec_dir = rec.get("direction", "call")
+                        trade_dir = "calls" if rec_dir == "call" else "puts"
+                    else:
+                        trade_dir = req.direction
+
+                    strike = round(spot)  # $1 strikes — BSM proxy default
+                    target_expiry_days = min(60, max(14, int(req.hold_days * 2.5)))
+
+                    # Forward spot trajectory between entry and exit (inclusive
+                    # of both ends). Used by BSM walk-forward when stop-loss is
+                    # on, and by intrinsic exit when it's off.
+                    forward_spots: list[float] = [spot]
+                    for fd in forward_dates:
+                        forward_spots.append(
+                            next(b.close for b, dd in zip(bars, dates_t) if dd == fd)
+                        )
+                    # forward_dates is hold_days entries (day +1 .. day +hold_days).
+                    # Pair them with their spots for stop-loss scanning. Day 0 is
+                    # entry day; we never stop on entry day.
+                    spot_dates: list[datetime.date] = [d, *forward_dates]
+
+                    entry_premium: float
+                    exit_premium: float
+                    actual_exit_date: datetime.date = exit_date
+                    synthetic = True
+                    stopped_out = False
+                    contract_ticker: str | None = None
+                    contract_expiry: str | None = None
+
+                    use_real = req.pricing == "real"
+                    if use_real:
+                        try:
+                            if trade_dir == "calls":
+                                meta, bars_series = await asyncio.to_thread(
+                                    get_premium_series,
+                                    client,
+                                    underlying=ticker, entry_date=d, exit_date=exit_date,
+                                    target_strike=float(spot),
+                                    target_expiry_days=target_expiry_days,
+                                    option_type="call",
+                                )
+                                strike = meta["strike"]
+                                contract_ticker = meta["ticker"]
+                                contract_expiry = meta["expiration_date"]
+                                combined = bars_series
+                            elif trade_dir == "puts":
+                                meta, bars_series = await asyncio.to_thread(
+                                    get_premium_series,
+                                    client,
+                                    underlying=ticker, entry_date=d, exit_date=exit_date,
+                                    target_strike=float(spot),
+                                    target_expiry_days=target_expiry_days,
+                                    option_type="put",
+                                )
+                                strike = meta["strike"]
+                                contract_ticker = meta["ticker"]
+                                contract_expiry = meta["expiration_date"]
+                                combined = bars_series
+                            else:  # straddle: both legs at the same strike/expiry
+                                c_meta, c_bars = await asyncio.to_thread(
+                                    get_premium_series,
+                                    client,
+                                    underlying=ticker, entry_date=d, exit_date=exit_date,
+                                    target_strike=float(spot),
+                                    target_expiry_days=target_expiry_days,
+                                    option_type="call",
+                                )
+                                p_meta, p_bars = await asyncio.to_thread(
+                                    get_premium_series,
+                                    client,
+                                    underlying=ticker, entry_date=d, exit_date=exit_date,
+                                    target_strike=c_meta["strike"],
+                                    target_expiry_days=target_expiry_days,
+                                    option_type="put",
+                                )
+                                # Combine only on days where both legs trade.
+                                combined = {
+                                    dd: c_bars[dd] + p_bars[dd]
+                                    for dd in c_bars
+                                    if dd in p_bars
+                                }
+                                strike = c_meta["strike"]
+                                contract_ticker = f"{c_meta['ticker']} + {p_meta['ticker']}"
+                                contract_expiry = c_meta["expiration_date"]
+
+                            entry_premium_opt = pick_close(combined, d, max_back=2)
+                            if entry_premium_opt is None:
+                                raise NoAggregateData(
+                                    f"Missing entry bar for {contract_ticker} on {d}"
+                                )
+                            entry_premium = entry_premium_opt
+
+                            # Stop-loss scan (real fills): if any day's close
+                            # in (entry, exit] breaches the threshold, exit there.
+                            stop_hit = (
+                                scan_stop_loss(
+                                    combined,
+                                    entry_premium=entry_premium,
+                                    entry_date=d,
+                                    exit_date=exit_date,
+                                    stop_loss_pct=req.stop_loss_pct,
+                                )
+                                if req.stop_loss_pct
+                                else None
+                            )
+                            if stop_hit is not None:
+                                exit_premium, actual_exit_date = stop_hit
+                                stopped_out = True
+                            else:
+                                exit_premium_opt = pick_close(combined, exit_date, max_back=2)
+                                if exit_premium_opt is None:
+                                    raise NoAggregateData(
+                                        f"Missing exit bar for {contract_ticker} on {exit_date}"
+                                    )
+                                exit_premium = exit_premium_opt
+                            synthetic = False
+                        except (NoSuchContract, NoAggregateData, MassiveError) as exc:
+                            logger.info(
+                                "Real-fill miss for %s %s on %s — falling back to BSM (%s)",
+                                ticker, trade_dir, d.isoformat(), exc,
+                            )
+                            # Reset metadata; the BSM path below populates fresh.
+                            contract_ticker = None
+                            contract_expiry = None
+                            use_real = False  # drop into BSM block
+
+                    if not use_real:
+                        # BSM walk-forward: produce a per-day premium series so
+                        # stop-loss can scan it. Day 0 = entry; day i = i trading
+                        # days held. TTM decays so the final entry is intrinsic.
+                        strike = round(spot)
+                        if trade_dir == "straddle":
+                            premium_series = bsm_straddle_series(
+                                spot_series=forward_spots, strike=strike,
+                                hold_days=req.hold_days, sigma=sigma,
+                                risk_free=RISK_FREE_RATE,
+                            )
+                        else:
+                            premium_series = bsm_premium_series(
+                                spot_series=forward_spots, strike=strike,
+                                hold_days=req.hold_days, sigma=sigma,
+                                option_type="call" if trade_dir == "calls" else "put",
+                                risk_free=RISK_FREE_RATE,
+                            )
+                        entry_premium = premium_series[0]
+
+                        if req.stop_loss_pct and entry_premium > 0:
+                            threshold = entry_premium * (1.0 - req.stop_loss_pct)
+                            stop_idx: int | None = None
+                            for i in range(1, len(premium_series)):
+                                if premium_series[i] <= threshold:
+                                    stop_idx = i
+                                    break
+                            if stop_idx is not None:
+                                exit_premium = premium_series[stop_idx]
+                                actual_exit_date = spot_dates[stop_idx]
+                                stopped_out = True
+                            else:
+                                exit_premium = premium_series[-1]
+                        else:
+                            exit_premium = premium_series[-1]
+
+                    pnl = exit_premium - entry_premium
+                    return_pct = pnl / entry_premium if entry_premium > 0 else 0.0
+                    # The exit_spot recorded on the trade reflects the actual
+                    # close date (may differ from the planned exit_date when
+                    # stopped out).
+                    actual_exit_spot = next(
+                        (b.close for b, dd in zip(bars, dates_t) if dd == actual_exit_date),
+                        exit_spot,
+                    )
+
+                    record = TradeRecord(
+                        ticker=ticker,
+                        strategy=req.strategy,
+                        direction=trade_dir,
+                        open_date=d.isoformat(),
+                        close_date=actual_exit_date.isoformat(),
+                        conviction=scored["conviction"],
+                        strike=float(strike),
+                        sigma=sigma,
+                        entry_spot=spot,
+                        exit_spot=actual_exit_spot,
+                        entry_premium=entry_premium,
+                        exit_premium=exit_premium,
+                        pnl=pnl,
+                        return_pct=return_pct,
+                        synthetic=synthetic,
+                        contract_ticker=contract_ticker,
+                        contract_expiry=contract_expiry,
+                        stopped_out=stopped_out,
+                        exit_reason="stop" if stopped_out else "time",
+                    )
+                    trades.append(record)
+                    yield SleeveCompleteEvent(  # reuse event class for streaming trades
+                        sleeve="trade",
+                        rows=[record.model_dump()],
+                    ).to_sse()
+
+                # Tiny yield so SSE flushes between days.
+                await asyncio.sleep(0)
+
+            # Summary stats.
+            n = len(trades)
+            wins = sum(1 for t in trades if t.pnl > 0)
+            total_pnl = sum(t.pnl for t in trades)
+            avg_return = sum(t.return_pct for t in trades) / n if n else 0.0
+            win_rate = wins / n if n else 0.0
+
+            by_conviction: dict[int, list[TradeRecord]] = {}
+            for t in trades:
+                by_conviction.setdefault(t.conviction, []).append(t)
+            conviction_summary = {
+                str(k): {
+                    "n_trades": len(v),
+                    "win_rate": sum(1 for x in v if x.pnl > 0) / len(v) if v else 0.0,
+                    "avg_return_pct": sum(x.return_pct for x in v) / len(v) if v else 0.0,
+                    "total_pnl": sum(x.pnl for x in v),
+                }
+                for k, v in by_conviction.items()
+            }
+
+            n_synthetic = sum(1 for t in trades if t.synthetic)
+            n_stopped = sum(1 for t in trades if t.stopped_out)
+            stopped_trades = [t for t in trades if t.stopped_out]
+            avg_loss_when_stopped = (
+                sum(t.return_pct for t in stopped_trades) / len(stopped_trades)
+                if stopped_trades
+                else None
+            )
+            yield CompleteEvent(data={
+                "n_trades": n,
+                "n_wins": wins,
+                "win_rate": win_rate,
+                "total_pnl_per_share": total_pnl,
+                "avg_return_pct": avg_return,
+                "by_conviction": conviction_summary,
+                "trades": [t.model_dump() for t in trades],
+                "pricing": req.pricing,
+                "n_synthetic": n_synthetic,
+                "n_stopped": n_stopped,
+                "stop_loss_pct": req.stop_loss_pct,
+                "avg_return_when_stopped": avg_loss_when_stopped,
+            }).to_sse()
+
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.exception("Options-strategy backtest failed")
+            yield ErrorEvent(message=f"Backtest failed: {exc}").to_sse()
+        finally:
+            if not disconnect_task.done():
+                disconnect_task.cancel()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ─── /sleeves/backtest/run (sleeves backtest SSE) ───────────────────────────
+
+import os  # noqa: E402  (used for env-driven api_keys construction below)
+import uuid  # noqa: E402
+
+from app.backend.models.schemas import GraphEdge, GraphNode  # noqa: E402
+from app.backend.services.backtest_service import BacktestService  # noqa: E402
+from app.backend.services.graph import create_graph  # noqa: E402
+from app.backend.services.portfolio import create_portfolio  # noqa: E402
+
+
+class SleevesBacktestRequest(BaseModel):
+    """Body for POST /sleeves/backtest/run.
+
+    Defaults are kept tight (one short-window backtest on a small ticker
+    set) because each trading day fires the real LLM agent panel — a wide
+    request burns LLM credits in volume.
+    """
+
+    start_date: str = Field(description="Backtest start (YYYY-MM-DD).")
+    end_date: str = Field(description="Backtest end (YYYY-MM-DD), inclusive.")
+    sleeves: list[str] | None = Field(
+        default=None, description="Sleeves to run. None = all configured sleeves."
+    )
+    tickers: list[str] | None = Field(
+        default=None,
+        description="Restrict to these tickers. None = each sleeve's full ticker list.",
+    )
+    initial_capital: float = Field(default=100_000.0, ge=1_000.0)
+    margin_requirement: float = Field(default=0.0, ge=0.0)
+    model_name: str = Field(
+        default="deepseek-chat", description="LLM model name passed to the agents."
+    )
+    model_provider: str = Field(
+        default="DeepSeek", description="LLM provider — agents pick a config via this."
+    )
+
+
+class _RequestShim:
+    """Minimal stand-in for the upstream HedgeFundRequest object that
+    BacktestService and its agents reach into.
+
+    Only ``.api_keys`` is read in practice; the other attributes are
+    referenced by some agents but tolerated as missing/empty. We populate
+    api_keys from the .env-loaded process env so DATA_PROVIDER=fds keeps
+    working through the FDS API key.
+    """
+
+    def __init__(self, model_name: str, model_provider: str):
+        self.api_keys: dict[str, str] = {
+            "FINANCIAL_DATASETS_API_KEY": os.environ.get("FINANCIAL_DATASETS_API_KEY", ""),
+            "MASSIVE_API_KEY": os.environ.get("MASSIVE_API_KEY", ""),
+            "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
+            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+        }
+        self.model_name = model_name
+        self.model_provider = model_provider
+        # Some agents look here for per-agent model overrides; none = use global.
+        self.agent_models: list[Any] = []
+
+
+def _build_sleeve_graph(agents: list[str]) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Synthesize a minimal React-Flow-shaped graph for ``agents``.
+
+    The shape matches what ``create_graph`` expects:
+    - one node per analyst, id = ``"{agent_key}_{6char-suffix}"`` so
+      ``extract_base_agent_key`` cleanly recovers the canonical key.
+    - one portfolio_manager node (which gets its own paired risk_manager
+      auto-created by create_graph).
+    - edges: every analyst → portfolio_manager. ``create_graph`` rewrites
+      the analyst→PM edge to route through the auto-created risk_manager,
+      so we just declare intent.
+    """
+    # Stable per-call suffix keeps ids unique without leaking across requests.
+    suffix = uuid.uuid4().hex[:6]
+    pm_id = f"portfolio_manager_{suffix}"
+
+    nodes: list[GraphNode] = [GraphNode(id=pm_id)]
+    edges: list[GraphEdge] = []
+
+    seen: set[str] = set()
+    for agent in agents:
+        if agent in seen:
+            continue
+        seen.add(agent)
+        node_id = f"{agent}_{suffix}"
+        nodes.append(GraphNode(id=node_id))
+        edges.append(GraphEdge(id=f"{node_id}->pm", source=node_id, target=pm_id))
+
+    return nodes, edges
+
+
+@router.post("/backtest/run")
+async def backtest_sleeves(req: SleevesBacktestRequest, request: Request):
+    """Run a sleeves backtest: agents fire each trading day, decisions feed
+    a simulated portfolio, equity curve streams via SSE.
+
+    Wraps the upstream ``BacktestService`` with a sleeve-derived agent
+    graph. After the daily loop completes, this endpoint also computes
+    sleeve / agent attribution from the per-day decision stream and emits
+    it in the final 'complete' event.
+
+    Cost warning: each trading day fires the union of all selected
+    sleeves' agent panels on every ticker. A 6-month backtest with 4
+    sleeves × 10 tickers can be many thousands of LLM calls. Use the
+    smallest plausible scope when smoke-testing.
+    """
+    selected_sleeves = _resolve_selected_sleeves(
+        ScanRequest(sleeves=req.sleeves, tickers=req.tickers, end_date=req.end_date)
+    )
+
+    # Unified ticker list (dedup across sleeves) + union of agent panels.
+    tickers: list[str] = []
+    seen_t: set[str] = set()
+    for sleeve in selected_sleeves.values():
+        for t in sleeve["tickers"]:
+            if t not in seen_t:
+                seen_t.add(t)
+                tickers.append(t)
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No tickers after sleeve/ticker filtering.")
+
+    # Pre-flight: prove every ticker has at least one bar in the window.
+    # The upstream BacktestService silently skips any day where ANY ticker
+    # has missing data, producing a successful-but-empty backtest the user
+    # can't distinguish from "no trade signals." Fail loudly instead.
+    try:
+        pf_client = MassiveClient()
+        pf_start = (datetime.date.fromisoformat(req.start_date) - datetime.timedelta(days=10)).isoformat()
+        pf_end = req.end_date
+        missing: list[str] = []
+        for ticker in tickers:
+            try:
+                aggs = pf_client.get_daily_aggregates(ticker, pf_start, pf_end)
+                if not (aggs.get("results") or []):
+                    missing.append(ticker)
+            except MassiveError:
+                missing.append(ticker)
+        if missing and len(missing) == len(tickers):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No price data for any of {tickers} in {req.start_date}..{req.end_date}. "
+                    "Check the date range — pre-IPO names or far-future dates have no data."
+                ),
+            )
+        if missing:
+            # Drop missing tickers and continue; warn via SSE later.
+            tickers = [t for t in tickers if t not in missing]
+            logger.warning("Backtest dropping tickers with no data in window: %s", missing)
+            # Re-validate ticker_to_sleeve consistency.
+            ticker_to_sleeve = {t: s for t, s in ticker_to_sleeve.items() if t in tickers} if False else ticker_to_sleeve  # keep both branches stable
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Pre-flight failure (e.g. network) shouldn't kill the request — log
+        # and continue; BacktestService will hit the same issue and the user
+        # will see an empty result we can flag at the end.
+        logger.warning("Backtest pre-flight failed (non-fatal): %s", exc)
+        missing = []
+
+    agent_union: list[str] = []
+    seen_a: set[str] = set()
+    for sleeve in selected_sleeves.values():
+        for a in sleeve["agents"]:
+            if a not in seen_a:
+                seen_a.add(a)
+                agent_union.append(a)
+
+    # ticker → sleeve mapping for attribution (first sleeve wins on overlap).
+    ticker_to_sleeve: dict[str, str] = {}
+    for name, sleeve in selected_sleeves.items():
+        for t in sleeve["tickers"]:
+            ticker_to_sleeve.setdefault(t, name)
+
+    nodes, edges = _build_sleeve_graph(agent_union)
+    try:
+        graph = create_graph(nodes, edges).compile()
+    except Exception as exc:
+        logger.exception("Failed to compile sleeve graph")
+        raise HTTPException(status_code=500, detail=f"Graph compile failed: {exc}")
+
+    portfolio = create_portfolio(
+        initial_cash=req.initial_capital,
+        margin_requirement=req.margin_requirement,
+        tickers=tickers,
+        portfolio_positions=[],
+    )
+    shim = _RequestShim(req.model_name, req.model_provider)
+
+    service = BacktestService(
+        graph=graph,
+        portfolio=portfolio,
+        tickers=tickers,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        initial_capital=req.initial_capital,
+        model_name=req.model_name,
+        model_provider=req.model_provider,
+        request=shim,
+    )
+
+    async def _detect_disconnect() -> bool:
+        try:
+            while True:
+                msg = await request.receive()
+                if msg["type"] == "http.disconnect":
+                    return True
+        except Exception:
+            return True
+
+    async def event_generator():
+        progress_queue: asyncio.Queue = asyncio.Queue()
+        backtest_task: asyncio.Task | None = None
+        disconnect_task: asyncio.Task | None = None
+
+        def agent_progress_handler(agent_name, ticker, status, analysis, timestamp):
+            # Forward agent-level progress (one per agent.update_status call)
+            # into the SSE stream so the UI live-log can show "warren_buffett
+            # · NVDA · Done" type entries during the backtest.
+            progress_queue.put_nowait(
+                ProgressUpdateEvent(
+                    agent=agent_name,
+                    ticker=ticker,
+                    status=status,
+                    analysis=analysis,
+                    timestamp=timestamp,
+                )
+            )
+
+        def backtest_callback(update):
+            # BacktestService emits {"type": "progress" | "backtest_result", ...}.
+            # Translate into ProgressUpdateEvent for UI compatibility — the
+            # day result is JSON-serialized into `analysis` so the frontend
+            # can build the equity curve incrementally.
+            if update.get("type") == "progress":
+                progress_queue.put_nowait(
+                    ProgressUpdateEvent(
+                        agent="backtest",
+                        ticker=None,
+                        status=(
+                            f"Processing {update['current_date']} "
+                            f"({update['current_step']}/{update['total_dates']})"
+                        ),
+                    )
+                )
+            elif update.get("type") == "backtest_result":
+                day = update["data"]
+                progress_queue.put_nowait(
+                    ProgressUpdateEvent(
+                        agent="backtest",
+                        ticker=None,
+                        status=f"Completed {day['date']} - Portfolio: ${day['portfolio_value']:,.2f}",
+                        analysis=json.dumps(day, default=str),
+                    )
+                )
+
+        progress.register_handler(agent_progress_handler)
+        try:
+            yield StartEvent(data={
+                "tickers": tickers,
+                "agents": agent_union,
+                "start_date": req.start_date,
+                "end_date": req.end_date,
+                "initial_capital": req.initial_capital,
+                "missing_tickers": missing,  # may be empty
+            }).to_sse()
+            if missing:
+                yield ProgressUpdateEvent(
+                    agent="backtest",
+                    ticker=None,
+                    status=(
+                        f"Skipping {len(missing)} ticker(s) with no price data in window: "
+                        f"{', '.join(missing)}"
+                    ),
+                ).to_sse()
+
+            backtest_task = asyncio.create_task(
+                service.run_backtest_async(progress_callback=backtest_callback)
+            )
+            disconnect_task = asyncio.create_task(_detect_disconnect())
+
+            while not backtest_task.done():
+                if disconnect_task.done():
+                    logger.info("Client disconnected; cancelling backtest")
+                    backtest_task.cancel()
+                    return
+                try:
+                    evt = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    yield evt.to_sse()
+                except asyncio.TimeoutError:
+                    continue
+
+            # Drain leftover queue events.
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait().to_sse()
+
+            try:
+                result = await backtest_task
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.exception("Sleeves backtest failed")
+                yield ErrorEvent(message=f"Backtest failed: {exc}").to_sse()
+                return
+
+            # ── D4: attribution from the per-day result stream ────────────
+            day_results = result.get("results", [])
+            trades: list[Trade] = extract_trades_from_day_results(
+                day_results,
+                ticker_to_sleeve=ticker_to_sleeve,
+            )
+            sleeve_metrics = compute_sleeve_metrics(trades)
+            agent_attr = compute_agent_attribution(trades, dict(_live_sleeves()))
+            warnings = warn_underperforming_agents(trades)
+
+            # Compute headline summary so the frontend doesn't have to
+            # recompute from day_results. Total return relative to initial
+            # capital is the most user-meaningful number.
+            initial_capital = float(req.initial_capital)
+            final_value = (
+                float(day_results[-1].get("portfolio_value", initial_capital))
+                if day_results
+                else initial_capital
+            )
+            total_return_pct = (
+                (final_value - initial_capital) / initial_capital * 100.0
+                if initial_capital
+                else 0.0
+            )
+
+            # Serialize trades for the UI — Trade is a dataclass so we
+            # explicitly project the readable fields.
+            serialized_trades = [
+                {
+                    "ticker": t.ticker,
+                    "sleeve": t.sleeve,
+                    "agent": t.agent,
+                    "open_date": t.open_date.isoformat(),
+                    "close_date": t.close_date.isoformat(),
+                    "side": t.side,
+                    "hold_days": t.hold_days,
+                    "pnl": t.pnl,
+                    "entry_value": t.entry_value,
+                    "return_pct": t.return_pct,
+                }
+                for t in trades
+            ]
+
+            yield CompleteEvent(data={
+                "summary": {
+                    "initial_capital": initial_capital,
+                    "final_value": final_value,
+                    "total_return_pct": total_return_pct,
+                    "n_days_simulated": len(day_results),
+                    "n_trades": len(trades),
+                    "missing_tickers": missing,
+                },
+                "performance_metrics": result.get("performance_metrics", {}),
+                "final_portfolio": result.get("final_portfolio", {}),
+                "results": day_results,
+                "trades": serialized_trades,
+                "attribution": {
+                    "n_trades": len(trades),
+                    "sleeves": {
+                        sm.sleeve: {
+                            "n_trades": sm.n_trades,
+                            "win_rate": sm.win_rate,
+                            "avg_hold_days": sm.avg_hold_days,
+                            "total_pnl": sm.total_pnl,
+                            "sharpe": sm.sharpe,
+                            "max_drawdown": sm.max_drawdown,
+                        }
+                        for sm in sleeve_metrics.values()
+                    },
+                    "agents": {
+                        aa.agent: {
+                            "n_trades": aa.n_trades,
+                            "win_rate": aa.win_rate,
+                            "total_pnl_attributed": aa.total_pnl_attributed,
+                            "avg_return_pct": aa.avg_return_pct,
+                        }
+                        for aa in agent_attr.values()
+                    },
+                    "warnings": [w.message() for w in warnings],
+                },
+            }).to_sse()
+
+        except asyncio.CancelledError:
+            return
+        finally:
+            progress.unregister_handler(agent_progress_handler)
+            if backtest_task and not backtest_task.done():
+                backtest_task.cancel()
+            if disconnect_task and not disconnect_task.done():
+                disconnect_task.cancel()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 # ─── /sleeves/watchlist (read + write) ──────────────────────────────────────
 
 
@@ -586,3 +3173,170 @@ async def put_watchlist_endpoint(payload: WatchlistPayload) -> dict[str, Any]:
     """
     persisted = write_watchlist([e.model_dump() for e in payload.entries])
     return {"entries": persisted}
+
+
+# ─── /sleeves/thesis/{scope} (LLM PM-memo synthesis) ────────────────────────
+
+
+from app.backend.services.thesis_service import (  # noqa: E402
+    synthesize_portfolio_thesis,
+    synthesize_sleeve_thesis,
+)
+
+
+def _portfolio_thesis_inputs() -> tuple[str, dict, list, list] | None:
+    """Build the structured inputs the thesis service expects, from the most
+    recent scan + live sleeve config. Returns None if there is no scan to
+    synthesize against.
+    """
+    scan = _latest_scan_summary()  # defined elsewhere in this module
+    if scan is None or not scan.get("rows"):
+        return None
+
+    rows = scan["rows"]
+    scan_date = scan.get("date") or ""
+    sleeves_cfg = _live_sleeves()
+
+    # Rollup
+    bullish = sum(1 for r in rows if r.get("consensus") == "bullish")
+    bearish = sum(1 for r in rows if r.get("consensus") == "bearish")
+    neutral = sum(1 for r in rows if r.get("consensus") == "neutral")
+    avg_conf = (
+        sum(float(r.get("avg_confidence") or 0) for r in rows) / len(rows)
+        if rows
+        else 0.0
+    )
+    rollup = {
+        "scanned": len(rows),
+        "bullish": bullish,
+        "bearish": bearish,
+        "neutral": neutral,
+        "weighted_conviction": round(avg_conf, 1),
+    }
+
+    # Per-sleeve summaries
+    per_sleeve: list[dict] = []
+    for name, meta in sleeves_cfg.items():
+        sleeve_rows = [r for r in rows if r.get("sleeve") == name]
+        if not sleeve_rows:
+            continue
+        per_sleeve.append(
+            {
+                "name": name,
+                "allocation_pct": meta.get("allocation_pct"),
+                "agents": list(meta.get("agents", [])),
+                "scanned": len(sleeve_rows),
+                "bullish": sum(
+                    1 for r in sleeve_rows if r.get("consensus") == "bullish"
+                ),
+                "bearish": sum(
+                    1 for r in sleeve_rows if r.get("consensus") == "bearish"
+                ),
+                "neutral": sum(
+                    1 for r in sleeve_rows if r.get("consensus") == "neutral"
+                ),
+                "weighted_conviction": round(
+                    sum(
+                        float(r.get("avg_confidence") or 0) for r in sleeve_rows
+                    )
+                    / len(sleeve_rows),
+                    1,
+                ),
+            }
+        )
+
+    # High-conviction signals (top 8 by abs weighted score)
+    hc = sorted(
+        rows,
+        key=lambda r: abs(float(r.get("weighted_score") or 0)),
+        reverse=True,
+    )[:8]
+    high_conviction = [
+        {
+            "ticker": r.get("ticker"),
+            "sleeve": r.get("sleeve"),
+            "consensus": r.get("consensus"),
+            "weighted_score": r.get("weighted_score"),
+            "avg_confidence": r.get("avg_confidence"),
+            "variant_perception": r.get("variant_perception"),
+            "position_type": r.get("position_type"),
+            "has_variant_perception": r.get("has_variant_perception"),
+        }
+        for r in hc
+    ]
+    return scan_date, rollup, per_sleeve, high_conviction
+
+
+def _latest_scan_summary() -> dict[str, Any] | None:
+    """Helper: parse the latest scan into a dict matching the GET
+    /scans/latest response shape. Returns None if no scans on disk."""
+    files = _list_scan_files()
+    if not files:
+        return None
+    path = files[0]
+    return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
+
+
+@router.post("/thesis/portfolio")
+async def post_portfolio_thesis() -> dict[str, Any]:
+    """Synthesize the portfolio-level PM memo from the most recent scan.
+
+    Cached by (scan_date + content signature) — re-fetching is cheap and
+    re-running with the same data returns identical thesis. A new scan
+    invalidates automatically since its date+signature differ.
+    """
+    inputs = _portfolio_thesis_inputs()
+    if inputs is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No scan available to synthesize a thesis against.",
+        )
+    scan_date, rollup, per_sleeve, high_conviction = inputs
+    return await asyncio.to_thread(
+        synthesize_portfolio_thesis,
+        scan_date=scan_date,
+        portfolio_rollup=rollup,
+        per_sleeve=per_sleeve,
+        high_conviction=high_conviction,
+    )
+
+
+@router.post("/thesis/sleeve/{name}")
+async def post_sleeve_thesis(name: str) -> dict[str, Any]:
+    """Synthesize a sleeve-scoped PM memo."""
+    sleeves_cfg = _live_sleeves()
+    if name not in sleeves_cfg:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown sleeve '{name}'."
+        )
+
+    scan = _latest_scan_summary()
+    if scan is None or not scan.get("rows"):
+        raise HTTPException(
+            status_code=404,
+            detail="No scan available to synthesize a thesis against.",
+        )
+
+    sleeve_rows = [r for r in scan["rows"] if r.get("sleeve") == name]
+    if not sleeve_rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Sleeve '{name}' has no rows in the latest scan.",
+        )
+
+    meta = sleeves_cfg[name]
+    sleeve_meta = {
+        "name": name,
+        "allocation_pct": meta.get("allocation_pct"),
+        "agents": list(meta.get("agents", [])),
+        "agent_weights": dict(meta.get("agent_weights", {})),
+        "tickers": list(meta.get("tickers", [])),
+    }
+
+    return await asyncio.to_thread(
+        synthesize_sleeve_thesis,
+        sleeve_name=name,
+        scan_date=scan["date"],
+        sleeve_meta=sleeve_meta,
+        rows=sleeve_rows,
+    )

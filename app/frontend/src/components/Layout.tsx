@@ -12,11 +12,11 @@ import { cn } from '@/lib/utils';
 import { SidebarStorageService } from '@/services/sidebar-storage';
 import { TabService } from '@/services/tab-service';
 import { ReactFlowProvider } from '@xyflow/react';
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TopBar } from './layout/top-bar';
 
 // Create a LayoutContent component to access the FlowContext, TabsContext, and LayoutContext
-function LayoutContent({ children }: { children: ReactNode }) {
+function LayoutContent() {
   const { reactFlowInstance } = useFlowContext();
   const { openTab, tabs } = useTabsContext();
   const { isBottomCollapsed, expandBottomPanel, collapseBottomPanel, toggleBottomPanel } = useLayoutContext();
@@ -51,6 +51,21 @@ function LayoutContent({ children }: { children: ReactNode }) {
 
   const handleSettingsClick = () => {
     const tabData = TabService.createSettingsTab();
+    openTab(tabData);
+  };
+
+  const handleOptionsClick = () => {
+    const tabData = TabService.createOptionsTab();
+    openTab(tabData);
+  };
+
+  const handleBacktestClick = () => {
+    const tabData = TabService.createBacktestTab();
+    openTab(tabData);
+  };
+
+  const handleStocksClick = () => {
+    const tabData = TabService.createStocksTab();
     openTab(tabData);
   };
 
@@ -94,26 +109,6 @@ function LayoutContent({ children }: { children: ReactNode }) {
     };
   };
 
-  // Calculate main content positioning accounting for tab bar height
-  const getMainContentStyle = () => {
-    const tabBarHeight = 40; // Approximate tab bar height
-    let top = tabBarHeight;
-    let bottom = 0;
-    
-    if (!isBottomCollapsed) {
-      bottom = bottomPanelHeight;
-    }
-    
-    return {
-      top: `${top}px`,
-      bottom: `${bottom}px`,
-      left: '0',
-      right: '0',
-      width: 'auto',
-      height: 'auto',
-    };
-  };
-
   return (
     <div className="flex h-screen w-screen overflow-hidden relative bg-background">
       {/* VSCode-style Top Bar */}
@@ -125,6 +120,9 @@ function LayoutContent({ children }: { children: ReactNode }) {
         onToggleRight={() => setIsRightCollapsed(!isRightCollapsed)}
         onToggleBottom={toggleBottomPanel}
         onSettingsClick={handleSettingsClick}
+        onOptionsClick={handleOptionsClick}
+        onBacktestClick={handleBacktestClick}
+        onStocksClick={handleStocksClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}
@@ -194,18 +192,14 @@ function LayoutContent({ children }: { children: ReactNode }) {
   );
 }
 
-interface LayoutProps {
-  children: ReactNode;
-}
-
-export function Layout({ children }: LayoutProps) {
+export function Layout() {
   return (
     <SidebarProvider defaultOpen={true}>
       <ReactFlowProvider>
         <FlowProvider>
           <TabsProvider>
             <LayoutProvider>
-              <LayoutContent>{children}</LayoutContent>
+              <LayoutContent />
             </LayoutProvider>
           </TabsProvider>
         </FlowProvider>

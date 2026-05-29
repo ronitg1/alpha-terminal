@@ -32,12 +32,12 @@ type FlowProps = {
 };
 
 export function Flow({ className = '' }: FlowProps) {
-  const { theme, resolvedTheme } = useTheme();
+  const { resolvedTheme } = useTheme();
   
   // Use the resolved theme for ReactFlow ColorMode
   const colorMode: ColorMode = resolvedTheme === 'light' ? 'light' : 'dark';
   
-  const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>([]);
+  const [nodes, , onNodesChange] = useNodesState<AppNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   const proOptions = { hideAttribution: true };
@@ -52,7 +52,7 @@ export function Flow({ className = '' }: FlowProps) {
   const { success, error } = useToastManager();
 
   // Initialize flow history (each flow maintains its own separate history)
-  const { takeSnapshot, undo, redo, canUndo, canRedo, clearHistory } = useFlowHistory({ flowId: currentFlowId });
+  const { takeSnapshot, undo, redo } = useFlowHistory({ flowId: currentFlowId });
 
   // Create debounced auto-save function
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);

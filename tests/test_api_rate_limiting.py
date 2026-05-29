@@ -2,7 +2,7 @@ import os
 import pytest
 from unittest.mock import Mock, patch, call
 
-from src.tools.api import _make_api_request, get_prices
+from src.tools.api import _make_fds_request, get_prices
 
 class TestRateLimiting:
     """Test suite for API rate limiting functionality."""
@@ -25,7 +25,7 @@ class TestRateLimiting:
         headers = {"X-API-KEY": "test-key"}
         url = "https://api.financialdatasets.ai/test"
         
-        result = _make_api_request(url, headers)
+        result = _make_fds_request(url, headers)
         
         # Verify behavior
         assert result.status_code == 200
@@ -64,7 +64,7 @@ class TestRateLimiting:
         headers = {"X-API-KEY": "test-key"}
         url = "https://api.financialdatasets.ai/test"
         
-        result = _make_api_request(url, headers)
+        result = _make_fds_request(url, headers)
         
         # Verify behavior
         assert result.status_code == 200
@@ -97,7 +97,7 @@ class TestRateLimiting:
         url = "https://api.financialdatasets.ai/test"
         json_data = {"test": "data"}
         
-        result = _make_api_request(url, headers, method="POST", json_data=json_data)
+        result = _make_fds_request(url, headers, method="POST", json_data=json_data)
         
         # Verify behavior
         assert result.status_code == 200
@@ -128,7 +128,7 @@ class TestRateLimiting:
         headers = {"X-API-KEY": "test-key"}
         url = "https://api.financialdatasets.ai/test"
         
-        result = _make_api_request(url, headers)
+        result = _make_fds_request(url, headers)
         
         # Verify behavior
         assert result.status_code == 500
@@ -155,7 +155,7 @@ class TestRateLimiting:
         headers = {"X-API-KEY": "test-key"}
         url = "https://api.financialdatasets.ai/test"
         
-        result = _make_api_request(url, headers)
+        result = _make_fds_request(url, headers)
         
         # Verify behavior
         assert result.status_code == 200
@@ -197,8 +197,16 @@ class TestRateLimiting:
         
         mock_get.side_effect = [mock_429_response, mock_200_response]
         
-        # Set environment variable for API key
-        with patch.dict(os.environ, {"FINANCIAL_DATASETS_API_KEY": "test-key"}):
+        # Force the FDS code path (Massive is the default in this repo, but
+        # this test mocks requests.get which only the FDS path uses). Removing
+        # MASSIVE_API_KEY + setting DATA_PROVIDER=fds steers _provider_for() to
+        # the FDS branch where the rate-limit-retry behaviour lives.
+        with patch.dict(
+            os.environ,
+            {"FINANCIAL_DATASETS_API_KEY": "test-key", "DATA_PROVIDER": "fds"},
+            clear=False,
+        ), patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MASSIVE_API_KEY", None)
             # Call get_prices
             result = get_prices("AAPL", "2024-01-01", "2024-01-02")
         
@@ -230,7 +238,7 @@ class TestRateLimiting:
         headers = {"X-API-KEY": "test-key"}
         url = "https://api.financialdatasets.ai/test"
         
-        result = _make_api_request(url, headers, max_retries=2)
+        result = _make_fds_request(url, headers, max_retries=2)
         
         # Verify final 429 is returned
         assert result.status_code == 429

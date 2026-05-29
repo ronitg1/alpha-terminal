@@ -15,6 +15,7 @@ from __future__ import annotations
 WATCHLIST: list[str] = [
     "PLTR",  # commercial mix shift
     "SOFI",
+    "NOW",
 ]
 
 

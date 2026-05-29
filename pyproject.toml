@@ -1,8 +1,11 @@
+# Poetry package metadata. The poetry "name" field is kept as the legacy
+# upstream value so existing virtualenvs continue to resolve; the public
+# brand is "Alpha Terminal" (see README.md, LICENSE).
 [tool.poetry]
 name = "ai-hedge-fund"
-version = "2026.5.14"
-description = "An AI-powered hedge fund that uses multiple agents to make trading decisions"
-authors = ["Your Name <your.email@example.com>"]
+version = "0.1.0"
+description = "Alpha Terminal — retail-investor research dashboard. AI agent panels score your stocks, a real-fill options backtester checks your strategies."
+authors = ["Ronit Ganguly <ganguly.ronit@gmail.com>"]
 readme = "README.md"
 packages = [
     { include = "src", from = "." },

@@ -255,6 +255,117 @@ def warn_underperforming_agents(
 # ─── Convenience renderer ───────────────────────────────────────────────────
 
 
+def extract_trades_from_day_results(
+    day_results: list[dict],
+    *,
+    ticker_to_sleeve: dict[str, str],
+) -> list[Trade]:
+    """Reconstruct closed ``Trade`` records from a BacktestService day-result stream.
+
+    Walks the per-day ``executed_trades`` + ``current_prices`` to identify
+    open → close transitions for each ticker (long-only for now — the
+    sleeves strategy doesn't short). For each closed trade:
+
+    - ``open_date``  = day a buy executed and the position was previously flat.
+    - ``close_date`` = day a sell brought the position back to zero.
+    - ``pnl``        = (close_price - avg_entry_price) * closed_shares.
+    - ``agent``      = the analyst whose signal had the highest confidence
+                       at entry. Falls back to empty string (sleeve_attribution
+                       distributes by sleeve weights when the agent key isn't
+                       in the sleeve's weight dict).
+
+    Tickers whose sleeve can't be resolved are skipped with a debug log.
+    Day results are assumed to be in chronological order — the upstream
+    BacktestService emits them that way.
+    """
+    if not day_results:
+        return []
+
+    # Per-ticker FIFO position tracker: each open position is one buy lot.
+    # The first sell flat-out closes it (no partial fills tracked; backtest
+    # decisions are coarse enough that this captures realistic strategy P&L).
+    open_lots: dict[str, dict] = {}  # ticker -> {qty, cost_basis, open_date, agent}
+    trades: list[Trade] = []
+
+    for day in day_results:
+        date_str = day.get("date")
+        try:
+            date_obj = date.fromisoformat(date_str) if date_str else None
+        except (TypeError, ValueError):
+            date_obj = None
+        if date_obj is None:
+            continue
+
+        decisions = day.get("decisions") or {}
+        executed = day.get("executed_trades") or {}
+        prices = day.get("current_prices") or {}
+        analyst_signals = day.get("analyst_signals") or {}
+
+        for ticker, qty in executed.items():
+            if not qty:
+                continue
+            decision = decisions.get(ticker) or {}
+            action = decision.get("action") or ""
+            price = prices.get(ticker)
+            if price is None:
+                continue
+
+            if action == "buy" and qty > 0:
+                # Find best-confidence agent for attribution.
+                best_agent = ""
+                best_conf = -1.0
+                for agent_id, sigmap in analyst_signals.items():
+                    sig = (sigmap or {}).get(ticker)
+                    if not isinstance(sig, dict):
+                        continue
+                    conf = float(sig.get("confidence", 0))
+                    if conf > best_conf:
+                        best_conf = conf
+                        # Strip the trailing _agent suffix to match sleeve config keys.
+                        best_agent = agent_id.removesuffix("_agent") if hasattr(agent_id, "removesuffix") else agent_id.replace("_agent", "")
+                if ticker in open_lots:
+                    # Average into the existing lot.
+                    lot = open_lots[ticker]
+                    new_qty = lot["qty"] + qty
+                    lot["cost_basis"] = (lot["cost_basis"] * lot["qty"] + price * qty) / new_qty
+                    lot["qty"] = new_qty
+                else:
+                    open_lots[ticker] = {
+                        "qty": qty,
+                        "cost_basis": price,
+                        "open_date": date_obj,
+                        "agent": best_agent,
+                    }
+            elif action == "sell" and qty > 0:
+                lot = open_lots.get(ticker)
+                if not lot:
+                    continue
+                closed_qty = min(qty, lot["qty"])
+                pnl = (price - lot["cost_basis"]) * closed_qty
+                entry_value = lot["cost_basis"] * closed_qty
+                sleeve = ticker_to_sleeve.get(ticker)
+                if sleeve is None:
+                    logger.debug("Ticker %s has no sleeve mapping; skipping trade.", ticker)
+                else:
+                    trades.append(
+                        Trade(
+                            ticker=ticker,
+                            sleeve=sleeve,
+                            agent=lot["agent"],
+                            open_date=lot["open_date"],
+                            close_date=date_obj,
+                            side="long",
+                            pnl=pnl,
+                            entry_value=entry_value,
+                        )
+                    )
+                lot["qty"] -= closed_qty
+                if lot["qty"] <= 0:
+                    del open_lots[ticker]
+
+    return trades
+
+
 def render_attribution_report(
     sleeve_metrics: dict[str, SleeveMetrics],
     agent_attribution: dict[str, AgentAttribution],
@@ -304,6 +415,7 @@ __all__ = [
     "compute_sleeve_metrics",
     "compute_agent_attribution",
     "warn_underperforming_agents",
+    "extract_trades_from_day_results",
     "render_attribution_report",
     "DEFAULT_BACKTEST_START_DATE",
     "UNDERPERFORM_WIN_RATE_THRESHOLD",

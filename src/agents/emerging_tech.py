@@ -300,7 +300,7 @@ def _generate_emerging_tech_output(
                 1. Tech category — pick the closest enum value.
                 2. Moat type + durability — IP / network effects / switching
                    costs / scale / talent / regulatory; durable / eroding /
-                   commoditizing. If unsure, say so.
+                   commoditizing. If unsure on durability, say so.
                 3. S-curve position — early (pre-rev or <$100M), growth
                    (accelerating), inflecting (rule-of-40 improving), maturing,
                    declining.
@@ -310,11 +310,26 @@ def _generate_emerging_tech_output(
                 5. Valuation assessment — given growth + moat durability, is
                    the multiple too optimistic / fair / too pessimistic?
                 6. Variant perception — "Consensus is wrong because [X]".
+                   If you don't have a contrarian thesis, you may still produce
+                   a directional lean grounded in the scorecard (moat + S-curve
+                   + AI tailwind + valuation) — set the variant_perception field
+                   to a one-sentence summary of the lean instead of "n/a".
+                   Reserve signal=neutral for genuinely conflicted setups.
+
+                # CONFIDENCE CALIBRATION (anchor explicitly, do not default to 50)
+                Score the confidence field by how many of these align:
+                  • 70-90: strong directional read + ≥3 of (moat durability,
+                    S-curve, AI tailwind, valuation) agreeing + variant perception
+                  • 50-70: directional lean with 2-3 scorecard dimensions agreeing
+                  • 30-50: directional lean with 1 strong dimension, others mixed
+                  • 10-30: thin data or 2 dimensions disagreeing
+                  • 0-10: insufficient evidence (signal=neutral, conviction=none)
 
                 Cite specific numbers from the analysis data. Name competitors
-                in the competitors_note field. If a section truly lacks
-                evidence, use "unknown" rather than guessing — guessing is the
-                worst failure mode.
+                in the competitors_note field. Use "unknown" for a SPECIFIC field
+                when evidence is truly absent (e.g. moat_durability for an opaque
+                pre-revenue name), but do NOT default the whole signal to neutral
+                just because one field is unknown — score what you can score.
                 """,
             ),
             (

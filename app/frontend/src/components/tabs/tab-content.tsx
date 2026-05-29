@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { TabService } from '@/services/tab-service';
 import { FileText, FolderOpen } from 'lucide-react';
 import { useEffect } from 'react';
+import { TabErrorBoundary } from './tab-error-boundary';
 
 interface TabContentProps {
   className?: string;
@@ -78,7 +79,12 @@ export function TabContent({ className }: TabContentProps) {
 
   return (
     <div className={cn("h-full w-full bg-background overflow-hidden", className)}>
-      {activeTab.content}
+      {/* Per-tab boundary so a crash in one tab doesn't blank the whole
+          page (HANDOFF gotcha #2). Keyed by tab id so switching tabs
+          resets boundary state cleanly. */}
+      <TabErrorBoundary key={activeTab.id}>
+        {activeTab.content}
+      </TabErrorBoundary>
     </div>
   );
 } 
