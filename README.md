@@ -4,6 +4,7 @@
 
 **A research dashboard for retail investors. AI agent panels score your stocks, a real-fill options backtester checks your strategies, and you run it all from your laptop.**
 
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#roadmap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
@@ -11,6 +12,9 @@
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
+
+> [!WARNING]
+> **🚧 Beta — actively under development.** Core features (Sleeves dashboard, options screener, backtest engine, My Stocks) are working and tested, but the project is on `v0.1.0` and the roadmap is open. Expect rough edges, breaking changes between versions, and missing pieces. See the [Roadmap](#roadmap) for what's coming. Pin a specific commit if you need stability.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
