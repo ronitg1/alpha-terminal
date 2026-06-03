@@ -4,7 +4,7 @@
 
 **A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#roadmap)
+[![Version: 1.0](https://img.shields.io/badge/version-1.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
@@ -13,8 +13,8 @@
 
 </div>
 
-> [!WARNING]
-> **🚧 Beta — actively under development.** The five tabs (Market, Screening, Portfolio, News, Calls), the options screener + realistic backtester, and the Finnhub fundamentals integration are working and tested, but the project is pre-`1.0` and the roadmap is open. Expect rough edges and breaking changes between versions. See the [Roadmap](#roadmap). Pin a specific commit if you need stability.
+> [!NOTE]
+> **Version 1.0 — stable.** The five tabs (Market, Screening, Portfolio, News, Calls), the options screener + realistic backtester, the Pattern Scanner, and the Finnhub fundamentals integration are feature-complete and tested (156 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -22,7 +22,7 @@
 
 ## Contents
 
-[What it does](#what-it-does) · [Why](#why-this-exists) · [Quick start](#quick-start-5-minutes) · [The dashboard](#the-dashboard-at-a-glance) · [Features](#features) · [Architecture](#architecture) · [Repo layout](#repository-layout) · [Setup](#detailed-setup) · [Troubleshooting](#troubleshooting) · [What it is NOT](#what-this-is-not) · [Roadmap](#roadmap) · [Credits](#credits)
+[What it does](#what-it-does) · [Why](#why-this-exists) · [Quick start](#quick-start-5-minutes) · [The dashboard](#the-dashboard-at-a-glance) · [Features](#features) · [Architecture](#architecture) · [Repo layout](#repository-layout) · [Setup](#detailed-setup) · [Troubleshooting](#troubleshooting) · [What it is NOT](#what-this-is-not) · [Roadmap](#roadmap) · [Changelog](CHANGELOG.md) · [Credits](#credits)
 
 ---
 
@@ -530,6 +530,7 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Recently shipped**
 
+- [x] **1.0** — per-name conviction score + recommendation in Portfolio Pulse; structured-reasoning rendering for the Fundamentals/Valuation analysts; backend scoring-engine extraction; consolidated runtime data dir; accurate Pattern Scanner docs (see [changelog](CHANGELOG.md))
 - [x] Market News tab (Finnhub-backed, macro auto-categorization, AI summaries)
 - [x] Earnings-call analysis tab (paste/URL/PDF → 9-section breakdown)
 - [x] Finnhub free-tier integration — insider + growth/turnover backfill, fundamentals enrichment, shared rate limiter
@@ -547,7 +548,6 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 - [ ] Trailing / peak-drawdown stop-loss mode in the backtester (currently fixed-% from entry)
 - [ ] Sleeve sparkline history + diff highlight vs the previous scan
 - [ ] Cost meter — running tally of LLM credits per session
-- [ ] Consolidate the two runtime-data dirs (`app/data/` + `app/backend/data/`)
 
 ---
 

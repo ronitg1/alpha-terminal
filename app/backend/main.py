@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="0.2.2",
+    version="1.0.0",
 )
 
 

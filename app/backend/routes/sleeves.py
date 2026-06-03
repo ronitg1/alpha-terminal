@@ -2737,8 +2737,6 @@ async def backtest_sleeves(req: SleevesBacktestRequest, request: Request):
             # Drop missing tickers and continue; warn via SSE later.
             tickers = [t for t in tickers if t not in missing]
             logger.warning("Backtest dropping tickers with no data in window: %s", missing)
-            # Re-validate ticker_to_sleeve consistency.
-            ticker_to_sleeve = {t: s for t, s in ticker_to_sleeve.items() if t in tickers} if False else ticker_to_sleeve  # keep both branches stable
     except HTTPException:
         raise
     except Exception as exc:
