@@ -1,4 +1,10 @@
-"""Service for reading/writing the multi-watchlist store."""
+"""Service for reading/writing the multi-watchlist store.
+
+Runtime user state lives under ``app/data/`` (same dir as
+``portfolio_settings.json``) — consolidated from the old ``app/backend/data/``
+location. ``_LEGACY_STORE_PATH`` is read once as a fallback so existing
+installs keep their watchlists; the next write lands in the new location.
+"""
 from __future__ import annotations
 
 import json
@@ -6,14 +12,18 @@ import threading
 from pathlib import Path
 from typing import Any
 
-_STORE_PATH = Path(__file__).parent.parent / "data" / "watchlists.json"
+# app/data/watchlists.json  (parents[2] == the app/ dir)
+_STORE_PATH = Path(__file__).resolve().parents[2] / "data" / "watchlists.json"
+# Pre-consolidation location (app/backend/data/), read-only fallback.
+_LEGACY_STORE_PATH = Path(__file__).resolve().parents[1] / "data" / "watchlists.json"
 _lock = threading.Lock()
 
 
 def _load() -> dict[str, Any]:
-    if not _STORE_PATH.exists():
+    path = _STORE_PATH if _STORE_PATH.exists() else _LEGACY_STORE_PATH
+    if not path.exists():
         return {"watchlists": [{"name": "Market Watchlist", "tickers": []}]}
-    with open(_STORE_PATH, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
