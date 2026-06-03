@@ -3,12 +3,13 @@ import { BacktestTab } from '@/components/sleeves/backtest/backtest-tab';
 import { OptionsTab } from '@/components/sleeves/options/options-tab';
 import { SleevesTab } from '@/components/sleeves/sleeves-tab';
 import { StocksTab } from '@/components/stocks/stocks-tab';
+import { PatternsTab } from '@/components/patterns/patterns-tab';
 import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'sleeves' | 'options' | 'backtest' | 'stocks';
+  type: 'flow' | 'settings' | 'sleeves' | 'options' | 'backtest' | 'stocks' | 'patterns';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -37,6 +38,9 @@ export class TabService {
 
       case 'stocks':
         return createElement(StocksTab);
+
+      case 'patterns':
+        return createElement(PatternsTab);
 
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -92,6 +96,14 @@ export class TabService {
     };
   }
 
+  static createPatternsTab(): TabData & { content: ReactNode } {
+    return {
+      type: 'patterns',
+      title: 'Patterns',
+      content: TabService.createTabContent({ type: 'patterns', title: 'Patterns' }),
+    };
+  }
+
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -120,6 +132,9 @@ export class TabService {
 
       case 'stocks':
         return TabService.createStocksTab();
+
+      case 'patterns':
+        return TabService.createPatternsTab();
 
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);

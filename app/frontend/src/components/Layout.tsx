@@ -69,6 +69,11 @@ function LayoutContent() {
     openTab(tabData);
   };
 
+  const handlePatternsClick = () => {
+    const tabData = TabService.createPatternsTab();
+    openTab(tabData);
+  };
+
   // Add keyboard shortcuts for toggling sidebars and fit view
   useLayoutKeyboardShortcuts(
     () => setIsRightCollapsed(!isRightCollapsed), // Cmd+I for right sidebar
@@ -123,6 +128,7 @@ function LayoutContent() {
         onOptionsClick={handleOptionsClick}
         onBacktestClick={handleBacktestClick}
         onStocksClick={handleStocksClick}
+        onPatternsClick={handlePatternsClick}
       />
 
       {/* Tab Bar - positioned absolutely like bottom panel */}

@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
+  Activity,
   History,
   LayoutGrid,
   LineChart,
@@ -21,6 +22,7 @@ interface TopBarProps {
   onOptionsClick: () => void;
   onBacktestClick: () => void;
   onStocksClick: () => void;
+  onPatternsClick: () => void;
 }
 
 export function TopBar({
@@ -34,6 +36,7 @@ export function TopBar({
   onOptionsClick,
   onBacktestClick,
   onStocksClick,
+  onPatternsClick,
 }: TopBarProps) {
   return (
     <div className="absolute top-0 right-0 z-40 flex items-center gap-0 py-1 px-2 bg-panel/80">
@@ -95,6 +98,18 @@ export function TopBar({
         title="Open My Stocks (your editable watchlist with charts)"
       >
         <LayoutGrid size={16} />
+      </Button>
+
+      {/* Pattern Scanner */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onPatternsClick}
+        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-ramp-grey-700 transition-colors"
+        aria-label="Open pattern scanner"
+        title="Open Pattern Scanner (12 chart pattern detectors)"
+      >
+        <Activity size={16} />
       </Button>
 
       {/* Options screener */}

@@ -52,6 +52,7 @@ from app.backend.services.watchlist_service import (
 )
 import src.config.portfolio_config as _portfolio_config_module
 from src.config.portfolio_config import CASH_RESERVE_PCT  # noqa: F401  (re-read fresh below)
+from src.patterns.patterns import BULLISH_PATTERNS, PATTERN_DETECTORS
 
 
 def _live_sleeves() -> dict:
@@ -1827,6 +1828,115 @@ def _score_unusual_options_activity(
     }
 
 
+def _bars_to_candles(bars: list) -> list[dict]:
+    """Convert Price bar objects to candle dicts the pattern engine expects."""
+    return [
+        {
+            "date": b.time,
+            "open": b.open,
+            "high": b.high,
+            "low": b.low,
+            "close": b.close,
+            "volume": b.volume,
+        }
+        for b in bars
+    ]
+
+
+def _make_pattern_scorer(pattern_name: str, detector_fn: Any, is_bullish: bool):
+    """Return a strategy scorer closure for a single chart pattern.
+
+    Runs the detector on the most recent 120 bars and checks whether a
+    confirmed breakout completed within the last 10 bars. Three binary
+    signals drive the 0–3 conviction score.
+    """
+    _direction = "call" if is_bullish else "put"
+    _bias = "bullish" if is_bullish else "bearish"
+    _strike_offset = 0.02 if is_bullish else -0.02
+    _reasoning = (
+        f"{pattern_name} breakout detected — {_bias} continuation setup. "
+        f"Strike slightly {'above' if is_bullish else 'below'} spot to capture "
+        "the post-breakout move. Medium-term expiry (3–5 weeks) gives the "
+        "pattern room to develop without excessive theta drag."
+    )
+
+    def _scorer(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
+        last_price: float | None = bars[-1].close if bars else None
+
+        candles = _bars_to_candles(bars[-120:])
+        try:
+            detections = detector_fn(candles)
+        except Exception:
+            detections = []
+
+        bar_dates = [b.time for b in bars[-120:]]
+        recent: list[dict] = []
+        for det in detections:
+            try:
+                idx = bar_dates.index(det["end_date"])
+            except ValueError:
+                continue
+            bars_ago = len(bar_dates) - 1 - idx
+            if bars_ago <= 10:
+                recent.append({**det, "_bars_ago": bars_ago})
+
+        recent.sort(key=lambda x: -x["confidence"])
+        best = recent[0] if recent else None
+        best_conf = best["confidence"] if best else 0.0
+        best_bars_ago = best["_bars_ago"] if best else 999
+
+        detected = best is not None
+        high_conf = best_conf >= 60
+        fresh = detected and best_bars_ago <= 5
+
+        signals = [
+            _signal(
+                "Pattern Detected",
+                f"{best_conf:.0f}%" if detected else "—",
+                detected,
+                (
+                    f"{pattern_name} confirmed within the last 10 bars at "
+                    f"{best_conf:.0f}% confidence. Fires whenever a completed "
+                    "breakout is present in the recent window."
+                ),
+            ),
+            _signal(
+                "Strong Signal",
+                f"{best_conf:.0f}%" if detected else "—",
+                high_conf,
+                (
+                    f"Confidence ≥ 60 (current: {best_conf:.0f}%). High-confidence "
+                    "detections have well-formed geometry and volume confirmation."
+                ),
+            ),
+            _signal(
+                "Recent Breakout",
+                f"{best_bars_ago}d ago" if detected else "—",
+                fresh,
+                (
+                    f"Breakout within the last 5 bars (currently {best_bars_ago} ago). "
+                    "Fresher breakouts capture more of the post-pattern momentum."
+                ),
+            ),
+        ]
+        conviction = sum(1 for s in signals if s["fired"])
+
+        return {
+            "conviction": conviction,
+            "signals": signals,
+            "sort_key": -best_conf,
+            "last_price": last_price,
+            "recommendation": _recommendation(
+                direction=_direction,
+                strike_offset_pct=_strike_offset,
+                expiry_lean="medium",
+                reasoning=_reasoning,
+            ),
+        }
+
+    return _scorer
+
+
 _STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {
     "weakness": {
         "label": "Weakness",
@@ -1896,6 +2006,73 @@ _STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
+_PATTERN_DESCRIPTIONS: dict[str, str] = {
+    "Bullish Flag": (
+        "Sharp pole up followed by a tight, slightly downward-sloping consolidation. "
+        "Breakout above the channel signals continuation. Plays: calls."
+    ),
+    "Bearish Flag": (
+        "Sharp pole down followed by a tight, slightly upward-sloping consolidation. "
+        "Breakdown below the channel signals continuation. Plays: puts."
+    ),
+    "Bull Pennant": (
+        "Explosive move up (pole) into a symmetrical triangle consolidation. "
+        "Volume contracts during the pennant; breakout on a volume surge. Plays: calls."
+    ),
+    "Double Bottom": (
+        "Two roughly equal lows with a moderate bounce between them. "
+        "Neckline breakout confirms the reversal from downtrend to uptrend. Plays: calls."
+    ),
+    "Double Top": (
+        "Two roughly equal highs with a moderate pullback between them. "
+        "Neckline breakdown confirms the reversal from uptrend to downtrend. Plays: puts."
+    ),
+    "Head and Shoulders": (
+        "Three-peak top (left shoulder, higher head, right shoulder) with a neckline. "
+        "Breakdown below the neckline is bearish. Plays: puts."
+    ),
+    "Inverse Head and Shoulders": (
+        "Three-trough bottom (left shoulder, lower head, right shoulder). "
+        "Breakout above the neckline is bullish. Plays: calls."
+    ),
+    "Ascending Triangle": (
+        "Flat resistance + rising support — buyers pressing harder each swing. "
+        "Breakout above resistance on volume confirms continuation. Plays: calls."
+    ),
+    "Descending Triangle": (
+        "Flat support + descending resistance — sellers pressing harder each swing. "
+        "Breakdown below support on volume confirms continuation. Plays: puts."
+    ),
+    "Cup and Handle": (
+        "Rounded U-shaped base (cup) followed by a small consolidation dip (handle). "
+        "Breakout above the rim is a classic bull signal. Plays: calls."
+    ),
+    "Rising Wedge": (
+        "Price compressed into a rising channel with converging trendlines. "
+        "Bearish resolution — prices typically break down. Plays: puts."
+    ),
+    "Falling Wedge": (
+        "Price compressed into a falling channel with converging trendlines. "
+        "Bullish resolution — prices typically break upward. Plays: calls."
+    ),
+}
+
+
+def _pattern_key(name: str) -> str:
+    """Normalize a pattern display name to a registry key."""
+    return "pattern_" + name.lower().replace(" ", "_").replace("&", "and").replace("-", "_")
+
+
+for _pname, _det_fn in PATTERN_DETECTORS.items():
+    _is_bullish = _pname in BULLISH_PATTERNS
+    _STRATEGY_REGISTRY[_pattern_key(_pname)] = {
+        "label": _pname,
+        "subtitle": "bullish chart pattern" if _is_bullish else "bearish chart pattern",
+        "description": _PATTERN_DESCRIPTIONS.get(_pname, f"{_pname} chart pattern."),
+        "scorer": _make_pattern_scorer(_pname, _det_fn, _is_bullish),
+    }
+
+
 _VALID_STRATEGIES = set(_STRATEGY_REGISTRY.keys())
 
 
@@ -1932,6 +2109,8 @@ _STRATEGY_ORDER = [
     "trend_bias",
     "vol_expansion",
     "unusual_options_activity",
+    # Chart-pattern strategies (alphabetical within group)
+    *sorted(_pattern_key(n) for n in PATTERN_DETECTORS),
 ]
 
 

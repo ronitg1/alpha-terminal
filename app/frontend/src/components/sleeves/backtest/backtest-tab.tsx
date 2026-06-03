@@ -34,8 +34,8 @@ function BacktestTabContent() {
         <h1 className="text-xl font-semibold">Backtest</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Two engines.{' '}
-          <strong>Strategy</strong> backtests any of the 10 options screener
-          strategies via Black-Scholes pricing — fast, deterministic, free per run.{' '}
+          <strong>Strategy</strong> backtests any of the 22 screener strategies
+          (10 technical + 12 chart patterns) via Black-Scholes pricing — fast, deterministic, free per run.{' '}
           <strong>Sleeves</strong> backtests the real LLM agent panel making
           long/short equity decisions per trading day — slower and costs LLM credits.
         </p>
