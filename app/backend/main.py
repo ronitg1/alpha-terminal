@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-import asyncio
+import os
 
 from app.backend.routes import api_router
 from app.backend.database.connection import engine
@@ -12,7 +12,41 @@ from app.backend.services.ollama_service import ollama_service
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Hedge Fund API", description="Backend API for AI Hedge Fund", version="0.1.0")
+app = FastAPI(
+    title="Alpha Terminal API",
+    description="Backend API for Alpha Terminal — retail-investor research terminal.",
+    version="0.2.2",
+)
+
+
+def _check_required_keys() -> None:
+    """Log a loud, actionable warning when mandatory API keys are missing.
+
+    Without these the app still boots, but agents silently degrade to
+    "no edge" / empty data, which looks like a bug to a new user. We warn at
+    startup instead so the cause is obvious. We never log the key values.
+    """
+    if not os.environ.get("DEEPSEEK_API_KEY", "").strip():
+        logger.warning(
+            "DEEPSEEK_API_KEY is not set — the LLM agents cannot run. "
+            "Add it to your .env (see README 'Quick start'). The dashboard will "
+            "load but scans, theses, and chat will fail."
+        )
+
+    has_massive = bool(os.environ.get("MASSIVE_API_KEY", "").strip())
+    has_fds = bool(os.environ.get("FINANCIAL_DATASETS_API_KEY", "").strip())
+    if not has_massive and not has_fds:
+        logger.warning(
+            "No market-data key found (MASSIVE_API_KEY or FINANCIAL_DATASETS_API_KEY). "
+            "Prices, fundamentals, and pattern scans will return empty. "
+            "Set MASSIVE_API_KEY (Polygon) in your .env."
+        )
+
+    if not os.environ.get("FINNHUB_API_KEY", "").strip():
+        logger.info(
+            "FINNHUB_API_KEY is not set (optional). The Market News tab and the "
+            "insider / growth-ratio fallbacks will be unavailable; everything else works."
+        )
 
 # Initialize database tables (this is safe to run multiple times)
 Base.metadata.create_all(bind=engine)
@@ -31,7 +65,8 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event to check Ollama availability."""
+    """Startup checks: required API keys, then Ollama availability."""
+    _check_required_keys()
     try:
         logger.info("Checking Ollama availability...")
         status = await ollama_service.check_ollama_status()

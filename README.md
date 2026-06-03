@@ -158,11 +158,24 @@ Your book is organized into themed **sleeves** ("Energy Transition 50% / Mega Te
 
 ### 🔎 Pattern Scanner
 
-Scans for classic chart patterns (breakouts, channels, double tops/bottoms, triangles, flags, head-and-shoulders, …) across a configurable universe. Pick the input via three tabs — **Watchlist** (all or a named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — choose which patterns to look for, and a lookback window (30d / 60d / 90d / 180d / 1yr). Results come back as a table sorted by confidence, each row carrying:
+Detects **12 classic chart patterns** on daily OHLCV, ranks every hit by a transparent confidence score, then — for any signal you click — shows how that pattern has historically resolved on that name and which options structures fit it.
 
-- the pattern's **historical win rate** (how often that pattern on that ticker resolved in the expected direction),
-- a plain-English description of the setup, and
-- a **Contract** drill-down that opens the option chain with a recommended contract (calls for bullish patterns, puts for bearish) sized to the pattern's typical resolution horizon.
+**Patterns detected** (▲ bullish / ▼ bearish):
+
+| ▲ Bullish | ▼ Bearish |
+|---|---|
+| Bullish Flag · Bull Pennant · Double Bottom · Inverse Head & Shoulders · Ascending Triangle · Cup & Handle · Falling Wedge | Head & Shoulders · Double Top · Descending Triangle · Rising Wedge · Bearish Flag |
+
+**Confidence (0–100)** is a weighted, inspectable blend — `0.4 × breakout strength + 0.3 × volume confirmation + 0.3 × trendline-touch / symmetry` — so a clean breakout on heavy volume with several trendline touches scores high, and a marginal one scores low. Overlapping detections of the same pattern are de-duplicated (highest confidence kept).
+
+**Run a scan.** Pick the universe from three tabs — **Watchlist** (all or one named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — tick which of the 12 patterns to look for, choose a lookback (30d / 60d / 90d / 180d / 1yr), and scan. Results come back as a confidence-sorted table next to a **Quick Stats** card: total signals, average confidence, bullish-vs-bearish split, and the top tickers by signal count.
+
+**Drill into any signal.** Click a row to open a full-screen chart — candlesticks plus a synced volume histogram, every detected pattern flagged with an entry arrow and a confidence marker, and the selected pattern's **trendlines drawn directly on the chart** (pole, channel, neckline, cup walls, wedge lines) with dashed **key-level** price lines (resistance / support / neckline) labelled on the axis.
+
+**Signal Analysis side panel** answers "is this pattern worth trading on this name?":
+
+- **Historical win rate** — a 730-day backtest of that exact ticker + pattern. A signal counts as a *win* if price posts a **≥ 3% favourable move within 20 trading days** of the breakout; recent signals that don't yet have 20 forward bars are excluded so the rate isn't inflated. Shows win rate (as a gauge), total signals, the W/L split, and average win / loss size.
+- **Options plays** — three graded structures matched to the pattern's direction (**Long Call / Bull Call Spread / Cash-Secured Put** for bullish; **Long Put / Bear Put Spread / Covered Call** for bearish), each with a concrete strike (rounded to listed increments off the current price), a suggested DTE, the rationale, risk/reward, and the IV-rank regime it works best in.
 
 ### 📈 Options screener (11 strategies)
 

@@ -151,9 +151,9 @@ if not exist "..\.env" (
         echo %WARNING% No .env file found. Creating from .env.example...
         copy "..\.env.example" "..\.env"
         echo %WARNING% Please edit ..\.env to add your API keys:
-        echo %WARNING%   - OPENAI_API_KEY=your-openai-api-key
-        echo %WARNING%   - GROQ_API_KEY=your-groq-api-key
-        echo %WARNING%   - FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
+        echo %WARNING%   - DEEPSEEK_API_KEY=your-deepseek-api-key   ^(required - LLM^)
+        echo %WARNING%   - MASSIVE_API_KEY=your-polygon-api-key     ^(required - market data^)
+        echo %WARNING%   - FINNHUB_API_KEY=your-finnhub-api-key     ^(optional - news, fundamentals fallback^)
         echo.
     ) else (
         echo %ERROR% No .env or .env.example file found in the root directory.

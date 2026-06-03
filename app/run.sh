@@ -138,9 +138,9 @@ setup_environment() {
             print_warning "No .env file found. Creating from .env.example..."
             cp "../.env.example" "../.env"
             print_warning "Please edit the .env file in the root directory to add your API keys:"
-            print_warning "  - OPENAI_API_KEY=your-openai-api-key"
-            print_warning "  - GROQ_API_KEY=your-groq-api-key"
-            print_warning "  - FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key"
+            print_warning "  - DEEPSEEK_API_KEY=your-deepseek-api-key   (required — LLM)"
+            print_warning "  - MASSIVE_API_KEY=your-polygon-api-key     (required — market data)"
+            print_warning "  - FINNHUB_API_KEY=your-finnhub-api-key     (optional — news, fundamentals fallback)"
             echo ""
         else
             print_error "No .env or .env.example file found in the root directory."
