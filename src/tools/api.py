@@ -240,10 +240,34 @@ def get_financial_metrics(
         if not metrics and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
             metrics = _fds_financial_metrics(ticker, end_date, period, limit, api_key)
 
+    # Last resort: Finnhub's free-tier metric/all. This is what gives the agents
+    # real fundamentals (margins, growth, turnover, ROE/ROA, valuation) when the
+    # Massive plan lacks the ratios add-on and FDS isn't configured — otherwise
+    # they reason over all-null data and report "no edge".
+    if not metrics:
+        metrics = _get_financial_metrics_finnhub(ticker, end_date, period)
+
     if not metrics:
         return []
     _cache.set_financial_metrics(cache_key, [m.model_dump() for m in metrics])
     return metrics
+
+
+def _get_financial_metrics_finnhub(
+    ticker: str, end_date: str, period: str
+) -> list[FinancialMetrics]:
+    """Finnhub free-tier fundamentals fallback. Empty list when not configured."""
+    from src.tools.finnhub import get_finnhub_client
+    from src.tools.finnhub.converters import finnhub_financial_metrics
+
+    client = get_finnhub_client()
+    if client is None:
+        return []
+    try:
+        return finnhub_financial_metrics(client, ticker, end_date=end_date, period=period)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Finnhub financial-metrics fallback failed for %s: %s", ticker, exc)
+        return []
 
 
 def _massive_financial_metrics(ticker: str, end_date: str, period: str, limit: int) -> list[FinancialMetrics]:

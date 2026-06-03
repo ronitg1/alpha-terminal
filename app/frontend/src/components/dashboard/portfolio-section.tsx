@@ -9,7 +9,7 @@
  */
 
 import { useSleevesContext } from '@/contexts/sleeves-context';
-import { sleevesApi } from '@/services/sleeves-api';
+import { postSse, sleevesApi } from '@/services/sleeves-api';
 import { cn } from '@/lib/utils';
 import { PerAgentVerdict, Quote, Thesis, TickerRow, TickerThesis } from '@/types/sleeves';
 import { FinnhubSnapshot } from '@/components/dashboard/finnhub-snapshot';
@@ -378,7 +378,40 @@ function PortfolioMemo() {
 // ─── Expanded ticker detail ───────────────────────────────────────────────────
 
 function TickerDetail({ row, ticker }: { row: TickerRow; ticker: string }) {
-  const agents = row.per_agent ?? [];
+  // A fresh per-name scan (if run) overrides the row's saved verdicts.
+  const [scannedRow, setScannedRow] = useState<TickerRow | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState<string>('');
+  const [scanErr, setScanErr] = useState<string | null>(null);
+
+  const agents = (scannedRow ?? row).per_agent ?? [];
+
+  const runScan = useCallback(async () => {
+    if (scanning) return;
+    setScanning(true);
+    setScanErr(null);
+    setScanProgress('Starting…');
+    try {
+      await postSse(`/sleeves/scan/ticker/${encodeURIComponent(ticker)}`, {}, (event, data) => {
+        if (event === 'progress') {
+          const d = data as { agent?: string; status?: string };
+          setScanProgress(d.agent ? `${d.agent.replace(/_/g, ' ')}: ${d.status ?? ''}` : (d.status ?? ''));
+        } else if (event === 'complete') {
+          // CompleteEvent serializes its payload under a nested `data` key.
+          const payload = ((data as { data?: { row?: TickerRow } }).data ?? data) as { row?: TickerRow };
+          if (payload.row) setScannedRow(payload.row);
+          setScanning(false);
+        } else if (event === 'error') {
+          setScanErr((data as { message?: string }).message ?? 'Scan failed');
+          setScanning(false);
+        }
+      });
+    } catch (e) {
+      setScanErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanning(false);
+    }
+  }, [ticker, scanning]);
 
   return (
     <div className="space-y-5 pt-3">
@@ -387,9 +420,27 @@ function TickerDetail({ row, ticker }: { row: TickerRow; ticker: string }) {
 
       {/* Agent verdicts — the focus: each agent's signal, conviction, thesis. */}
       <div>
-        <SectionLabel icon={Users}>
-          Agent verdicts{agents.length > 0 ? ` (${agents.length})` : ''}
-        </SectionLabel>
+        <div className="flex items-center justify-between mb-2">
+          <SectionLabel icon={Users}>
+            Agent verdicts{agents.length > 0 ? ` (${agents.length})` : ''}
+          </SectionLabel>
+          <button
+            type="button"
+            onClick={() => void runScan()}
+            disabled={scanning}
+            title="Run this name's sleeve agents now (does not overwrite the saved morning scan)"
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50"
+          >
+            <Sparkles className="h-3 w-3" />
+            {scanning ? 'Running…' : agents.length > 0 ? 'Re-run agents' : 'Run agents'}
+          </button>
+        </div>
+
+        {scanning && (
+          <p className="text-[11px] text-muted-foreground italic mb-2">{scanProgress || 'Running agents…'}</p>
+        )}
+        {scanErr && <p className="text-[11px] text-rose-500 italic mb-2">{scanErr}</p>}
+
         {agents.length > 0 ? (
           <div className="space-y-2">
             {agents.map((a) => (
@@ -397,9 +448,11 @@ function TickerDetail({ row, ticker }: { row: TickerRow; ticker: string }) {
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground italic">
-            No agent analysis yet — run a morning scan to populate this name.
-          </p>
+          !scanning && (
+            <p className="text-xs text-muted-foreground italic">
+              No agent analysis yet — click <strong>Run agents</strong> to score this name now, or run a full morning scan.
+            </p>
+          )
         )}
       </div>
 

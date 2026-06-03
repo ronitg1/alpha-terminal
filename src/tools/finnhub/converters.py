@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.data.models import InsiderTrade
+from src.data.models import FinancialMetrics, InsiderTrade
 from src.tools.finnhub.client import FinnhubClient, FinnhubError
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,94 @@ def finnhub_insider_trades(ticker: str, payload: dict[str, Any]) -> list[Insider
             )
         )
     return trades
+
+
+# Every FinancialMetrics field (all are float|None with no default → must be
+# supplied). We start from None and fill what Finnhub provides.
+_FM_FIELDS = (
+    "market_cap enterprise_value price_to_earnings_ratio price_to_book_ratio "
+    "price_to_sales_ratio enterprise_value_to_ebitda_ratio enterprise_value_to_revenue_ratio "
+    "free_cash_flow_yield peg_ratio gross_margin operating_margin net_margin "
+    "return_on_equity return_on_assets return_on_invested_capital asset_turnover "
+    "inventory_turnover receivables_turnover days_sales_outstanding operating_cycle "
+    "working_capital_turnover current_ratio quick_ratio cash_ratio operating_cash_flow_ratio "
+    "debt_to_equity debt_to_assets interest_coverage revenue_growth earnings_growth "
+    "book_value_growth earnings_per_share_growth free_cash_flow_growth operating_income_growth "
+    "ebitda_growth payout_ratio earnings_per_share book_value_per_share free_cash_flow_per_share"
+).split()
+
+_PCT = 0.01  # Finnhub reports margins/growth/returns as percent; models use fractions
+
+
+def finnhub_financial_metrics(
+    client: FinnhubClient, ticker: str, *, end_date: str, period: str = "ttm"
+) -> list[FinancialMetrics]:
+    """Map Finnhub `metric/all` into a single FinancialMetrics.
+
+    The fallback that lets agents see fundamentals when Massive's plan omits
+    the ratios add-on. Percent-style fields (margins, growth, ROE/ROA, payout)
+    are scaled to fractions to match the FDS/Massive convention the agents
+    reason against; multiples (P/E, turnover, current ratio, D/E) pass through.
+    """
+    try:
+        data = client.basic_financials(ticker)
+    except (FinnhubError, KeyError, TypeError, ValueError):
+        return []
+    m = data.get("metric") or {}
+    if not m:
+        return []
+
+    def g(key: str, scale: float = 1.0) -> float | None:
+        v = m.get(key)
+        return float(v) * scale if isinstance(v, (int, float)) else None
+
+    def first(keys: list[str], scale: float = 1.0) -> float | None:
+        for k in keys:
+            val = g(k, scale)
+            if val is not None:
+                return val
+        return None
+
+    fields: dict[str, Any] = {f: None for f in _FM_FIELDS}
+    fields.update(
+        price_to_earnings_ratio=g("peTTM"),
+        price_to_book_ratio=first(["pbQuarterly", "pbAnnual"]),
+        price_to_sales_ratio=first(["psTTM", "psAnnual"]),
+        enterprise_value_to_ebitda_ratio=g("enterpriseValueToEbitdaTTM"),
+        peg_ratio=g("pegTTM"),
+        gross_margin=g("grossMarginTTM", _PCT),
+        operating_margin=g("operatingMarginTTM", _PCT),
+        net_margin=g("netProfitMarginTTM", _PCT),
+        return_on_equity=g("roeTTM", _PCT),
+        return_on_assets=g("roaTTM", _PCT),
+        return_on_invested_capital=g("roiTTM", _PCT),
+        asset_turnover=g("assetTurnoverTTM"),
+        inventory_turnover=g("inventoryTurnoverTTM"),
+        receivables_turnover=g("receivablesTurnoverTTM"),
+        current_ratio=first(["currentRatioQuarterly", "currentRatioAnnual"]),
+        quick_ratio=first(["quickRatioQuarterly", "quickRatioAnnual"]),
+        debt_to_equity=first(["totalDebt/totalEquityQuarterly", "totalDebt/totalEquityAnnual"]),
+        debt_to_assets=first(["totalDebt/totalAssetsQuarterly", "totalDebt/totalAssetsAnnual"]),
+        interest_coverage=g("netInterestCoverageTTM"),
+        revenue_growth=g("revenueGrowthTTMYoy", _PCT),
+        earnings_growth=g("epsGrowthTTMYoy", _PCT),
+        earnings_per_share_growth=g("epsGrowthTTMYoy", _PCT),
+        book_value_growth=g("bookValueShareGrowth5Y", _PCT),
+        free_cash_flow_growth=g("focfCagr5Y", _PCT),
+        payout_ratio=g("payoutRatioTTM", _PCT),
+        earnings_per_share=first(["epsTTM", "epsAnnual"]),
+        book_value_per_share=first(["bookValuePerShareQuarterly", "bookValuePerShareAnnual"]),
+        free_cash_flow_per_share=g("freeCashFlowPerShareTTM"),
+    )
+    return [
+        FinancialMetrics(
+            ticker=ticker.upper(),
+            report_period=end_date,
+            period=period,
+            currency="USD",
+            **fields,
+        )
+    ]
 
 
 def _select_metrics(metric: dict[str, Any]) -> dict[str, float]:

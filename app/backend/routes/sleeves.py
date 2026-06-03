@@ -853,6 +853,104 @@ async def run_scan(req: ScanRequest, request: Request):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+@router.post("/scan/ticker/{ticker}")
+async def run_ticker_scan(ticker: str, request: Request):
+    """Run the agent panel on a SINGLE ticker and stream the result via SSE.
+
+    This is the "run the morning scan for one name" action: it runs that
+    ticker's sleeve agents and streams per-agent progress, then a ``complete``
+    event carrying the freshly-scored row (with each agent's signal,
+    confidence, and reasoning). It is *ephemeral* — nothing is written to the
+    scan files, so re-scoring one name never clobbers the day's full scan.
+
+    Events: ``start`` → ``progress`` (per agent) → ``complete`` {row} | ``error``.
+    """
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    sleeves_cfg = _live_sleeves()
+    sleeve_name = next(
+        (name for name, sl in sleeves_cfg.items()
+         if symbol in {t.upper() for t in sl.get("tickers", [])}),
+        None,
+    )
+    if sleeve_name is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"'{symbol}' is not in any sleeve — add it to a sleeve first.",
+        )
+
+    # Run the sleeve's agents against just this one ticker.
+    sleeve = dict(sleeves_cfg[sleeve_name])
+    sleeve["tickers"] = [symbol]
+    end_date = datetime.date.today().isoformat()
+
+    async def _detect_disconnect() -> bool:
+        try:
+            while True:
+                msg = await request.receive()
+                if msg["type"] == "http.disconnect":
+                    return True
+        except Exception:
+            return True
+
+    async def event_generator():
+        progress_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
+
+        def progress_handler(agent_name, ticker_, status, analysis, timestamp):
+            progress_queue.put_nowait(
+                ProgressUpdateEvent(
+                    agent=agent_name, ticker=ticker_, status=status,
+                    timestamp=timestamp, analysis=analysis,
+                )
+            )
+
+        progress.register_handler(progress_handler)
+        scan_task: asyncio.Task | None = None
+        disconnect_task: asyncio.Task | None = None
+        try:
+            scan_task = asyncio.create_task(
+                asyncio.to_thread(run_sleeve, sleeve_name, sleeve, end_date, show_reasoning=False)
+            )
+            disconnect_task = asyncio.create_task(_detect_disconnect())
+            yield StartEvent().to_sse()
+
+            while not scan_task.done():
+                if disconnect_task.done():
+                    scan_task.cancel()
+                    return
+                try:
+                    event = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    yield event.to_sse()
+                except asyncio.TimeoutError:
+                    continue
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait().to_sse()
+
+            try:
+                rows = await scan_task
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Single-ticker scan failed for %s", symbol)
+                yield ErrorEvent(message=f"Scan failed: {exc}").to_sse()
+                return
+
+            row = _tickerrow_to_ui(rows[0]) if rows else None
+            yield CompleteEvent(data={"ticker": symbol, "sleeve": sleeve_name, "row": row}).to_sse()
+        except asyncio.CancelledError:
+            return
+        finally:
+            progress.unregister_handler(progress_handler)
+            if scan_task and not scan_task.done():
+                scan_task.cancel()
+            if disconnect_task and not disconnect_task.done():
+                disconnect_task.cancel()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 # ─── /sleeves/options/* (screener + chain) ──────────────────────────────────
 
 # Conviction-signal screener cache: 5 min. The underlying daily-bar inputs

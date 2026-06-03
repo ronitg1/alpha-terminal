@@ -150,7 +150,7 @@ A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs wit
 Click any ticker row to expand its **deep dive** — built for idea generation, not just numbers:
 
 1. **Finnhub snapshot strip** — analyst consensus, earnings beat/miss, growth, margin, P/E, insider flow.
-2. **Agent verdict cards** — one per analyst, each with a bull/bear/neutral pill, confidence bar, full reasoning, and (for the custom agents) the edge thesis, catalysts, and kill-switch.
+2. **Agent verdict cards** — one per analyst, each with a bull/bear/neutral pill, confidence bar, full reasoning, and (for the custom agents) the edge thesis, catalysts, and kill-switch. Hit **Run agents** to score a single name on demand (ephemeral — it never overwrites the saved morning scan). Agents read fundamentals through the provider chain, so on a Polygon-only plan they fall back to Finnhub's `metric/all` rather than reasoning over null data.
 3. **Idea synthesis** — a one-click **Quick take** (fast DeepSeek thesis) or **Deep analysis** (richer, multi-section, pulls recent news), both grounded in the agent signals *and* the Finnhub fundamentals.
 
 ---
