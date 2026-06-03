@@ -319,7 +319,10 @@ function PortfolioMemo() {
   return (
     <div className="rounded-lg border border-border/60 bg-card">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-        <h2 className="text-sm font-semibold">Portfolio Memo</h2>
+        <div>
+          <h2 className="text-sm font-semibold">Portfolio Thesis</h2>
+          <p className="text-[10px] text-muted-foreground">Full LLM analysis across every sleeve</p>
+        </div>
         <button
           type="button"
           onClick={() => void generate()}
@@ -328,11 +331,11 @@ function PortfolioMemo() {
             'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border transition-colors',
             thesis
               ? 'text-sky-300 border-sky-500/40 hover:bg-sky-500/10'
-              : 'text-muted-foreground border-border hover:text-sky-300 hover:border-sky-500/40',
+              : 'text-primary border-primary/40 bg-primary/5 hover:bg-primary/10',
           )}
         >
           <Sparkles className="h-3 w-3" />
-          {loading ? 'Generating…' : thesis ? 'Regenerate' : 'Generate Memo'}
+          {loading ? 'Analyzing…' : thesis ? 'Refresh' : 'Run full thesis'}
         </button>
       </div>
       {err && (
@@ -340,7 +343,7 @@ function PortfolioMemo() {
       )}
       {!thesis && !err && (
         <div className="px-4 py-3 text-xs text-muted-foreground italic">
-          Click "Generate Memo" for an LLM-synthesized portfolio overview across all sleeves.
+          Run a whole-portfolio thesis — an LLM synthesis of the book across all sleeves, with bias, top long/short, and the reasoning behind it.
         </div>
       )}
       {thesis && (
@@ -611,9 +614,31 @@ function SleeveGroup({
   portfolioSettings: Record<string, { allocation_pct: number }>;
 }) {
   const [open, setOpen] = useState(true);
+  const [thesis, setThesis] = useState<Thesis | null>(null);
+  const [thesisLoading, setThesisLoading] = useState(false);
+  const [thesisErr, setThesisErr] = useState<string | null>(null);
 
   const sleeveRows = rows.filter((r) => r.sleeve === sleeveName);
   const rowMap = Object.fromEntries(sleeveRows.map((r) => [r.ticker, r]));
+
+  const runThesis = useCallback(async () => {
+    if (thesisLoading) return;
+    setThesisLoading(true);
+    setThesisErr(null);
+    try {
+      setThesis(await sleevesApi.getSleeveThesis(sleeveName));
+      setOpen(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setThesisErr(
+        /404/.test(msg)
+          ? 'No scan data for this sleeve yet — run a morning scan first.'
+          : msg,
+      );
+    } finally {
+      setThesisLoading(false);
+    }
+  }, [sleeveName, thesisLoading]);
 
   const bullish = sleeveRows.filter((r) => r.consensus === 'bullish').length;
   const bearish = sleeveRows.filter((r) => r.consensus === 'bearish').length;
@@ -628,32 +653,62 @@ function SleeveGroup({
   return (
     <div className="space-y-2">
       {/* Sleeve header */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 text-left group"
-      >
-        {open ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-        )}
-        <h2 className="font-semibold text-base capitalize">{sleeveName.replace(/_/g, ' ')}</h2>
-        <span className="text-xs text-muted-foreground">{tickers.length} positions</span>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-3 text-left group flex-1 min-w-0"
+        >
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          )}
+          <h2 className="font-semibold text-base capitalize">{sleeveName.replace(/_/g, ' ')}</h2>
+          <span className="text-xs text-muted-foreground">{tickers.length} positions</span>
 
-        {/* Signal summary */}
-        {total > 0 && (
-          <div className="flex items-center gap-2 text-[10px]">
-            {bullish > 0 && <span className="text-emerald-500">{bullish} bullish</span>}
-            {bearish > 0 && <span className="text-rose-500">{bearish} bearish</span>}
-            {neutral > 0 && <span className="text-muted-foreground">{neutral} neutral</span>}
-          </div>
-        )}
-        <div className="flex-1" />
+          {/* Signal summary */}
+          {total > 0 && (
+            <div className="flex items-center gap-2 text-[10px]">
+              {bullish > 0 && <span className="text-emerald-500">{bullish} bullish</span>}
+              {bearish > 0 && <span className="text-rose-500">{bearish} bearish</span>}
+              {neutral > 0 && <span className="text-muted-foreground">{neutral} neutral</span>}
+            </div>
+          )}
+        </button>
         {totalAlloc > 0 && (
-          <span className="text-xs text-muted-foreground font-mono">{totalAlloc.toFixed(1)}% alloc</span>
+          <span className="text-xs text-muted-foreground font-mono flex-shrink-0">{totalAlloc.toFixed(1)}% alloc</span>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={() => void runThesis()}
+          disabled={thesisLoading}
+          title="Synthesize an LLM thesis across this sleeve's scanned names"
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50 flex-shrink-0"
+        >
+          <Sparkles className="h-3 w-3" />
+          {thesisLoading ? 'Analyzing…' : thesis ? 'Refresh thesis' : 'Run thesis'}
+        </button>
+      </div>
+
+      {/* Sleeve thesis result */}
+      {thesisErr && (
+        <div className="ml-7 text-[11px] text-rose-500 italic">{thesisErr}</div>
+      )}
+      {thesis && open && (
+        <div className="ml-7 rounded-md border border-primary/20 bg-primary/[0.03] p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className={cn('text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border', BIAS_CLS[thesis.bias] ?? BIAS_CLS.neutral)}>
+              {thesis.bias}
+            </span>
+            <span className="text-[10px] text-muted-foreground">Sleeve thesis · scan {thesis.scan_date}</span>
+            {thesis.top_long && <span className="text-[10px] text-emerald-500">▲ {thesis.top_long}</span>}
+            {thesis.top_short && <span className="text-[10px] text-rose-500">▼ {thesis.top_short}</span>}
+          </div>
+          {thesis.condensed && <p className="text-xs font-medium text-foreground">{thesis.condensed}</p>}
+          {thesis.full && thesis.full !== thesis.condensed && <MarkdownLite text={thesis.full} />}
+        </div>
+      )}
 
       {/* Signal mini-bar */}
       {open && total > 0 && (

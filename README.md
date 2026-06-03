@@ -20,6 +20,12 @@
 
 ---
 
+## Contents
+
+[What it does](#what-it-does) · [Why](#why-this-exists) · [Quick start](#quick-start-5-minutes) · [The dashboard](#the-dashboard-at-a-glance) · [Features](#features) · [Architecture](#architecture) · [Repo layout](#repository-layout) · [Setup](#detailed-setup) · [Troubleshooting](#troubleshooting) · [What it is NOT](#what-this-is-not) · [Roadmap](#roadmap) · [Credits](#credits)
+
+---
+
 ## What it does
 
 Alpha Terminal sits between your watchlist and your brokerage. It runs a panel of LLM-based "agent" analysts on your stocks, organizes them into themed sleeves, and gives you the tools to pressure-test ideas before risking capital.
@@ -223,12 +229,12 @@ When `FINNHUB_API_KEY` is set, Finnhub backfills the two gaps in Massive: **insi
 ```mermaid
 flowchart LR
   subgraph User["User · Browser"]
-    UI[React + Vite UI<br/>localhost:5173]
+    UI[React + Vite · 5 tabs<br/>localhost:5173]
   end
 
   subgraph Backend["FastAPI Backend · localhost:8000"]
-    Routes[/sleeves/* routes<br/>SSE event streams/]
-    ThesisSvc[Thesis Service<br/>cache by scan signature]
+    Routes[/sleeves · news · transcripts<br/>routes · SSE streams/]
+    ThesisSvc[Thesis Service<br/>portfolio · sleeve · ticker]
     BacktestSvc[Backtest Service<br/>real-fill + BSM]
   end
 
@@ -238,7 +244,8 @@ flowchart LR
   end
 
   subgraph Data["Data Providers"]
-    PG[Polygon · Stocks + Options]
+    PG[Polygon · stocks + options]
+    FH[Finnhub · news · fundamentals<br/>insider · rate-limited]
     FDS[(financialdatasets.ai<br/>fallback for ratios)]
   end
 
@@ -248,8 +255,10 @@ flowchart LR
   Routes --> Agents
   Agents --> DS
   ThesisSvc --> DS
-  Agents -->|prices + news| PG
+  Agents -->|prices| PG
   Agents -->|fundamentals| FDS
+  Agents -->|insider + growth| FH
+  Routes -->|news + enrichment| FH
   BacktestSvc -->|historical chain| PG
   Routes -->|reference + market cap| PG
 
@@ -260,7 +269,7 @@ flowchart LR
   class UI user
   class Routes,ThesisSvc,BacktestSvc backend
   class DS,Agents llm
-  class PG,FDS data
+  class PG,FH,FDS data
 ```
 
 ### Data flow for one ticker scan
@@ -499,22 +508,26 @@ Fixed in the current version. If you see it on an older build, the cause was a s
 
 Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
-Recently shipped:
+**Recently shipped**
 
 - [x] Market News tab (Finnhub-backed, macro auto-categorization, AI summaries)
 - [x] Earnings-call analysis tab (paste/URL/PDF → 9-section breakdown)
 - [x] Finnhub free-tier integration — insider + growth/turnover backfill, fundamentals enrichment, shared rate limiter
 - [x] Realistic options backtester — profit-target / stop / DTE exits + slippage model
-- [x] Per-name analysis in Portfolio Pulse (Quick take / Deep analysis)
+- [x] Per-name, per-sleeve, and whole-portfolio LLM thesis in Portfolio Pulse
+- [x] Removed the legacy IDE-shell components inherited from the upstream fork
 
-The shortlist:
+**Up next**
 
-- [ ] Trailing / peak drawdown stop-loss mode (currently only fixed-% from entry)
-- [ ] Remove the orphaned legacy IDE-shell components inherited from the upstream fork
-- [ ] Consolidate the two runtime-data dirs (`app/data/` + `app/backend/data/`)
-- [ ] Sleeve sparkline history (needs ≥3 historical scans before it's meaningful)
-- [ ] Diff highlight vs previous scan
+- [ ] 📈 **P&L tracker** — log entries/exits per idea, mark-to-market against live quotes, realized + unrealized P&L per sleeve, and a portfolio equity curve
+- [ ] 🗓️ **Earnings calendar** — upcoming report dates across your book (Finnhub `/calendar/earnings`), with pre/post-earnings flags on each ticker
+- [ ] 🔔 **Price + signal alerts** — threshold + conviction-change notifications
+- [ ] 📊 **Sector heatmap** — relative-strength grid across sleeves and the SPDR sectors
+- [ ] 🧾 **Trade journal** — attach notes/rationale to each idea, linked to its agent thesis
+- [ ] Trailing / peak-drawdown stop-loss mode in the backtester (currently fixed-% from entry)
+- [ ] Sleeve sparkline history + diff highlight vs the previous scan
 - [ ] Cost meter — running tally of LLM credits per session
+- [ ] Consolidate the two runtime-data dirs (`app/data/` + `app/backend/data/`)
 
 ---
 
