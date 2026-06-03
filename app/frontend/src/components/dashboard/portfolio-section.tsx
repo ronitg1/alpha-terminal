@@ -72,6 +72,130 @@ function prettyAgent(key: string): string {
     .join(' ');
 }
 
+// ─── Overall conviction + recommendation ─────────────────────────────────────
+
+type Verdict = {
+  /** Action call: Strong Buy / Buy / Accumulate / Hold / Trim / Sell / Strong Sell. */
+  label: string;
+  tone: 'bull' | 'bear' | 'neutral';
+  /** 0–100 conviction strength (magnitude of the weighted agent agreement). */
+  score: number;
+  blurb: string;
+};
+
+/**
+ * Collapse the agent panel into a single actionable call for one name.
+ *
+ * `weighted_score` is a signed −100..100 blend (sign = direction, magnitude =
+ * how strongly the *weighted* agents agree). Its magnitude is the conviction:
+ * a lone dissenting agent cancels weight and pulls the score toward zero, so a
+ * split book lands on "Hold" with low conviction even if each agent is
+ * individually confident. The label tiers off the signed score; the score
+ * shown is the magnitude.
+ */
+function deriveVerdict(row: TickerRow): Verdict {
+  const ws = Math.max(-100, Math.min(100, row.weighted_score ?? 0));
+  const score = Math.round(Math.abs(ws));
+  const n = row.per_agent?.length ?? 0;
+  const conf = Math.round(row.avg_confidence ?? 0);
+
+  let label: string;
+  let tone: 'bull' | 'bear' | 'neutral';
+  if (ws >= 65) {
+    label = 'Strong Buy';
+    tone = 'bull';
+  } else if (ws >= 35) {
+    label = 'Buy';
+    tone = 'bull';
+  } else if (ws >= 12) {
+    label = 'Accumulate';
+    tone = 'bull';
+  } else if (ws > -12) {
+    label = 'Hold';
+    tone = 'neutral';
+  } else if (ws > -35) {
+    label = 'Trim';
+    tone = 'bear';
+  } else if (ws > -65) {
+    label = 'Sell';
+    tone = 'bear';
+  } else {
+    label = 'Strong Sell';
+    tone = 'bear';
+  }
+
+  const blurb =
+    n > 0
+      ? `Weighted blend of ${n} agent${n === 1 ? '' : 's'} · avg confidence ${conf}%`
+      : 'No agent analysis yet — run a scan to score this name.';
+  return { label, tone, score, blurb };
+}
+
+function verdictTextCls(tone: Verdict['tone']): string {
+  if (tone === 'bull') return 'text-emerald-600 dark:text-emerald-400';
+  if (tone === 'bear') return 'text-rose-600 dark:text-rose-400';
+  return 'text-amber-600 dark:text-amber-400';
+}
+
+function verdictBorderCls(tone: Verdict['tone']): string {
+  if (tone === 'bull') return 'border-emerald-500/40 bg-emerald-500/10';
+  if (tone === 'bear') return 'border-rose-500/40 bg-rose-500/10';
+  return 'border-amber-500/40 bg-amber-500/10';
+}
+
+function verdictBarCls(tone: Verdict['tone']): string {
+  if (tone === 'bull') return 'bg-emerald-500';
+  if (tone === 'bear') return 'bg-rose-500';
+  return 'bg-amber-500';
+}
+
+/** Compact recommendation chip for the collapsed ticker row. */
+function VerdictPill({ verdict }: { verdict: Verdict }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0',
+        verdictBorderCls(verdict.tone),
+        verdictTextCls(verdict.tone),
+      )}
+      title={`Overall recommendation · conviction ${verdict.score}/100`}
+    >
+      {verdict.label}
+      <span className="font-mono tabular-nums opacity-80">{verdict.score}</span>
+    </span>
+  );
+}
+
+/** Headline verdict card shown at the top of a name's expanded detail. */
+function ConvictionSummary({ row }: { row: TickerRow }) {
+  const v = deriveVerdict(row);
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-3">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Overall recommendation
+          </div>
+          <div className={cn('text-lg font-bold leading-tight', verdictTextCls(v.tone))}>{v.label}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Conviction</div>
+          <div className="flex items-baseline gap-0.5 justify-end">
+            <span className={cn('text-2xl font-bold font-mono tabular-nums leading-none', verdictTextCls(v.tone))}>
+              {v.score}
+            </span>
+            <span className="text-[11px] text-muted-foreground">/100</span>
+          </div>
+        </div>
+      </div>
+      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full', verdictBarCls(v.tone))} style={{ width: `${v.score}%` }} />
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-2">{v.blurb}</p>
+    </div>
+  );
+}
+
 function agentSignalCls(signal: string): string {
   if (signal === 'bullish') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
   if (signal === 'bearish') return 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400';
@@ -82,9 +206,42 @@ function agentSignalCls(signal: string): string {
 function rawStr(raw: Record<string, unknown> | undefined, key: string): string | null {
   const v = raw?.[key];
   if (v == null) return null;
+  // A structured (dict/array) value can't be rendered as a sentence — bail out
+  // so callers fall back to a structured renderer instead of "[object Object]".
+  if (typeof v === 'object') return null;
   const s = String(v).trim();
-  if (!s || /^(n\/?_?a|none|null|skip|no edge.*|n_a)$/i.test(s)) return null;
+  if (!s || s === '[object Object]' || /^(n\/?_?a|none|null|skip|no edge.*|n_a)$/i.test(s)) return null;
   return s;
+}
+
+/**
+ * Some agents (notably `fundamentals_analyst`) store `reasoning` as a dict of
+ * category signals — `{ profitability_signal: { signal, details }, ... }` —
+ * rather than a sentence. Flatten that into renderable rows. Returns null when
+ * `reasoning` is absent or is a plain string (handled by `rawStr`).
+ */
+type ReasoningPart = { label: string; signal: string | null; details: string };
+
+function reasoningParts(raw: Record<string, unknown> | undefined): ReasoningPart[] | null {
+  const v = raw?.['reasoning'];
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const parts: ReasoningPart[] = [];
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (val == null) continue;
+    const label = k.replace(/_signal$/i, '').replace(/_/g, ' ').trim();
+    if (typeof val === 'object' && !Array.isArray(val)) {
+      const o = val as Record<string, unknown>;
+      const signal = o.signal != null ? String(o.signal).trim() : null;
+      const details = o.details != null ? String(o.details).trim() : '';
+      if (!details && !signal) continue;
+      parts.push({ label, signal, details });
+    } else {
+      const details = String(val).trim();
+      if (!details || details === '[object Object]') continue;
+      parts.push({ label, signal: null, details });
+    }
+  }
+  return parts.length ? parts : null;
 }
 
 function SectionLabel({
@@ -109,6 +266,7 @@ function SectionLabel({
 function AgentVerdictCard({ agent }: { agent: PerAgentVerdict }) {
   const raw = agent.raw;
   const reasoning = rawStr(raw, 'reasoning');
+  const reasoningRows = reasoningParts(raw);
   const edge = rawStr(raw, 'variant_perception');
   const killSwitch = rawStr(raw, 'kill_switch');
   const catalysts = [
@@ -141,7 +299,30 @@ function AgentVerdictCard({ agent }: { agent: PerAgentVerdict }) {
         <div className={cn('h-full rounded-full', confColor)} style={{ width: `${Math.min(100, agent.confidence)}%` }} />
       </div>
 
-      {reasoning ? (
+      {reasoningRows ? (
+        <div className="space-y-1">
+          {reasoningRows.map((r) => (
+            <div key={r.label} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+              {r.signal && (
+                <span
+                  className={cn(
+                    'mt-0.5 h-1.5 w-1.5 rounded-full flex-shrink-0',
+                    r.signal === 'bullish'
+                      ? 'bg-emerald-500'
+                      : r.signal === 'bearish'
+                        ? 'bg-rose-500'
+                        : 'bg-muted-foreground/50',
+                  )}
+                />
+              )}
+              <span className="text-foreground/85">
+                <span className="font-semibold capitalize">{r.label}: </span>
+                {r.details}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : reasoning ? (
         <p className="text-[11px] leading-relaxed text-foreground/85">{reasoning}</p>
       ) : (
         <p className="text-[11px] italic text-muted-foreground">No detailed reasoning recorded.</p>
@@ -415,6 +596,10 @@ function TickerDetail({ row, ticker }: { row: TickerRow; ticker: string }) {
 
   return (
     <div className="space-y-5 pt-3">
+      {/* Headline verdict — overall recommendation + conviction for this name,
+          derived from the (possibly freshly re-run) agent panel. */}
+      <ConvictionSummary row={scannedRow ?? row} />
+
       {/* Snapshot — the headline fundamentals you need to know (Finnhub). */}
       <FinnhubSnapshot ticker={ticker} />
 
@@ -617,6 +802,9 @@ function TickerPulseRow({
         <span className="flex-1 text-xs text-muted-foreground truncate hidden sm:block min-w-0">
           {thesis || <span className="italic">No thesis — run a scan.</span>}
         </span>
+
+        {/* Overall recommendation + conviction */}
+        <VerdictPill verdict={deriveVerdict(row)} />
 
         {/* Allocation */}
         {allocationPct != null && allocationPct > 0 && (
