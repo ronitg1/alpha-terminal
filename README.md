@@ -102,7 +102,7 @@ A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs wit
 | --- | --- |
 | **Market** | Per-ticker chart (price + volume), company overview, key financials, and a Finnhub fundamentals panel (growth/turnover, analyst consensus, earnings beat/miss, peers, insider flow). |
 | **Screening** | Pattern Scanner · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
-| **Portfolio** | Portfolio Pulse — bias/conviction rollup, high-conviction names, LLM memo, and per-name deep dives. |
+| **Portfolio** | Portfolio Pulse — conviction rollup, high-conviction names, whole-portfolio + per-sleeve + per-name LLM thesis, and per-name agent deep dives. |
 | **News** | Three-column market-news desk (your book · ticker search · auto-categorized macro) with per-article AI summaries. |
 | **Calls** | Earnings-call analysis — paste text / URL / PDF → a 9-section structured breakdown. |
 
@@ -110,42 +110,37 @@ A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs wit
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  PORTFOLIO PULSE                              2026-05-28  [Run portfolio ▶] │
-│  Bullish bias · Net +18% · Conv 67 · 3 high-conviction · ✨ 2 variant         │
+│ 📊 Portfolio Pulse                                                            │
+│    Scan: 2026-05-28 · 4 signals                                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ Allocation       Weighted Conv     High Conv         Watchlist               │
-│   100% ✓          67/100             3                12                     │
-│   4 sleeves       12 tickers scanned  +2 today        3 unscanned            │
+│   Positions     Bullish     Bearish     Neutral     Avg Conviction            │
+│      26            8            5           13           61%                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ 📝 PORTFOLIO THESIS                              [Generate LLM memo] [Expand]│
-│ We see a bullish read across the book this scan · 7 bullish vs 2 bearish     │
-│ out of 12 scanned. Strongest cluster is Mega Tech (conv 71); softest is      │
-│ Emerging Tech (conv 39). ✨ 2 names flagged variant perception · NVDA, CEG    │
+│  HIGH CONVICTION                                                              │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐                 │
+│  │ NVDA    │ │ FSLR    │ │ MU      │ │ CEG     │ │ ENPH    │                 │
+│  │ bullish │ │ bullish │ │ bearish │ │ bullish │ │ bearish │                 │
+│  │ $222.82 │ │ $311.01 │ │$1064.10 │ │ $241.80 │ │ $72.33  │                 │
+│  │ ▓▓▓▓░ 78│ │ ▓▓▓░ 64 │ │ ▓▓▓░ 60 │ │ ▓▓▓▓ 81 │ │ ▓▓░ 55  │                 │
+│  │ mega tech│ │ energy │ │opportun.│ │ energy  │ │ energy  │                 │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ ⚡ MEGA TECH    🌱 ENERGY TRANS.   🚀 EMERGING TECH   🎯 OPPORTUNISTIC        │
-│ 20% Bullish 71  50% Mixed 48      20% Bearish 39    10% — 12 names           │
-│ 4↑ · 0↓ · 0=    2↑ · 1↓ · 4=      0↑ · 2↓ · 4=      [Run sleeve ▶] [Edit]    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ ⭐ HIGH-CONVICTION SIGNALS                                                   │
-│ ┌──────────┬──────────┬──────────┬──────────┐                                │
-│ │ NVDA  ✨ │ MSFT     │ CEG  ✨   │ FSLR     │                                │
-│ │ $222.50  │ $415.20  │ $241.80  │ $186.40  │                                │
-│ │ ▁▂▃▆█ +5%│ ▂▃▄▅▆ +2%│ ▁▃▆█▇+12%│ ▆▅▄▃▂ -3%│                                │
-│ │ BUY 78%  │ BUY 64%  │ BUY 81%  │ SELL 58% │                                │
-│ └──────────┴──────────┴──────────┴──────────┘                                │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ POSITIONS                                                                    │
-│ ▼ MEGA TECH · 20% · Bullish · 4 tickers           [Run sleeve ▶] [Memo]      │
-│   ├ NVDA  $222.50  +3.2% 1D ▁▂▃▆█ BUY 78% ✨        [▶ Run] [▼]              │
-│   ├ MSFT  $415.20  +0.8% 1D ▂▃▄▅▆ BUY 64%          [▶ Run] [▼]              │
-│   ├ GOOGL $173.40  -1.2% 1D ▆▅▄▃▂ HOLD 41%         [▶ Run] [▼]              │
-│   └ META  $585.10  +2.1% 1D ▁▃▄▆█ HOLD 52%         [▶ Run] [▼]              │
-│                                                                              │
-│ ▶ ENERGY TRANSITION · 50% · Mixed · 11 tickers                               │
-│ ▶ EMERGING TECH      · 20% · Bearish · 6 tickers                             │
-│ ▶ OPPORTUNISTIC      · 10% · 12 tickers                                      │
+│  Portfolio Thesis                                          [✦ Run full thesis]│
+│  Full LLM analysis across every sleeve                                        │
+├──────────────────────────── BY SLEEVE ──────────────────────────────────────┤
+│ ▼ Mega Tech   7 positions   4 bullish · 3 neutral        20% alloc [✦ Run thesis]│
+│   ▓▓▓▓▓▓▓░░░  (signal mix bar)                                                │
+│   › ▌bullish▐ NVDA   Oversold mega-cap lagging QQQ — bounce…   $222.82  -0.69% │
+│   › ▌neutral▐ MSFT   No thesis — run a scan.                   $441.31  -4.17% │
+│   › ▌neutral▐ GOOGL  No thesis — run a scan.                   $361.85  -3.38% │
+│                                                                               │
+│ ▶ Energy Transition  18 positions   50% alloc            [✦ Run thesis]       │
+│ ▶ Emerging Tech      13 positions   20% alloc            [✦ Run thesis]       │
+│ ▶ Opportunistic       4 positions   10% alloc            [✦ Run thesis]       │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The left rail (not shown) lists every sleeve, watchlist, and the 10 SPDR sector ETFs with live price, % change, a sparkline, and the company name. Each sleeve has a **Run thesis** button; the top **Portfolio Thesis** card runs the whole-book analysis.
 
 Click any ticker row to expand its **deep dive** — built for idea generation, not just numbers:
 
@@ -157,13 +152,17 @@ Click any ticker row to expand its **deep dive** — built for idea generation, 
 
 ## Features
 
-### 🎯 Sleeves dashboard
+### 🎯 Portfolio Pulse + sleeves
 
-Themed portfolio buckets ("Mega Tech 20% / Energy Transition 50% / Emerging
-Tech 20% / Opportunistic 10%"), each scored by its own agent panel. Two-level
-synthesis — **deterministic readout** always available, plus a one-click **LLM
-PM memo** that writes a 3-paragraph "view of the book" in first-person plural,
-PM voice. Cached server-side by scan signature so re-fetching is free.
+Your book is organized into themed **sleeves** ("Energy Transition 50% / Mega Tech 20% / Emerging Tech 20% / Opportunistic 10%"), each scored by its own agent panel. Portfolio Pulse rolls them up: a metrics bar (positions, bull/bear/neutral counts, average conviction), a **High Conviction** strip of the top names, and per-sleeve groups you can expand. LLM thesis synthesis is available at three scopes — **whole-portfolio** ("Run full thesis"), **per-sleeve** ("Run thesis" on any sleeve), and **per-name** (Quick take / Deep analysis in the deep dive) — each a first-person-PM read grounded in the scan signals + Finnhub fundamentals, cached server-side by scan signature.
+
+### 🔎 Pattern Scanner
+
+Scans for classic chart patterns (breakouts, channels, double tops/bottoms, triangles, flags, head-and-shoulders, …) across a configurable universe. Pick the input via three tabs — **Watchlist** (all or a named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — choose which patterns to look for, and a lookback window (30d / 60d / 90d / 180d / 1yr). Results come back as a table sorted by confidence, each row carrying:
+
+- the pattern's **historical win rate** (how often that pattern on that ticker resolved in the expected direction),
+- a plain-English description of the setup, and
+- a **Contract** drill-down that opens the option chain with a recommended contract (calls for bullish patterns, puts for bearish) sized to the pattern's typical resolution horizon.
 
 ### 📈 Options screener (11 strategies)
 
@@ -274,32 +273,33 @@ flowchart LR
 
 ### Data flow for one ticker scan
 
+A scan is kicked off by the CLI (`python -m src.run_morning_scan`) or, for a single name, the **Run agents** button in the Portfolio Pulse deep dive (`POST /sleeves/scan/ticker/{ticker}`). Both stream the same SSE events.
+
 ```mermaid
 sequenceDiagram
-  participant U as User
-  participant UI as Frontend
+  participant U as User / CLI
   participant BE as Backend
   participant A as Agent Panel
   participant DS as DeepSeek
   participant PG as Polygon
-  participant FDS as FDS
+  participant FH as Finnhub
 
-  U->>UI: Click "Run portfolio"
-  UI->>BE: POST /sleeves/scan/run
-  BE-->>UI: SSE: start
+  U->>BE: run scan (CLI) / POST /sleeves/scan/ticker/{ticker}
+  BE-->>U: SSE: start
   loop For each ticker
-    BE->>PG: get_prices, get_news
-    PG-->>BE: 2y bars + headlines
-    BE->>FDS: get_financial_metrics
-    FDS-->>BE: ratios (or fallback to Polygon)
-    BE->>A: agent.analyze(ticker, data)
-    A->>DS: LLM call (reasoning)
-    DS-->>A: structured signal
-    A-->>BE: signal + confidence + reasoning
-    BE-->>UI: SSE: sleeve_complete (one ticker row)
+    BE->>PG: get_prices (2y daily bars)
+    PG-->>BE: OHLCV
+    BE->>PG: get_financial_metrics
+    PG-->>BE: 403 (no ratios add-on on Starter plan)
+    BE->>FH: fallback → metric/all (margins, growth, turnover, ROE)
+    FH-->>BE: fundamentals
+    BE->>A: agent.analyze(ticker, prices + metrics + news)
+    A->>DS: R1 reasoning call
+    DS-->>A: structured signal + confidence + reasoning
+    A-->>BE: per-agent verdict
+    BE-->>U: SSE: progress / sleeve_complete (row)
   end
-  BE-->>UI: SSE: complete (full scan)
-  UI->>UI: render dashboard
+  BE-->>U: SSE: complete
 ```
 
 ### Per-data-type provider routing
@@ -416,23 +416,28 @@ sudo apt install -y nodejs
 | Key | Required? | What for | How to get |
 |---|---|---|---|
 | `DEEPSEEK_API_KEY` | ✅ Yes | Agent reasoning (R1) + structured output parsing (V3) | https://platform.deepseek.com → API Keys |
-| `MASSIVE_API_KEY` | ✅ Yes | Prices, news, market cap, options chain | https://polygon.io → Dashboard → API Keys |
-| `FINANCIAL_DATASETS_API_KEY` | ⚪ Optional | Better fundamentals coverage than Polygon's default | https://financialdatasets.ai → Settings |
-| `ANTHROPIC_API_KEY` | ⚪ Optional | Use Claude for the portfolio thesis instead of DeepSeek | https://console.anthropic.com → API Keys |
+| `MASSIVE_API_KEY` | ✅ Yes | Prices, market cap, options chain | https://polygon.io → Dashboard → API Keys |
+| `FINNHUB_API_KEY` | 🟡 Strongly recommended | Market News tab; **fundamentals fallback so agents actually see data on a Polygon-only plan** (insider trades, growth/turnover ratios); analyst consensus + earnings beat/miss; per-ticker enrichment | https://finnhub.io/register (free, 60/min) |
+| `FINANCIAL_DATASETS_API_KEY` | ⚪ Optional | Alternative fundamentals provider (richer line-items) | https://financialdatasets.ai → Settings |
+| `ANTHROPIC_API_KEY` | ⚪ Optional | Reserved for an alternate LLM provider; not wired by default | https://console.anthropic.com → API Keys |
 
-`DEEPSEEK_API_KEY` + `MASSIVE_API_KEY` is the minimum viable setup. Without FDS, the company-overview cards still render via Polygon's reference endpoint — you just lose the FDS ratio grid for smaller-cap tickers.
+`DEEPSEEK_API_KEY` + `MASSIVE_API_KEY` is the bare minimum, **but add `FINNHUB_API_KEY` too** — Polygon's Starter plan doesn't include the fundamentals/ratios add-on, so without Finnhub (or FDS) the agents reason over null fundamentals and report "no edge." Finnhub's free tier fills that gap and powers the News tab. All Finnhub traffic is rate-limited to stay under the free-tier 60/min ceiling.
 
 ### Configuring sleeves
 
-Sleeves are defined in [`src/config/portfolio_config.py`](src/config/portfolio_config.py). The default split is:
+Sleeves are defined in [`src/config/portfolio_config.py`](src/config/portfolio_config.py). Each sleeve names its own agent panel, the per-agent weights used to combine signals, and its tickers:
 
 ```python
 PORTFOLIO_SLEEVES = {
     "energy_transition": {
-        "allocation_pct": 50.0,
+        "allocation_pct": 50.0,                       # informational (see note)
         "agents": ["energy_transition", "aswath_damodaran", "michael_burry"],
-        "agent_weights": {"energy_transition": 0.5, "aswath_damodaran": 0.3, "michael_burry": 0.2},
-        "tickers": ["FSLR", "CSIQ", "ENPH", "..."],
+        "agent_weights": {                            # must sum to 1.0
+            "energy_transition": 0.3333,
+            "aswath_damodaran": 0.3333,
+            "michael_burry": 0.3334,
+        },
+        "tickers": ["FSLR", "CSIQ", "JKS", "ENPH", "..."],
     },
     "mega_tech": {"...": "..."},
     "emerging_tech": {"...": "..."},
@@ -440,7 +445,9 @@ PORTFOLIO_SLEEVES = {
 }
 ```
 
-You can edit this file directly, or use the **Manage** button in the dashboard's top bar — it rewrites the file atomically and live-reloads the backend. Allocations must sum to 100%.
+Edit this file directly, or use the **Sleeves panel in the Market tab** (shown when no ticker is selected) — **New sleeve**, rename, delete, and per-ticker edits all rewrite the file atomically and live-reload the backend.
+
+Two invariants are enforced at import (`validate_portfolio`): per-sleeve `agent_weights` must sum to **1.0**, and total `allocation_pct` may not exceed 100%. Note that `allocation_pct` is **informational** — nothing in the scan computes against it (real capital allocation is the per-ticker overlay), so sleeves don't have to sum to exactly 100% and you can add/delete them freely.
 
 ---
 
