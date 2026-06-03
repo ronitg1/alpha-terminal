@@ -22,11 +22,14 @@ def test_default_config_is_valid() -> None:
     validate_portfolio()
 
 
-def test_sleeve_allocations_sum_to_100() -> None:
-    """Sleeve allocations cover the full notional book. CASH_RESERVE_PCT is a
-    runtime floor, not an additive bucket."""
+def test_sleeve_allocations_within_bounds() -> None:
+    """Sleeve allocations are informational (real allocation is the per-ticker
+    overlay), so they no longer must sum to exactly 100% — but they must each be
+    in [0, 100] and not over-allocate the book beyond 100% in total."""
     total = sum(s["allocation_pct"] for s in PORTFOLIO_SLEEVES.values())
-    assert total == pytest.approx(100.0)
+    assert 0 < total <= 100.0 + 1e-6
+    for s in PORTFOLIO_SLEEVES.values():
+        assert 0 <= s["allocation_pct"] <= 100
 
 
 def test_cash_reserve_pct_is_in_range() -> None:
@@ -49,14 +52,26 @@ def test_agent_keys_match_registry() -> None:
             assert agent in valid, f"sleeve '{name}': agent '{agent}' not in ANALYST_CONFIG"
 
 
-def test_validate_catches_allocation_mismatch() -> None:
-    bad: dict[str, Sleeve] = {
-        "a": {"allocation_pct": 80.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
-        "b": {"allocation_pct": 5.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
+def test_validate_allows_under_allocation() -> None:
+    """Allocations summing to < 100% are valid now (remainder is implicit cash);
+    this is what lets you add/delete sleeves freely from the dashboard."""
+    under: dict[str, Sleeve] = {
+        "a": {"allocation_pct": 50.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
+        "b": {"allocation_pct": 20.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
     }
-    # 80 + 5 = 85, not 100.
-    with pytest.raises(PortfolioConfigError, match="must sum to 100"):
-        validate_portfolio(bad, cash_reserve_pct=10.0)
+    # 50 + 20 = 70 < 100 — must NOT raise.
+    validate_portfolio(under, cash_reserve_pct=10.0)
+
+
+def test_validate_catches_over_allocation() -> None:
+    """Over-allocating the book beyond 100% is still rejected."""
+    over: dict[str, Sleeve] = {
+        "a": {"allocation_pct": 80.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
+        "b": {"allocation_pct": 40.0, "agents": ["x"], "agent_weights": {"x": 1.0}, "tickers": []},
+    }
+    # 80 + 40 = 120 > 100.
+    with pytest.raises(PortfolioConfigError, match="cannot exceed 100"):
+        validate_portfolio(over, cash_reserve_pct=10.0)
 
 
 def test_validate_catches_bad_cash_reserve() -> None:

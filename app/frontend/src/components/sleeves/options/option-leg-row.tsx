@@ -20,13 +20,16 @@ interface OptionLegRowProps {
   contract: OptionContract;
   underlying: string;
   atm?: boolean;
-  /** When true, render this row as the strategy's recommended contract:
-   *  amber tint + star icon next to the strike. Wins over ``atm`` styling. */
-  recommended?: boolean;
+  /** When set, render this row as a leg of the recommended structure:
+   *  'long' = bought (emerald BUY tag + star), 'short' = sold (rose SELL tag).
+   *  Wins over ``atm`` styling. A single-leg recommendation passes 'long'. */
+  highlight?: 'long' | 'short';
 }
 
-export function OptionLegRow({ contract, underlying, atm, recommended }: OptionLegRowProps) {
+export function OptionLegRow({ contract, underlying, atm, highlight }: OptionLegRowProps) {
   const [copied, setCopied] = useState(false);
+  const isLong = highlight === 'long';
+  const isShort = highlight === 'short';
 
   const handleCopy = async () => {
     const code = contract.type === 'call' ? 'C' : 'P';
@@ -50,16 +53,32 @@ export function OptionLegRow({ contract, underlying, atm, recommended }: OptionL
     <tr
       className={cn(
         'border-b border-border/40 last:border-0 hover:bg-muted/30 cursor-pointer text-[11px] font-mono',
-        atm && !recommended && 'bg-amber-500/5',
-        recommended &&
-          'bg-amber-500/15 ring-1 ring-inset ring-amber-500/40 font-semibold'
+        atm && !highlight && 'bg-amber-500/5',
+        isLong && 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/40 font-semibold',
+        isShort && 'bg-rose-500/15 ring-1 ring-inset ring-rose-500/40 font-semibold',
       )}
       onClick={handleCopy}
-      title={recommended ? 'Recommended trade — click to copy' : 'Click to copy'}
+      title={
+        isLong
+          ? 'Long leg (buy) — click to copy'
+          : isShort
+            ? 'Short leg (sell) — click to copy'
+            : 'Click to copy'
+      }
     >
-      <td className="px-2 py-1 font-semibold">
-        {recommended && (
-          <Star className="h-3 w-3 inline-block mr-1 text-amber-500 fill-amber-500 -mt-0.5" />
+      <td className="px-2 py-1 font-semibold whitespace-nowrap">
+        {isLong && (
+          <Star className="h-3 w-3 inline-block mr-1 text-emerald-500 fill-emerald-500 -mt-0.5" />
+        )}
+        {isShort && (
+          <span className="inline-block mr-1 px-1 rounded-sm bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[8px] font-bold align-middle">
+            SELL
+          </span>
+        )}
+        {isLong && (
+          <span className="inline-block mr-1 px-1 rounded-sm bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[8px] font-bold align-middle">
+            BUY
+          </span>
         )}
         {contract.strike.toFixed(2)}
       </td>

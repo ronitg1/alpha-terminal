@@ -10,14 +10,19 @@
 
 import {
   AnalystMetadata,
+  ChatMessage,
+  FinnhubFundamentals,
   OptionsChainResponse,
   OptionsScreenerResponse,
   OptionsStrategyMeta,
+  PortfolioSettings,
+  Quote,
   ScanListItem,
   ScanSummary,
   SleevesConfig,
   Thesis,
   TickerData,
+  TickerThesis,
   WatchlistEntry,
 } from '@/types/sleeves';
 
@@ -60,6 +65,19 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`PATCH ${path} failed: ${res.status} ${res.statusText} ${text}`);
+  }
+  return (await res.json()) as T;
+}
+
 async function deleteRequest<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, { method: 'DELETE' });
   if (!res.ok) {
@@ -78,8 +96,31 @@ export const sleevesApi = {
   getWatchlist: () => getJSON<{ entries: WatchlistEntry[] }>('/sleeves/watchlist'),
   putWatchlist: (entries: WatchlistEntry[]) =>
     putJSON<{ entries: WatchlistEntry[] }>('/sleeves/watchlist', { entries }),
+
+  // Multi-watchlist endpoints
+  getWatchlists: () =>
+    getJSON<{ watchlists: { name: string; tickers: WatchlistEntry[] }[] }>('/sleeves/watchlists'),
+
+  createWatchlist: (name: string, tickers: WatchlistEntry[] = []) =>
+    postJSON<{ name: string; tickers: WatchlistEntry[] }>('/sleeves/watchlists', { name, tickers }),
+
+  updateWatchlist: (name: string, tickers: WatchlistEntry[]) =>
+    putJSON<{ name: string; tickers: WatchlistEntry[] }>(`/sleeves/watchlists/${encodeURIComponent(name)}`, { tickers }),
+
+  renameWatchlist: (oldName: string, newName: string) =>
+    patchJSON<{ name: string }>(`/sleeves/watchlists/${encodeURIComponent(oldName)}/rename`, { new_name: newName }),
+
+  deleteWatchlist: (name: string) =>
+    deleteRequest<{ deleted: string }>(`/sleeves/watchlists/${encodeURIComponent(name)}`),
   getTickerData: (ticker: string) =>
     getJSON<TickerData>(`/sleeves/ticker/${encodeURIComponent(ticker)}`),
+  getTickerFinnhub: (ticker: string) =>
+    getJSON<FinnhubFundamentals>(`/sleeves/ticker/${encodeURIComponent(ticker)}/finnhub`),
+  getTickerThesis: (ticker: string, depth: 'quick' | 'deep') =>
+    postJSON<TickerThesis>(
+      `/sleeves/thesis/ticker/${encodeURIComponent(ticker)}?depth=${depth}`,
+      {},
+    ),
   getPortfolioThesis: () => postJSON<Thesis>('/sleeves/thesis/portfolio', {}),
   getSleeveThesis: (name: string) =>
     postJSON<Thesis>(`/sleeves/thesis/sleeve/${encodeURIComponent(name)}`, {}),
@@ -136,6 +177,20 @@ export const sleevesApi = {
 
   deleteSleeve: (name: string) =>
     deleteRequest<SleevesConfig>(`/sleeves/config/sleeve/${encodeURIComponent(name)}`),
+
+  renameSleeve: (oldName: string, newName: string) =>
+    patchJSON<SleevesConfig>(`/sleeves/config/sleeve/${encodeURIComponent(oldName)}/rename`, { new_name: newName }),
+
+  getPortfolioSettings: () =>
+    getJSON<{ settings: PortfolioSettings }>('/sleeves/portfolio/settings'),
+
+  putPortfolioSettings: (settings: PortfolioSettings) =>
+    putJSON<{ settings: PortfolioSettings }>('/sleeves/portfolio/settings', { settings }),
+
+  getQuotes: (tickers: string[]) =>
+    getJSON<{ quotes: Record<string, Quote> }>(
+      `/sleeves/quotes?tickers=${tickers.map(encodeURIComponent).join(',')}`,
+    ),
 };
 
 // ─── SSE streaming helper (used by backtest endpoints) ─────────────────────
@@ -143,6 +198,59 @@ export const sleevesApi = {
 // the simple object stays one-shot getters.
 
 export type SseHandler = (event: string, data: unknown) => void;
+
+// ─── Chat stream ─────────────────────────────────────────────────────────────
+
+export interface ChatContext {
+  section: string;
+  selectedTicker?: string | null;
+  screenerSnapshot?: Record<string, unknown> | null;
+  patternSnapshot?: Record<string, unknown> | null;
+  scanSnapshot?: Record<string, unknown> | null;
+}
+
+/** Stream a chat response token-by-token.
+ *  `onToken` receives each partial string; `onDone` fires when the stream ends. */
+export async function streamChat(
+  messages: ChatMessage[],
+  context: ChatContext,
+  onToken: (token: string) => void,
+  onDone: () => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/sleeves/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, context }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Chat stream failed: ${res.status} ${text.slice(0, 120)}`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder('utf-8');
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const frames = buf.split('\n\n');
+    buf = frames.pop() ?? '';
+    for (const frame of frames) {
+      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const raw = dataLine.slice(5).trim();
+      if (raw === '[DONE]') { onDone(); return; }
+      try {
+        const parsed = JSON.parse(raw) as { token?: string; error?: string };
+        if (parsed.token) onToken(parsed.token);
+        if (parsed.error) throw new Error(parsed.error);
+      } catch { /* non-JSON frame, skip */ }
+    }
+  }
+  onDone();
+}
 
 export async function postSse(
   path: string,

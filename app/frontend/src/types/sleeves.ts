@@ -64,6 +64,11 @@ export interface WatchlistEntry {
   comment: string;
 }
 
+export interface NamedWatchlist {
+  name: string;
+  tickers: WatchlistEntry[];
+}
+
 export interface AnalystMetadata {
   key: string;
   display_name: string;
@@ -73,6 +78,15 @@ export interface AnalystMetadata {
 }
 
 // ─── Thesis synthesis payloads ──────────────────────────────────────────────
+
+/** Per-ticker thesis for Portfolio Pulse "Run analysis" (quick or deep). */
+export interface TickerThesis {
+  ticker: string;
+  depth: 'quick' | 'deep';
+  bias: 'bullish' | 'bearish' | 'neutral' | string;
+  condensed: string;
+  full: string;
+}
 
 /** LLM-synthesized thesis at portfolio or sleeve scope. */
 export interface Thesis {
@@ -166,6 +180,46 @@ export interface TickerData {
   details?: TickerDetails | null;
 }
 
+// ─── Finnhub enrichment (Market tab) ─────────────────────────────────────────
+// Backed by GET /sleeves/ticker/{ticker}/finnhub. configured=false when no
+// FINNHUB_API_KEY is set, so the UI can hide the section.
+
+export interface FinnhubEarnings {
+  period: string;
+  actual: number | null;
+  estimate: number | null;
+  surprise_pct: number | null;
+  beat: boolean;
+}
+
+export interface FinnhubRecommendation {
+  period: string;
+  strong_buy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strong_sell: number;
+}
+
+export interface FinnhubFundamentals {
+  configured: boolean;
+  ticker: string;
+  profile?: {
+    name?: string | null;
+    industry?: string | null;
+    market_cap?: number | null;
+    exchange?: string | null;
+    ipo?: string | null;
+  };
+  /** Friendly-keyed numeric metrics (revenue_growth_ttm, inventory_turnover_ttm, …). */
+  metrics?: Record<string, number>;
+  /** Most-recent-first earnings beat/miss history. */
+  earnings?: FinnhubEarnings[];
+  recommendation?: FinnhubRecommendation | null;
+  peers?: string[];
+  insider_flow?: { net_shares: number; buys: number; sells: number; n: number };
+}
+
 // ─── Options screener + chain (Phase E) ──────────────────────────────────────
 // Backed by GET /sleeves/options/screener and /sleeves/options/chain/{ticker}.
 
@@ -193,15 +247,44 @@ export interface ScreenerRecommendation {
   reasoning: string;
 }
 
+/** One leg of a recommended structure. A single-leg play (ATM call) has one;
+ *  a debit spread has two (long + short). */
+export interface OptionLeg {
+  /** 'long' = bought, 'short' = sold. */
+  side: 'long' | 'short';
+  direction: 'call' | 'put';
+  /** 0 = ATM, positive = strike above spot, negative = below. Same convention
+   *  as ScreenerRecommendation.strike_offset_pct. */
+  strike_offset_pct: number;
+}
+
+/** Single expiry tier recommendation — one of 2 returned per candidate. */
+export interface ExpiryTier {
+  /** Days to expiration for this tier (e.g. 14, 30, 60). */
+  dte: number;
+  /** Short display label, e.g. "30d · OTM". */
+  label: string;
+  /** Options structure name, e.g. "ATM call", "call debit spread". */
+  structure: string;
+  /** One-line rationale explaining why this DTE fits the setup. */
+  rationale: string;
+  /** Legs to highlight in the chain — 1 for single-leg, 2 for a spread. */
+  legs: OptionLeg[];
+}
+
 export interface ScreenerCandidate {
   ticker: string;
   /** 0..N where N = signals.length (typically 3). */
   conviction: number;
+  /** Weighted conviction score 0–100. Present on all candidates. */
+  conviction_pct: number;
   signals: ScreenerSignal[];
   last_price: number | null;
   /** Sort tiebreaker — lower ranks earlier within same conviction. */
   sort_key: number;
   recommendation: ScreenerRecommendation;
+  /** 0–2 expiry tier recommendations (empty when conviction_pct < 40). */
+  expiry_tiers: ExpiryTier[];
 }
 
 /** Strategy descriptor returned by GET /sleeves/options/strategies. */
@@ -257,6 +340,103 @@ export interface OptionsChainResponse {
   generated_at: string;
 }
 
+// ─── Portfolio settings (per-ticker overlay) ─────────────────────────────────
+
+export interface TickerPortfolioSettings {
+  /** 0–100; how much of the overall portfolio this ticker represents. */
+  allocation_pct: number;
+  /** null = use sleeve default agents; list = override for this ticker. */
+  agents: string[] | null;
+}
+
+/** { sleeve_name: { TICKER: TickerPortfolioSettings } } */
+export type PortfolioSettings = Record<string, Record<string, TickerPortfolioSettings>>;
+
+// ─── Dashboard types ─────────────────────────────────────────────────────────
+
+/** Lightweight price record for the left-nav sidebar. */
+export interface Quote {
+  last: number | null;
+  prev_close: number | null;
+  pct_change: number | null;
+  spark: number[];
+  /** Short company name (cached server-side). Empty when unavailable. */
+  name?: string;
+}
+
+// ─── Market News tab ─────────────────────────────────────────────────────────
+
+export interface NewsArticle {
+  id: string;
+  headline: string;
+  summary: string;
+  source: string;
+  url: string;
+  datetime: number; // unix seconds
+  image: string | null;
+  related: string | null;
+  category: string | null;
+}
+
+export interface NewsFeed {
+  configured: boolean;
+  book_headlines: NewsArticle[];
+  macro: NewsArticle[];
+  macro_category_counts: Record<string, number>;
+  generated_at?: number;
+}
+
+export interface ArticleSummary {
+  summary: string[];
+  relevance: string;
+  relevanceReason: string;
+}
+
+// ─── Earnings Transcripts tab ────────────────────────────────────────────────
+
+export interface TranscriptTheme {
+  topic: string;
+  quote: string;
+  bookRelevance: 'high' | 'medium' | 'low' | string;
+}
+export interface TranscriptDodged {
+  analyst: string;
+  question: string;
+  pivot: string;
+  importance: 'high' | 'medium' | 'low' | string;
+}
+export interface TranscriptCompetitive {
+  competitor: string;
+  context: string;
+  signal: 'bullish' | 'bearish' | 'neutral' | string;
+}
+export interface TranscriptPolicy {
+  topic: string;
+  quote: string;
+  interpretation: string;
+}
+export interface TranscriptAnalysis {
+  ticker: string;
+  report_date: string | null;
+  sentimentScore: number;
+  toneDelta: string;
+  keyThemes: TranscriptTheme[];
+  guidanceLanguage: string;
+  dodgedQuestions: TranscriptDodged[];
+  competitiveMentions: TranscriptCompetitive[];
+  policyMentions: TranscriptPolicy[];
+  thesisImpact: { direction: 'confirms' | 'strengthens' | 'weakens' | 'breaks' | string; narrative: string };
+  watchNextQuarter: string[];
+}
+
+export type DashboardSection = 'market' | 'screening' | 'portfolio' | 'news' | 'transcripts';
+export type ScreeningSubTab = 'patterns' | 'options' | 'backtest';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 // ─── Backtests (Phase D) ────────────────────────────────────────────────────
 
 export interface OptionsBacktestRequest {
@@ -265,9 +445,21 @@ export interface OptionsBacktestRequest {
   sleeve?: string;
   tickers?: string[] | null;
   strategy?: string;
+  /** Primary conviction gate (0-100). Replaces the legacy integer conviction_min. */
+  min_conviction_pct?: number | null;
+  /** Legacy integer conviction count (0-3). Kept for backwards compatibility. */
   conviction_min?: number;
   direction?: 'auto' | 'straddle' | 'calls' | 'puts';
+  /** Max trading days to hold — the backstop exit when no trigger fires. */
   hold_days?: number;
+  /** Take-profit on premium, positive fraction (0.50 = +50%). null = off. */
+  profit_target_pct?: number | null;
+  /** Per-contract drawdown stop, positive fraction (0.50 = -50%). null = off. */
+  stop_loss_pct?: number | null;
+  /** Close at this many days-to-expiry. null = ignore DTE. */
+  dte_exit?: number | null;
+  /** Round-trip slippage as a fraction of premium (0.05 = 5% spread). null/0 = frictionless. */
+  slippage_pct?: number | null;
 }
 
 export interface OptionsBacktestTrade {
@@ -277,6 +469,8 @@ export interface OptionsBacktestTrade {
   open_date: string;
   close_date: string;
   conviction: number;
+  /** Magnitude-weighted conviction percentage (0-100) at entry. */
+  conviction_pct?: number;
   strike: number;
   sigma: number;
   entry_spot: number;
@@ -294,7 +488,9 @@ export interface OptionsBacktestTrade {
   /** True if the trade exited early because the per-contract drawdown stop
    *  fired. Pairs with exit_reason='stop'. */
   stopped_out?: boolean;
-  exit_reason?: 'time' | 'stop';
+  /** How the trade closed: profit target, stop, DTE roll-out, expiry, or the
+   *  hold_days backstop ('time'). */
+  exit_reason?: 'time' | 'stop' | 'target' | 'dte' | 'expiry';
 }
 
 export interface OptionsBacktestSummary {
@@ -314,10 +510,22 @@ export interface OptionsBacktestSummary {
   n_synthetic?: number;
   /** Echo of the configured stop-loss threshold (positive fraction; null = off). */
   stop_loss_pct?: number | null;
+  /** Echo of the configured profit target (positive fraction; null = off). */
+  profit_target_pct?: number | null;
+  /** Echo of the configured DTE exit threshold (null = off). */
+  dte_exit?: number | null;
+  /** Echo of the hold_days backstop. */
+  hold_days?: number;
+  /** Echo of the slippage fraction applied to fills (null/0 = frictionless). */
+  slippage_pct?: number | null;
+  /** Echo of the conviction-% gate used for this run. */
+  min_conviction_pct?: number | null;
   /** Count of trades exited early by the stop-loss rule. */
   n_stopped?: number;
   /** Average return % across stopped-out trades only. Negative when the stop is doing its job. */
   avg_return_when_stopped?: number | null;
+  /** Count of closed trades keyed by exit reason (target/stop/dte/expiry/time). */
+  by_exit_reason?: Record<string, number>;
 }
 
 /** One closed-trade entry surfaced by the sleeves backtest. Built by the

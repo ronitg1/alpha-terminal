@@ -16,6 +16,7 @@ WATCHLIST: list[str] = [
     "PLTR",  # commercial mix shift
     "SOFI",
     "NOW",
+    "GTLB",
 ]
 
 

@@ -71,6 +71,13 @@ app/frontend/.vite/
 outputs/
 /scratchpad/
 
+# ─── Runtime user state (watchlists + per-ticker portfolio settings) ─────────
+# Written at runtime by watchlists_service / portfolio_settings_service. Both
+# seed sensible defaults on a fresh clone, so these are local user data, not
+# part of the repo.
+app/data/
+app/backend/data/
+
 # ─── Database files ──────────────────────────────────────────────────────────
 *.db
 *.db-journal
@@ -94,3 +101,4 @@ HANDOFF.md
 
 # Standalone prototype directory (superseded by app/ integration)
 pattern-scanner/
+.research/

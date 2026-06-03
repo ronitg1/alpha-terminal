@@ -50,6 +50,8 @@ from app.backend.services.watchlist_service import (
     read_watchlist_with_comments,
     write_watchlist,
 )
+from app.backend.services import watchlists_service
+from app.backend.services import portfolio_settings_service
 import src.config.portfolio_config as _portfolio_config_module
 from src.config.portfolio_config import CASH_RESERVE_PCT  # noqa: F401  (re-read fresh below)
 from src.patterns.patterns import BULLISH_PATTERNS, PATTERN_DETECTORS
@@ -260,6 +262,43 @@ async def get_ticker_data(ticker: str) -> dict[str, Any]:
     return payload
 
 
+# Finnhub fundamentals enrichment cache (5 min) — separate from _ticker_cache so
+# the two sources fail independently.
+_finnhub_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+@router.get("/ticker/{ticker}/finnhub")
+async def get_ticker_finnhub(ticker: str) -> dict[str, Any]:
+    """Finnhub-sourced enrichment for the Market tab's financials section.
+
+    Returns growth/turnover metrics, the earnings beat/miss track record,
+    analyst recommendation consensus, peers, and recent insider flow. Forward
+    analyst estimates are premium-gated on the free tier and intentionally
+    omitted. When no FINNHUB_API_KEY is configured, returns
+    ``{"configured": false}`` so the UI can hide the section gracefully.
+    """
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+
+    from src.tools.finnhub import get_finnhub_client
+    from src.tools.finnhub.converters import fundamentals_summary
+
+    client = get_finnhub_client()
+    if client is None:
+        return {"configured": False, "ticker": symbol}
+
+    now = time.monotonic()
+    cached = _finnhub_cache.get(symbol)
+    if cached and (now - cached[0]) < _TICKER_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    summary = await asyncio.to_thread(fundamentals_summary, client, symbol)
+    payload = {"configured": True, **summary}
+    _finnhub_cache[symbol] = (now, payload)
+    return payload
+
+
 @router.get("/config")
 async def get_config() -> dict[str, Any]:
     """Return sleeve definitions + cash-reserve floor.
@@ -352,12 +391,25 @@ async def update_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[s
 
 @router.delete("/config/sleeve/{name}")
 async def delete_sleeve_endpoint(name: str) -> dict[str, Any]:
-    """Delete a sleeve. Caller must re-balance allocation_pct first if the
-    deleted sleeve had non-zero allocation; the service refuses to leave the
-    totals off 100%."""
+    """Delete a sleeve. Returns the updated full config."""
     from app.backend.services import sleeve_config_service
 
     updated = sleeve_config_service.delete_sleeve(name)
+    return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
+
+
+class RenameSleevePayload(BaseModel):
+    """Body for rename. ``new_name`` must be a valid sleeve identifier."""
+
+    new_name: str = Field(description="New sleeve name (lowercase, alphanumeric + underscore, max 31 chars).")
+
+
+@router.patch("/config/sleeve/{name}/rename")
+async def rename_sleeve_endpoint(name: str, payload: RenameSleevePayload) -> dict[str, Any]:
+    """Rename a sleeve. Returns the updated full config."""
+    from app.backend.services import sleeve_config_service
+
+    updated = sleeve_config_service.rename_sleeve(name, payload.new_name)
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
 
@@ -967,7 +1019,370 @@ def _lows(bars: list) -> list[float]:
     return [b.low for b in bars]
 
 
-# ─── Existing four scorers (now bars-based) ─────────────────────────────────
+# ─── Conviction % helpers ────────────────────────────────────────────────────
+#
+# Magnitude functions map raw signal values to a 1.0–1.5 intensity multiplier.
+# _conviction_pct normalises against the theoretical max so 3/3 at extreme
+# thresholds ≈ 100 % and 1/3 barely-fired ≈ 26 %.
+
+
+def _mag_rsi(rsi: float | None, threshold: float) -> float:
+    """Higher multiplier when RSI is further past the trigger threshold."""
+    if rsi is None:
+        return 1.0
+    return min(1.5, 1.0 + abs(rsi - threshold) / 20.0)
+
+
+def _mag_return(pct: float | None, threshold: float) -> float:
+    """Higher multiplier when the return/gap is a larger multiple of the threshold."""
+    if pct is None or threshold == 0:
+        return 1.0
+    return min(1.5, 1.0 + (abs(pct) - abs(threshold)) / abs(threshold))
+
+
+def _mag_volume(ratio: float | None, trigger: float) -> float:
+    """Higher multiplier for more extreme volume ratios."""
+    if ratio is None or trigger == 0:
+        return 1.0
+    return min(1.5, 1.0 + (ratio - trigger) / trigger)
+
+
+def _mag_zscore(z: float | None) -> float:
+    """Higher multiplier for more extreme z-scores."""
+    if z is None:
+        return 1.0
+    return min(1.5, 1.0 + (abs(z) - 1.5) / 2.0)
+
+
+def _conviction_pct(
+    signals: list[dict],
+    weights: tuple[float, ...],
+    magnitudes: list[float],
+) -> float:
+    """Weighted conviction score 0–100.
+
+    Normalised against the theoretical maximum (all signals at mag 1.5):
+      1 signal barely fired ≈ 26 %  |  2 signals ≈ 50 %  |  3 signals ≈ 67 %
+      3 signals at max magnitude + consistency bonus ≈ 100 %
+    """
+    max_possible = sum(w * 1.5 for w in weights)
+    if max_possible == 0:
+        return 0.0
+    fired_score = sum(
+        w * max(1.0, m)
+        for s, w, m in zip(signals, weights, magnitudes)
+        if s["fired"]
+    )
+    base = (fired_score / max_possible) * 100.0
+    if all(s["fired"] for s in signals) and magnitudes and min(magnitudes) >= 1.15:
+        base = min(100.0, base + 8.0)
+    return round(base, 1)
+
+
+# Expiry tier table: (strategy, conviction bucket) → 2 recommended tiers.
+# "call"/"put" strings in structures for direction-variable strategies are
+# substituted by _expiry_tiers() based on the runtime direction.
+# Expiry tiers use three canonical DTE values that represent calendar-day cycles:
+#   14d = weekly cycle (2 weeks out — avoids 0DTE/near-expiry)
+#   35d = monthly cycle (~5 weeks)
+#   63d = quarterly cycle (~9 weeks, high conviction only)
+# These are fixed calendar-day offsets from today, not "trading days from now."
+_EXPIRY_TIERS: dict[str, dict[str, list[dict[str, Any]]]] = {
+    "weakness": {
+        "low": [
+            {"dte": 14, "label": "14d · spread", "structure": "call debit spread",
+             "rationale": "Defined-risk bounce — sell higher strike to offset premium cost."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly cycle gives room if the QQQ rotation takes time to materialize."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Mean-reversion lean — oversold names snap back within a monthly cycle."},
+            {"dte": 14, "label": "14d · spread", "structure": "call debit spread",
+             "rationale": "Cheaper weekly entry; sell 2–3% higher strike to offset cost."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · conviction", "structure": "long call",
+             "rationale": "Oversold + lagging QQQ — trend repair can run far; quarterly gives room."},
+            {"dte": 35, "label": "35d · tactical", "structure": "ATM call",
+             "rationale": "Monthly cycle for quicker theta resolution."},
+        ],
+    },
+    "strength": {
+        "low": [
+            {"dte": 14, "label": "14d · spread", "structure": "put debit spread",
+             "rationale": "Defined-risk fade — buy ATM put, sell lower strike."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM put",
+             "rationale": "Monthly cycle gives more time for the mean reversion to develop."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM put",
+             "rationale": "Overbought fade — leading names stall before snapping back; monthly cycle."},
+            {"dte": 14, "label": "14d · spread", "structure": "put debit spread",
+             "rationale": "Weekly spread reduces premium on high-IV names."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · conviction", "structure": "long put",
+             "rationale": "Leading + deeply overbought — reversion can be sharp; quarterly room."},
+            {"dte": 35, "label": "35d · tactical", "structure": "ATM put",
+             "rationale": "Monthly cycle if RSI is past 70 and you want faster resolution."},
+        ],
+    },
+    "momentum": {
+        "low": [
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Defined risk on continuation — cap upside to reduce premium."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly cycle gives room if the trend needs a few weeks to extend."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM call",
+             "rationale": "Momentum payoff window is 3–5 weeks; slight OTM for leverage."},
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Spread if IV is elevated on the name."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · position", "structure": "long call",
+             "rationale": "Strong absolute trend — quarterly cycle gives the move room to compound."},
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM call",
+             "rationale": "Monthly cycle if you prefer a 5-week catalyst horizon."},
+        ],
+    },
+    "mean_reversion": {
+        "low": [
+            {"dte": 14, "label": "14d · spread", "structure": "call debit spread",
+             "rationale": "Snap-back with defined risk — thesis resolves in ≤2 weeks."},
+            {"dte": 35, "label": "35d · fallback", "structure": "ATM call",
+             "rationale": "Monthly cycle buffer if consolidation extends beyond the initial snap."},
+        ],
+        "med": [
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Snap-backs happen fast — ATM for max gamma on the first move."},
+            {"dte": 35, "label": "35d · safety", "structure": "ATM call",
+             "rationale": "Monthly cycle buffer if price needs time to turn."},
+        ],
+        "high": [
+            {"dte": 35, "label": "35d · long", "structure": "long call",
+             "rationale": "Extreme z-score + RSI extreme — reversion can be violent; monthly cycle."},
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Fast gamma play on the initial snap when z > 2.5."},
+        ],
+    },
+    "breakout": {
+        "low": [
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Defined risk on the breakout — cap cost if move stalls."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly cycle gives time for the 52w-high breakout to extend."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM call",
+             "rationale": "52w-high breakout on volume — monthly cycle for momentum continuation."},
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Spread to reduce cost; sell strike at prior resistance."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · conviction", "structure": "long call",
+             "rationale": "Volume breakout above a year-high — quarterly cycle to ride the extension."},
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM call",
+             "rationale": "Monthly leveraged play if you expect near-term acceleration."},
+        ],
+    },
+    "breakdown": {
+        "low": [
+            {"dte": 35, "label": "35d · spread", "structure": "put debit spread",
+             "rationale": "Defined risk on the break — cap cost if a bounce materializes."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM put",
+             "rationale": "Monthly cycle gives time to outlast a dead-cat bounce."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM put",
+             "rationale": "Breakdown below 52w low on volume — monthly cycle for continuation."},
+            {"dte": 35, "label": "35d · spread", "structure": "put debit spread",
+             "rationale": "Spread if the name has wide bid-ask on outright puts."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · conviction", "structure": "long put",
+             "rationale": "High-conviction break — oversold can stay oversold; quarterly cycle."},
+            {"dte": 35, "label": "35d · OTM", "structure": "2% OTM put",
+             "rationale": "Monthly play if you expect a fast continuation flush."},
+        ],
+    },
+    "volume_spike": {
+        "low": [
+            {"dte": 14, "label": "14d · fast", "structure": "ATM call",
+             "rationale": "Unusual flow — follow it into the next 1–2 weekly cycles."},
+            {"dte": 14, "label": "14d · spread", "structure": "call debit spread",
+             "rationale": "Defined risk if direction persistence is uncertain."},
+        ],
+        "med": [
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Flow confirmation — give the move 1–2 weeks to develop."},
+            {"dte": 35, "label": "35d · follow", "structure": "ATM call",
+             "rationale": "Monthly cycle if close-in-range is extreme (>90%) and you want more time."},
+        ],
+        "high": [
+            {"dte": 35, "label": "35d · long", "structure": "long call",
+             "rationale": "Extreme volume + close-at-wick — institutional conviction; monthly cycle."},
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Weekly exit if the flow was a single-day event."},
+        ],
+    },
+    "pullback": {
+        "low": [
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Buy-the-dip with defined risk — MA bounces can take 2–4 weeks."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly cycle gives more time if consolidation at the MA extends."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Uptrend intact — 20/50d MA bounce is a high-probability setup; monthly."},
+            {"dte": 35, "label": "35d · spread", "structure": "call debit spread",
+             "rationale": "Spread to reduce cost; sell strike above recent resistance."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · diagonal", "structure": "diagonal call spread",
+             "rationale": "Strong pullback signal — sell near-dated call to offset the quarterly leg."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly outright if you prefer simple directional exposure."},
+        ],
+    },
+    "trend_bias": {
+        "low": [
+            {"dte": 63, "label": "63d · spread", "structure": "call debit spread",
+             "rationale": "Strategic directional bet — defined risk on the MA cross thesis."},
+            {"dte": 63, "label": "63d · ATM", "structure": "ATM call",
+             "rationale": "Quarterly cycle gives time for the structural trend to develop fully."},
+        ],
+        "med": [
+            {"dte": 63, "label": "63d · ATM", "structure": "ATM call",
+             "rationale": "MA cross regime — quarterly cycle gives room to compound over 2 months."},
+            {"dte": 63, "label": "63d · spread", "structure": "call debit spread",
+             "rationale": "Reduce premium on the structural bet."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · LEAPS", "structure": "LEAPS call",
+             "rationale": "Accelerating cross + price on trend side — quarterly conviction position."},
+            {"dte": 63, "label": "63d · ATM", "structure": "ATM call",
+             "rationale": "Outright at quarterly if you prefer a defined exit window."},
+        ],
+    },
+    "vol_expansion": {
+        "low": [
+            {"dte": 14, "label": "14d · fast", "structure": "ATM call",
+             "rationale": "Vol regime blowouts are short-lived — capitalize before IV mean-reverts."},
+            {"dte": 14, "label": "14d · spread", "structure": "call debit spread",
+             "rationale": "Defined risk in case the directional call is wrong."},
+        ],
+        "med": [
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Vol expansion + big move — follow the regime shift, weekly cycle."},
+            {"dte": 35, "label": "35d · ATM", "structure": "ATM call",
+             "rationale": "Monthly cycle if realized vol is blowing out and may sustain."},
+        ],
+        "high": [
+            {"dte": 35, "label": "35d · long", "structure": "long call",
+             "rationale": "Extreme vol expansion + large catalyst — monthly cycle for regime change."},
+            {"dte": 14, "label": "14d · ATM", "structure": "ATM call",
+             "rationale": "Weekly cycle if you expect vol to mean-revert within 2 weeks."},
+        ],
+    },
+    "unusual_options_activity": {
+        "low": [
+            {"dte": 35, "label": "35d · follow", "structure": "ATM call",
+             "rationale": "Follow institutional flow; monthly cycle matches typical sweep positioning."},
+            {"dte": 14, "label": "14d · fast", "structure": "ATM call",
+             "rationale": "Weekly cycle if OTM strikes suggest a near-term catalyst."},
+        ],
+        "med": [
+            {"dte": 35, "label": "35d · position", "structure": "ATM call",
+             "rationale": "Institutional bets typically have a monthly thesis — match their cycle."},
+            {"dte": 35, "label": "35d · follow", "structure": "ATM call",
+             "rationale": "Monthly cycle for single-day sweep activity."},
+        ],
+        "high": [
+            {"dte": 63, "label": "63d · conviction", "structure": "long call",
+             "rationale": "Heavy vol/OI + OTM concentration — high-conviction smart-money; quarterly."},
+            {"dte": 35, "label": "35d · position", "structure": "ATM call",
+             "rationale": "Monthly institutional position horizon."},
+        ],
+    },
+}
+
+
+# Spread width between the two strikes of a vertical/diagonal, as a percent of
+# spot. The short leg is sold this far OTM of the long (ATM) leg.
+_SPREAD_WIDTH_PCT = 5.0
+
+
+def _structure_to_legs(structure: str) -> list[dict[str, Any]]:
+    """Map a tier ``structure`` string to its option legs for chain highlighting.
+
+    Each leg is ``{side, direction, strike_offset_pct}`` where:
+      - ``side``               : 'long' (bought) or 'short' (sold)
+      - ``direction``          : 'call' | 'put'
+      - ``strike_offset_pct``  : 0 = ATM, positive = strike above spot,
+                                 negative = strike below spot. This matches the
+                                 ScreenerRecommendation offset convention so the
+                                 chain viewer resolves every leg with the same
+                                 ``spot * (1 + offset/100)`` math.
+
+    Single-leg structures (ATM/long/LEAPS/2% OTM) return one leg; debit verticals
+    and diagonals return two so both strikes light up in the chain.
+    """
+    s = structure.lower()
+    is_put = "put" in s
+    direction = "put" if is_put else "call"
+    otm = -1.0 if is_put else 1.0  # OTM is below spot for puts, above for calls
+
+    if "debit spread" in s or "diagonal" in s:
+        # Buy ATM, sell one spread-width further OTM (cap upside, cut cost).
+        return [
+            {"side": "long", "direction": direction, "strike_offset_pct": 0.0},
+            {"side": "short", "direction": direction, "strike_offset_pct": otm * _SPREAD_WIDTH_PCT},
+        ]
+    if "2% otm" in s:
+        return [{"side": "long", "direction": direction, "strike_offset_pct": otm * 2.0}]
+    # ATM call/put, long call/put, LEAPS call/put → single ATM long leg.
+    return [{"side": "long", "direction": direction, "strike_offset_pct": 0.0}]
+
+
+def _expiry_tiers(
+    strategy: str,
+    conviction_pct: float,
+    direction: str,
+) -> list[dict[str, Any]]:
+    """Return 2 expiry tier recs for a (strategy, conviction %, direction) triple.
+
+    Returns an empty list when conviction_pct < 40 (no credible play).
+    For put-direction strategies the call structure names are substituted.
+    Each tier carries a ``legs`` list so the chain viewer can highlight every
+    strike of a multi-leg structure (e.g. both legs of a debit spread).
+    """
+    if conviction_pct < 40:
+        return []
+    bucket = "high" if conviction_pct >= 80 else ("med" if conviction_pct >= 60 else "low")
+    raw = _EXPIRY_TIERS.get(strategy, {}).get(bucket, [])
+    result = []
+    for tier in raw:
+        t = tier.copy()
+        if direction == "put":
+            t["structure"] = (
+                t["structure"]
+                .replace("call debit spread", "put debit spread")
+                .replace("2% OTM call", "2% OTM put")
+                .replace("LEAPS call", "LEAPS put")
+                .replace("diagonal call spread", "diagonal put spread")
+                .replace("ATM call", "ATM put")
+                .replace("long call", "long put")
+            )
+        t["legs"] = _structure_to_legs(t["structure"])
+        result.append(t)
+    return result
+
+
+# ─── Scorers (bars-based) ────────────────────────────────────────────────────
 #
 # All scorers take ``(bars, qqq_bars, **kwargs)`` so the dispatcher can pass
 # optional context (ticker, client) for strategies that need to fetch the
@@ -986,6 +1401,15 @@ def _score_weakness(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
     q5 = _return_over(qqq_closes, 5)
     d20 = (r20 - q20) if (r20 is not None and q20 is not None) else None
     d5 = (r5 - q5) if (r5 is not None and q5 is not None) else None
+
+    # Signal 4: price vs 20d SMA
+    sma20 = _mean(closes[-20:]) if len(closes) >= 20 else None
+    below_sma20 = (last_price is not None and sma20 is not None and last_price < sma20 * 0.98)
+    sma20_dist_mag = (sma20 / last_price) if (below_sma20 and last_price and last_price > 0) else 1.0
+
+    # Signal 5: 5-day rate of change
+    roc5 = _return_over(closes, 5)  # same as r5 — negative = falling
+    roc5_fired = roc5 is not None and roc5 < -0.02
 
     signals = [
         _signal(
@@ -1006,11 +1430,33 @@ def _score_weakness(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
             rsi is not None and rsi < 45,
             f"Relative Strength Index (14d). Fires when below 45 (approaching oversold). Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "vs 20d SMA",
+            _fmt_pct((last_price - sma20) / sma20 if (last_price and sma20) else None),
+            below_sma20,
+            "Price below 20d SMA confirms weak trend; deeper = stronger setup.",
+        ),
+        _signal(
+            "5d ROC",
+            _fmt_pct(roc5),
+            roc5_fired,
+            "5-day momentum negative; recent selling pressure.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_return(d20, -0.02) if (d20 is not None and d20 < -0.02) else 1.0,
+        _mag_return(d5, -0.01) if (d5 is not None and d5 < -0.01) else 1.0,
+        _mag_rsi(rsi, 45.0) if (rsi is not None and rsi < 45) else 1.0,
+        min(1.5, sma20_dist_mag) if below_sma20 else 1.0,
+        min(1.5, 1.0 + abs(roc5 or 0) / 0.02) if roc5_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (26.25, 18.75, 30.0, 15.0, 10.0), _m)
     sort_key = d20 if d20 is not None else 0.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("weakness", c_pct, "call"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1030,6 +1476,7 @@ def _score_weakness(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
 def _score_strength(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
     """Leading QQQ + overbought. Breakout calls or mean-reversion puts."""
     closes = _closes(bars)
+    highs = _highs(bars)
     qqq_closes = _closes(qqq_bars)
     last_price = closes[-1] if closes else None
     r20 = _return_over(closes, 20)
@@ -1039,6 +1486,19 @@ def _score_strength(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
     q5 = _return_over(qqq_closes, 5)
     d20 = (r20 - q20) if (r20 is not None and q20 is not None) else None
     d5 = (r5 - q5) if (r5 is not None and q5 is not None) else None
+
+    # Signal 4: price vs 20d SMA (overbought fade)
+    sma20 = _mean(closes[-20:]) if len(closes) >= 20 else None
+    above_sma20 = (last_price is not None and sma20 is not None and last_price > sma20 * 1.02)
+
+    # Signal 5: distance from 52-week high
+    yr_highs = highs[-252:] if len(highs) >= 252 else highs
+    high_52w = max(yr_highs) if yr_highs else None
+    near_52w_high = (
+        last_price is not None and high_52w is not None
+        and high_52w > 0
+        and (high_52w - last_price) / high_52w <= 0.03
+    )
 
     signals = [
         _signal(
@@ -1059,11 +1519,33 @@ def _score_strength(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
             rsi is not None and rsi > 55,
             f"Relative Strength Index (14d). Fires when above 55 (approaching overbought). Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "vs 20d SMA",
+            _fmt_pct((last_price - sma20) / sma20 if (last_price and sma20) else None),
+            above_sma20,
+            "Price above 20d SMA by >2% — extended above short-term trend; fade risk rises.",
+        ),
+        _signal(
+            "52w high",
+            _fmt_pct((last_price - high_52w) / high_52w if (last_price and high_52w) else None),
+            near_52w_high,
+            "Near 52-week high increases fade risk.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_return(d20, 0.02) if (d20 is not None and d20 > 0.02) else 1.0,
+        _mag_return(d5, 0.01) if (d5 is not None and d5 > 0.01) else 1.0,
+        _mag_rsi(rsi, 55.0) if (rsi is not None and rsi > 55) else 1.0,
+        1.2 if above_sma20 else 1.0,
+        1.2 if near_52w_high else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (26.25, 18.75, 30.0, 15.0, 10.0), _m)
     sort_key = -d20 if d20 is not None else 0.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("strength", c_pct, "put"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1083,10 +1565,27 @@ def _score_strength(bars: list, qqq_bars: list, **_kwargs: Any) -> dict[str, Any
 def _score_momentum(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
     """Pure absolute trend follow. No benchmark — just up-and-to-the-right."""
     closes = _closes(bars)
+    vols = _volumes(bars)
     last_price = closes[-1] if closes else None
     r20 = _return_over(closes, 20)
     r5 = _return_over(closes, 5)
     rsi = _compute_rsi(closes, 14)
+
+    # Signal 4: 20d SMA slope (trend acceleration)
+    sma20_now = _mean(closes[-20:]) if len(closes) >= 20 else None
+    sma20_10d_ago = _mean(closes[-30:-10]) if len(closes) >= 30 else None
+    sma20_slope: float | None = None
+    if sma20_now is not None and sma20_10d_ago is not None and sma20_10d_ago > 0:
+        sma20_slope = (sma20_now - sma20_10d_ago) / sma20_10d_ago * 100.0
+    sma20_slope_fired = sma20_slope is not None and sma20_slope > 0.5
+
+    # Signal 5: volume trend (avg 5d vs avg 20d)
+    avg_vol_5d = _mean([float(v) for v in vols[-5:]]) if len(vols) >= 5 else None
+    avg_vol_20d = _mean([float(v) for v in vols[-20:]]) if len(vols) >= 20 else None
+    vol_trend_fired = (
+        avg_vol_5d is not None and avg_vol_20d is not None
+        and avg_vol_20d > 0 and avg_vol_5d > avg_vol_20d * 1.1
+    )
 
     signals = [
         _signal(
@@ -1107,11 +1606,33 @@ def _score_momentum(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
             rsi is not None and rsi > 60,
             f"RSI (14d). Fires when > 60 (strong momentum, not yet exhausted). Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "SMA slope",
+            f"{_fmt_num(sma20_slope, 2)}%" if sma20_slope is not None else "—",
+            sma20_slope_fired,
+            "20d SMA slope over last 10 days. Fires when > 0.5% — trend is accelerating, not flattening.",
+        ),
+        _signal(
+            "volume trend",
+            f"{_fmt_num((avg_vol_5d or 0) / (avg_vol_20d or 1), 2)}×" if avg_vol_20d else "—",
+            vol_trend_fired,
+            "Avg volume last 5d vs avg volume last 20d. Fires when 5d avg > 20d avg × 1.1 — rising participation.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_return(r20, 0.05) if (r20 is not None and r20 > 0.05) else 1.0,
+        _mag_return(r5, 0.02) if (r5 is not None and r5 > 0.02) else 1.0,
+        _mag_rsi(rsi, 60.0) if (rsi is not None and rsi > 60) else 1.0,
+        min(1.5, 1.0 + (sma20_slope or 0) / 0.5 * 0.5) if sma20_slope_fired else 1.0,
+        min(1.5, 1.0 + ((avg_vol_5d or 0) / (avg_vol_20d or 1) - 1.1) / 0.5) if vol_trend_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 22.5, 22.5, 15.0, 10.0), _m)
     sort_key = -r20 if r20 is not None else 0.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("momentum", c_pct, "call"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1131,6 +1652,7 @@ def _score_momentum(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
 def _score_mean_reversion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, Any]:
     """Stretched far from 20-day average. Bet on a snap-back in either direction."""
     closes = _closes(bars)
+    vols = _volumes(bars)
     last_price = closes[-1] if closes else None
     rsi = _compute_rsi(closes, 14)
 
@@ -1145,6 +1667,24 @@ def _score_mean_reversion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[s
             pct_from_ma = (last_price - mean) / mean
 
     r5 = _return_over(closes, 5)
+
+    # Signal 4: 5d ROC in reversion direction (confirms the stretch is real)
+    # For above-mean (z>0) reversion: we want negative recent ROC (already falling back)
+    # For below-mean (z<0) reversion: we want positive recent ROC (already bouncing)
+    roc5_rev_fired = False
+    if r5 is not None and z is not None:
+        if z > 0 and r5 < -0.03:
+            roc5_rev_fired = True  # above mean, already reversing down
+        elif z < 0 and r5 > 0.03:
+            roc5_rev_fired = True  # below mean, already bouncing up
+
+    # Signal 5: volume contraction during the stretch (exhaustion, not distribution)
+    avg_vol_5d = _mean([float(v) for v in vols[-5:]]) if len(vols) >= 5 else None
+    avg_vol_20d = _mean([float(v) for v in vols[-20:]]) if len(vols) >= 20 else None
+    vol_contraction_fired = (
+        avg_vol_5d is not None and avg_vol_20d is not None
+        and avg_vol_20d > 0 and avg_vol_5d < avg_vol_20d * 0.8
+    )
 
     signals = [
         _signal(
@@ -1166,8 +1706,28 @@ def _score_mean_reversion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[s
             rsi is not None and (rsi > 70 or rsi < 30),
             f"RSI (14d). Fires when > 70 (overbought, snap-back via puts) or < 30 (oversold, snap-back via calls). Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "5d ROC",
+            _fmt_pct(r5),
+            roc5_rev_fired,
+            "5-day rate of change in the reversion direction. Fires when |5d ROC| > 3% — confirms the stretch is already unwinding.",
+        ),
+        _signal(
+            "vol contraction",
+            f"{_fmt_num((avg_vol_5d or 0) / (avg_vol_20d or 1), 2)}×" if avg_vol_20d else "—",
+            vol_contraction_fired,
+            "Low volume during pullback suggests exhaustion, not distribution.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_zscore(z) if (z is not None and abs(z) > 1.5) else 1.0,
+        _mag_return(r5, 0.05) if (r5 is not None and abs(r5) > 0.05) else 1.0,
+        _mag_rsi(rsi, 70.0 if (z or 0) > 0 else 30.0) if (rsi is not None and (rsi > 70 or rsi < 30)) else 1.0,
+        min(1.5, 1.0 + abs(r5 or 0) / 0.03) if roc5_rev_fired else 1.0,
+        1.2 if vol_contraction_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (33.75, 18.75, 22.5, 15.0, 10.0), _m)
     sort_key = -abs(z) if z is not None else 0.0
     # Direction inverts based on which side of the mean the price has stretched
     # to: above-mean → expect pullback (puts), below-mean → expect bounce (calls).
@@ -1179,6 +1739,8 @@ def _score_mean_reversion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[s
         why = "Price stretched below the 20-day mean — bounce trade with a call."
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("mean_reversion", c_pct, direction),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1202,6 +1764,7 @@ def _score_breakout(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
     setup — calls on the breakout. Reliable in trending markets, less so in chop."""
     closes = _closes(bars)
     highs = _highs(bars)
+    lows = _lows(bars)
     vols = _volumes(bars)
     last_price = closes[-1] if closes else None
     rsi = _compute_rsi(closes, 14)
@@ -1219,6 +1782,24 @@ def _score_breakout(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
         baseline = sum(vols[-21:-1]) / 20
         if baseline > 0:
             vol_ratio = vols[-1] / baseline
+
+    # Signal 4: price above 20d SMA (breakout above short-term trend)
+    sma20 = _mean(closes[-20:]) if len(closes) >= 20 else None
+    above_sma20 = last_price is not None and sma20 is not None and last_price > sma20
+
+    # Signal 5: range expansion — today's H-L range vs avg true range last 10d
+    atr_10d: float | None = None
+    if len(highs) >= 11 and len(lows) >= 11 and len(closes) >= 11:
+        true_ranges = [
+            max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            for i in range(-10, 0)
+        ]
+        atr_10d = _mean(true_ranges)
+    today_range = (highs[-1] - lows[-1]) if (highs and lows) else None
+    range_expansion_fired = (
+        today_range is not None and atr_10d is not None
+        and atr_10d > 0 and today_range > atr_10d * 1.3
+    )
 
     signals = [
         _signal(
@@ -1241,11 +1822,34 @@ def _score_breakout(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
             rsi is not None and rsi > 60,
             f"RSI (14d). Fires when > 60 — momentum behind the breakout, not yet overbought. Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "above 20d SMA",
+            "yes" if above_sma20 else "no",
+            above_sma20,
+            "Price above 20d SMA — breakout has reclaimed short-term trend support.",
+        ),
+        _signal(
+            "range expansion",
+            _fmt_pct((today_range / atr_10d - 1.0) if (today_range and atr_10d) else None),
+            range_expansion_fired,
+            "Today's H-L range > 10d avg true range × 1.3 — expanded range confirms breakout conviction.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _near_high_mag = max(1.0, 1.5 - abs(pct_to_high or -0.05) / 0.1) if near_high else 1.0
+    _m = [
+        _near_high_mag,
+        _mag_volume(vol_ratio, 1.5) if (vol_ratio is not None and vol_ratio > 1.5) else 1.0,
+        _mag_rsi(rsi, 60.0) if (rsi is not None and rsi > 60) else 1.0,
+        1.2 if above_sma20 else 1.0,
+        min(1.5, 1.0 + (today_range / atr_10d - 1.3) / 0.5) if range_expansion_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 26.25, 18.75, 15.0, 10.0), _m)
     sort_key = -pct_to_high if pct_to_high is not None else 0.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("breakout", c_pct, "call"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1267,6 +1871,7 @@ def _score_breakdown(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, A
     """Near 52-week low + volume surge + downside momentum. Bearish mirror
     of Breakout — puts on the continuation."""
     closes = _closes(bars)
+    highs = _highs(bars)
     lows = _lows(bars)
     vols = _volumes(bars)
     last_price = closes[-1] if closes else None
@@ -1282,6 +1887,29 @@ def _score_breakdown(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, A
         baseline = sum(vols[-21:-1]) / 20
         if baseline > 0:
             vol_ratio = vols[-1] / baseline
+
+    # Signal 4: price below 20d SMA
+    sma20 = _mean(closes[-20:]) if len(closes) >= 20 else None
+    below_sma20 = last_price is not None and sma20 is not None and last_price < sma20
+
+    # Signal 5: range expansion on a bearish candle (close in lower half of range)
+    atr_10d: float | None = None
+    if len(highs) >= 11 and len(lows) >= 11 and len(closes) >= 11:
+        true_ranges = [
+            max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            for i in range(-10, 0)
+        ]
+        atr_10d = _mean(true_ranges)
+    today_range = (highs[-1] - lows[-1]) if (highs and lows) else None
+    # Bearish range expansion: expanded range AND close in lower half
+    today_close_in_range = (
+        ((closes[-1] - lows[-1]) / today_range) if (today_range and today_range > 0) else 0.5
+    )
+    range_expansion_fired = (
+        today_range is not None and atr_10d is not None
+        and atr_10d > 0 and today_range > atr_10d * 1.3
+        and today_close_in_range <= 0.5
+    )
 
     signals = [
         _signal(
@@ -1304,11 +1932,34 @@ def _score_breakdown(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, A
             rsi is not None and rsi < 40,
             f"RSI (14d). Fires when < 40 — sustained downside momentum. Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "below 20d SMA",
+            "yes" if below_sma20 else "no",
+            below_sma20,
+            "Price below 20d SMA — breakdown has lost short-term trend support.",
+        ),
+        _signal(
+            "range expansion",
+            _fmt_pct((today_range / atr_10d - 1.0) if (today_range and atr_10d) else None),
+            range_expansion_fired,
+            "Today's H-L range > 10d ATR × 1.3, close in lower half — expanded bearish candle confirms capitulation.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _near_low_mag = max(1.0, 1.5 - abs(pct_above_low or 0.05) / 0.1) if near_low else 1.0
+    _m = [
+        _near_low_mag,
+        _mag_volume(vol_ratio, 1.5) if (vol_ratio is not None and vol_ratio > 1.5) else 1.0,
+        _mag_rsi(rsi, 40.0) if (rsi is not None and rsi < 40) else 1.0,
+        1.2 if below_sma20 else 1.0,
+        min(1.5, 1.0 + (today_range / atr_10d - 1.3) / 0.5) if range_expansion_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 26.25, 18.75, 15.0, 10.0), _m)
     sort_key = pct_above_low if pct_above_low is not None else 0.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("breakdown", c_pct, "put"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1356,6 +2007,14 @@ def _score_volume_spike(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str
     # Conviction in either direction: top 25% bullish, bottom 25% bearish.
     wick_extreme = close_in_range >= 0.75 or close_in_range <= 0.25
 
+    # Signal 4: close position — bullish if close in upper 60%, bearish if lower 40%
+    close_position_bullish = close_in_range >= 0.60
+    close_position_bearish = close_in_range <= 0.40
+    close_position_fired = close_position_bullish or close_position_bearish
+
+    # Signal 5: price impact — abs return on spike day > 1.5%
+    price_impact_fired = today_return is not None and abs(today_return) > 0.015
+
     signals = [
         _signal(
             "volume",
@@ -1378,8 +2037,28 @@ def _score_volume_spike(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str
             "(close-on-high → bullish conviction) or bottom 25% (close-on-low → bearish). "
             f"Current: {close_in_range:.0%}.",
         ),
+        _signal(
+            "close position",
+            f"{close_in_range:.0%} of range",
+            close_position_fired,
+            "Close in upper 60% of day's range (bullish) or lower 40% (bearish). Broader test of directional conviction.",
+        ),
+        _signal(
+            "price impact",
+            _fmt_pct(today_return),
+            price_impact_fired,
+            "Absolute return on spike day > 1.5% — volume is moving the price, not just noise.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_volume(vol_ratio, 2.0) if (vol_ratio is not None and vol_ratio > 2.0) else 1.0,
+        min(1.5, 1.0 + (abs(today_return or 0) - 0.03) / 0.03 * 0.5) if (today_return is not None and abs(today_return) > 0.03) else 1.0,
+        min(1.5, 1.0 + max(0.0, abs(close_in_range - 0.5) - 0.25) / 0.25) if wick_extreme else 1.0,
+        min(1.5, 1.0 + max(0.0, abs(close_in_range - 0.5) - 0.1) / 0.4) if close_position_fired else 1.0,
+        min(1.5, 1.0 + (abs(today_return or 0) - 0.015) / 0.015) if price_impact_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (22.5, 26.25, 26.25, 15.0, 10.0), _m)
     direction_sign = 1 if close_in_range >= 0.5 else -1
     score = (vol_ratio or 0) * abs(today_return or 0) * direction_sign
     sort_key = -score
@@ -1391,6 +2070,8 @@ def _score_volume_spike(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str
         rec_dir, rec_why = "put", "Closed near the low of the day on unusual volume — bearish flow."
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("volume_spike", c_pct, rec_dir),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1410,6 +2091,7 @@ def _score_pullback(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
     """Price near 20/50d MA + above 200d MA + mild RSI dip. The "buy the dip"
     retail setup — calls on the bounce off the moving average."""
     closes = _closes(bars)
+    vols = _volumes(bars)
     last_price = closes[-1] if closes else None
     rsi = _compute_rsi(closes, 14)
 
@@ -1429,6 +2111,17 @@ def _score_pullback(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
     near_ma = near_ma_pct is not None and near_ma_pct < 0.03
 
     above_200 = sma200 is not None and last_price is not None and last_price > sma200
+
+    # Signal 4: above 50d SMA (pullback in uptrend should stay above it)
+    above_sma50 = sma50 is not None and last_price is not None and last_price > sma50
+
+    # Signal 5: volume contraction during pullback (healthy dip, not breakdown)
+    avg_vol_5d = _mean([float(v) for v in vols[-5:]]) if len(vols) >= 5 else None
+    avg_vol_20d = _mean([float(v) for v in vols[-20:]]) if len(vols) >= 20 else None
+    vol_contraction_fired = (
+        avg_vol_5d is not None and avg_vol_20d is not None
+        and avg_vol_20d > 0 and avg_vol_5d < avg_vol_20d * 0.85
+    )
 
     signals = [
         _signal(
@@ -1452,11 +2145,34 @@ def _score_pullback(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, An
             f"RSI (14d) in the 35–55 band. Fires when momentum has cooled but isn't crashing. "
             f"Current: {_fmt_num(rsi, 1)}.",
         ),
+        _signal(
+            "above 50d SMA",
+            "yes" if above_sma50 else "no",
+            above_sma50,
+            f"Pullback in uptrend should stay above 50d SMA. 50d MA: {_fmt_num(sma50, 2)}, current: {_fmt_num(last_price, 2)}.",
+        ),
+        _signal(
+            "vol contraction",
+            f"{_fmt_num((avg_vol_5d or 0) / (avg_vol_20d or 1), 2)}×" if avg_vol_20d else "—",
+            vol_contraction_fired,
+            "Low volume during pullback suggests exhaustion, not distribution.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _near_ma_mag = max(1.0, 1.5 - (near_ma_pct or 0.03) / 0.06) if near_ma else 1.0
+    _above200_mag = 1.2 if above_200 else 1.0
+    _rsi_pb_mag = max(1.0, 1.0 + abs(45.0 - (rsi or 45)) / 10.0 * 0.5) if (rsi is not None and 35 <= rsi <= 55) else 1.0
+    _m = [
+        _near_ma_mag, _above200_mag, _rsi_pb_mag,
+        1.2 if above_sma50 else 1.0,
+        1.2 if vol_contraction_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 18.75, 26.25, 15.0, 10.0), _m)
     sort_key = near_ma_pct if near_ma_pct is not None else 1.0
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("pullback", c_pct, "call"),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1491,6 +2207,8 @@ def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, 
                 _signal("50/200d cross", "—", False, "Need ≥210 bars of history to compute the 200d MA."),
                 _signal("price vs 50d MA", "—", False, "Need ≥50 bars of history."),
                 _signal("gap widening", "—", False, "Need ≥10 bars of history past the cross."),
+                _signal("MA separation", "—", False, "Need ≥210 bars of history."),
+                _signal("RSI bias", "—", False, "Need ≥210 bars of history."),
             ],
             "sort_key": 0.0,
             "last_price": last_price,
@@ -1517,6 +2235,18 @@ def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, 
     price_vs_50 = (last_price - sma50_now) / sma50_now if sma50_now > 0 else 0.0
     price_trend_aligned = (price_vs_50 > 0 and cross_gap > 0) or (price_vs_50 < 0 and cross_gap < 0)
 
+    # Signal 4: MA separation — (sma50 - sma200) / sma200
+    ma_sep = (sma50_now - sma200_now) / sma200_now if sma200_now and sma200_now > 0 else 0.0
+    # Bullish bias: ma_sep > 0.02 (golden cross with >2% separation)
+    # Bearish bias: ma_sep < -0.02 (death cross with >2% separation)
+    ma_sep_fired = abs(ma_sep) > 0.02
+
+    # Signal 5: RSI bias — above 55 for bullish, below 45 for bearish
+    rsi = _compute_rsi(closes, 14)
+    rsi_bias_bullish = cross_gap > 0 and rsi is not None and rsi > 55
+    rsi_bias_bearish = cross_gap < 0 and rsi is not None and rsi < 45
+    rsi_bias_fired = rsi_bias_bullish or rsi_bias_bearish
+
     signals = [
         _signal(
             "50/200d cross",
@@ -1540,8 +2270,29 @@ def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, 
             f"50d–200d gap has widened in the trend's direction over the last 10 days. "
             f"Fires when the trend is gaining strength, not stalling.",
         ),
+        _signal(
+            "MA separation",
+            _fmt_pct(ma_sep),
+            ma_sep_fired,
+            f"(50d MA - 200d MA) / 200d MA. Fires when separation > 2% in either direction — meaningful structural gap.",
+        ),
+        _signal(
+            "RSI bias",
+            _fmt_num(rsi, 0),
+            rsi_bias_fired,
+            "RSI > 55 in a Golden Cross (bullish momentum) or RSI < 45 in a Death Cross (bearish momentum). Confirms trend.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _gap_mag = min(1.5, 1.0 + abs(cross_gap) / max(sma200_now or 1, 1) * 3.0)
+    _aligned_mag = 1.2 if price_trend_aligned else 1.0
+    _widen_mag = 1.2 if widening else 1.0
+    _m = [
+        _gap_mag, _aligned_mag, _widen_mag,
+        min(1.5, 1.0 + (abs(ma_sep) - 0.02) / 0.02) if ma_sep_fired else 1.0,
+        _mag_rsi(rsi, 55.0 if cross_gap > 0 else 45.0) if rsi_bias_fired else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 26.25, 18.75, 15.0, 10.0), _m)
     sort_key = -abs(cross_gap) if cross_gap is not None else 0.0
     # Direction follows the cross state.
     if cross_gap > 0:
@@ -1550,6 +2301,8 @@ def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, 
         rec_dir, cross_label = "put", "Death Cross"
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("trend_bias", c_pct, rec_dir),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1603,6 +2356,42 @@ def _score_vol_expansion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[st
     today_return = ((closes[-1] - closes[-2]) / closes[-2]) if len(closes) >= 2 and closes[-2] else None
     vol_ratio = (rv5 / rv30) if (rv5 is not None and rv30 is not None and rv30 > 0) else None
 
+    # Signal 4: ATR expansion — 5d avg ATR vs 20d avg ATR
+    highs = _highs(bars)
+    lows = _lows(bars)
+    atr_5d: float | None = None
+    atr_20d: float | None = None
+    if len(highs) >= 21 and len(lows) >= 21 and len(closes) >= 21:
+        tr_series = [
+            max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            for i in range(-20, 0)
+        ]
+        atr_5d = _mean(tr_series[-5:])
+        atr_20d = _mean(tr_series)
+    atr_expansion_fired = (
+        atr_5d is not None and atr_20d is not None
+        and atr_20d > 0 and atr_5d / atr_20d > 1.2
+    )
+    atr_ratio = (atr_5d / atr_20d) if (atr_5d and atr_20d and atr_20d > 0) else None
+
+    # Signal 5: Bollinger Band width (20d, 2σ)
+    bb_width: float | None = None
+    bb_recent_avg: float | None = None
+    if len(closes) >= 40:
+        _bb_mid_now = _mean(closes[-20:])
+        _bb_sd_now = _stddev(closes[-20:], _bb_mid_now)
+        if _bb_mid_now > 0:
+            bb_width = (4.0 * _bb_sd_now) / _bb_mid_now  # (upper-lower)/mid
+        # Use 20-bar rolling average of BB width from bars -40..-20 as baseline
+        _bb_mid_prev = _mean(closes[-40:-20])
+        _bb_sd_prev = _stddev(closes[-40:-20], _bb_mid_prev)
+        if _bb_mid_prev > 0:
+            bb_recent_avg = (4.0 * _bb_sd_prev) / _bb_mid_prev
+    bb_width_fired = (
+        bb_width is not None and bb_recent_avg is not None
+        and bb_recent_avg > 0 and bb_width > bb_recent_avg
+    )
+
     signals = [
         _signal(
             "vol expansion",
@@ -1623,8 +2412,28 @@ def _score_vol_expansion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[st
             today_return is not None and abs(today_return) > 0.02,
             f"Today's return vs prior close. Fires when |move| > 2% (the trigger that's driving the vol regime change).",
         ),
+        _signal(
+            "ATR expansion",
+            f"{_fmt_num(atr_ratio, 2)}×" if atr_ratio is not None else "—",
+            atr_expansion_fired,
+            "5d avg true range vs 20d avg true range. Fires when ratio > 1.2 — price bars are expanding, vol regime is shifting.",
+        ),
+        _signal(
+            "BB width",
+            _fmt_pct(bb_width),
+            bb_width_fired,
+            "20d Bollinger Band width ((upper-lower)/mid). Fires when current width exceeds the prior 20d average — bands are expanding.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        _mag_volume(vol_ratio, 1.5) if (vol_ratio is not None and vol_ratio > 1.5) else 1.0,
+        min(1.5, 1.0 + ((rv5 or 0) - 0.40) / 0.40 * 0.5) if (rv5 is not None and rv5 > 0.40) else 1.0,
+        min(1.5, 1.0 + (abs(today_return or 0) - 0.02) / 0.02 * 0.5) if (today_return is not None and abs(today_return) > 0.02) else 1.0,
+        min(1.5, 1.0 + (atr_ratio - 1.2) / 0.3) if (atr_ratio and atr_expansion_fired) else 1.0,
+        min(1.5, 1.0 + (bb_width - bb_recent_avg) / (bb_recent_avg or 0.01)) if (bb_width and bb_recent_avg and bb_width_fired) else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (33.75, 22.5, 18.75, 15.0, 10.0), _m)
     sort_key = -rv5 if rv5 is not None else 0.0
     # Direction follows today's trigger move — wherever the regime is breaking.
     if today_return is not None and today_return >= 0:
@@ -1633,6 +2442,8 @@ def _score_vol_expansion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[st
         rec_dir, rec_why = "put", "Vol regime expanding to the downside — follow with puts."
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("vol_expansion", c_pct, rec_dir),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -1676,10 +2487,14 @@ def _score_unusual_options_activity(
     if ticker is None or client is None or last_price is None:
         return {
             "conviction": 0,
+            "conviction_pct": 0.0,
+            "expiry_tiers": [],
             "signals": [
                 _signal("max vol/OI", "—", False, "No chain context available."),
                 _signal("max contract vol", "—", False, "No chain context available."),
                 _signal("OTM concentration", "—", False, "No chain context available."),
+                _signal("vol/OI ratio", "—", False, "No chain context available."),
+                _signal("IV rank", "—", False, "No chain context available."),
             ],
             "sort_key": 0.0,
             "last_price": last_price,
@@ -1711,10 +2526,14 @@ def _score_unusual_options_activity(
         logger.warning("UOA chain fetch failed for %s: %s", ticker, exc)
         return {
             "conviction": 0,
+            "conviction_pct": 0.0,
+            "expiry_tiers": [],
             "signals": [
                 _signal("max vol/OI", "—", False, f"Chain fetch failed: {exc}"),
                 _signal("max contract vol", "—", False, ""),
                 _signal("OTM concentration", "—", False, ""),
+                _signal("vol/OI ratio", "—", False, ""),
+                _signal("IV rank", "—", False, ""),
             ],
             "sort_key": 0.0,
             "last_price": last_price,
@@ -1730,10 +2549,14 @@ def _score_unusual_options_activity(
     if not rows:
         return {
             "conviction": 0,
+            "conviction_pct": 0.0,
+            "expiry_tiers": [],
             "signals": [
                 _signal("max vol/OI", "—", False, "No contracts in window."),
                 _signal("max contract vol", "—", False, ""),
                 _signal("OTM concentration", "—", False, ""),
+                _signal("vol/OI ratio", "—", False, ""),
+                _signal("IV rank", "—", False, ""),
             ],
             "sort_key": 0.0,
             "last_price": last_price,
@@ -1777,6 +2600,27 @@ def _score_unusual_options_activity(
 
     otm_pct = (otm_vol / total_vol) if total_vol > 0 else None
 
+    # Signal 4: vol/OI ratio across all contracts (>0.3 = unusual relative activity)
+    total_oi = sum(r.get("open_interest") or 0 for r in rows)
+    agg_vol_oi_ratio = (total_vol / total_oi) if total_oi > 0 else None
+    vol_oi_ratio_fired = agg_vol_oi_ratio is not None and agg_vol_oi_ratio > 0.3
+
+    # Signal 5: IV rank proxy — current avg IV vs trailing estimate from chain
+    # Use the avg mid-IV from contracts that have it; if unavailable, never fires.
+    iv_samples: list[float] = []
+    for r in rows:
+        greeks = r.get("greeks") or {}
+        implied_vol = greeks.get("iv") or r.get("implied_volatility")
+        if implied_vol and isinstance(implied_vol, (int, float)) and implied_vol > 0:
+            iv_samples.append(float(implied_vol))
+    current_iv: float | None = (_mean(iv_samples) if iv_samples else None)
+    iv_rank_fired = False  # placeholder that never fires when chain IV is unavailable
+    iv_rank_text = "—"
+    if current_iv is not None:
+        # Basic signal: fire when IV > 50% annualized (unusually high)
+        iv_rank_fired = current_iv > 0.50
+        iv_rank_text = f"{current_iv * 100:.0f}%"
+
     signals = [
         _signal(
             "max vol/OI",
@@ -1799,8 +2643,28 @@ def _score_unusual_options_activity(
             f"Share of today's volume in out-of-the-money strikes. Fires when > 60% — speculative directional bets, "
             f"not boring at-the-money rolls. Current: {_fmt_pct(otm_pct)} of {total_vol:,} contracts.",
         ),
+        _signal(
+            "vol/OI ratio",
+            f"{_fmt_num(agg_vol_oi_ratio, 2)}×" if agg_vol_oi_ratio is not None else "—",
+            vol_oi_ratio_fired,
+            "Total volume / total open interest across the chain. Fires when > 0.3 — unusual activity relative to float.",
+        ),
+        _signal(
+            "IV rank",
+            iv_rank_text,
+            iv_rank_fired,
+            "Current average implied volatility from chain data. Fires when IV > 50% annualized — options are rich, confirming unusual activity.",
+        ),
     ]
     conviction = sum(1 for s in signals if s["fired"])
+    _m = [
+        min(1.5, 1.0 + (max_vol_oi - 2.0) / 4.0) if max_vol_oi > 2.0 else 1.0,
+        1.2 if max_contract_vol > 500 else 1.0,
+        1.2 if (otm_pct is not None and otm_pct > 0.6) else 1.0,
+        min(1.5, 1.0 + (agg_vol_oi_ratio - 0.3) / 0.3) if vol_oi_ratio_fired else 1.0,
+        min(1.5, 1.0 + (current_iv - 0.50) / 0.25) if (current_iv and iv_rank_fired) else 1.0,
+    ]
+    c_pct = _conviction_pct(signals, (30.0, 22.5, 22.5, 15.0, 10.0), _m)
     sort_key = -max_vol_oi
     # Recommendation: follow the OTM volume skew. More OTM call volume = smart
     # money is betting up. More OTM put volume = betting down.
@@ -1812,6 +2676,8 @@ def _score_unusual_options_activity(
         rec_dir, rec_why = "call", f"OTM call/put volume mixed ({otm_call_vol:,} calls vs {otm_put_vol:,} puts). Default to calls; check the chain to confirm direction."
     return {
         "conviction": conviction,
+        "conviction_pct": c_pct,
+        "expiry_tiers": _expiry_tiers("unusual_options_activity", c_pct, rec_dir),
         "signals": signals,
         "sort_key": sort_key,
         "last_price": last_price,
@@ -2063,16 +2929,6 @@ def _pattern_key(name: str) -> str:
     return "pattern_" + name.lower().replace(" ", "_").replace("&", "and").replace("-", "_")
 
 
-for _pname, _det_fn in PATTERN_DETECTORS.items():
-    _is_bullish = _pname in BULLISH_PATTERNS
-    _STRATEGY_REGISTRY[_pattern_key(_pname)] = {
-        "label": _pname,
-        "subtitle": "bullish chart pattern" if _is_bullish else "bearish chart pattern",
-        "description": _PATTERN_DESCRIPTIONS.get(_pname, f"{_pname} chart pattern."),
-        "scorer": _make_pattern_scorer(_pname, _det_fn, _is_bullish),
-    }
-
-
 _VALID_STRATEGIES = set(_STRATEGY_REGISTRY.keys())
 
 
@@ -2109,8 +2965,6 @@ _STRATEGY_ORDER = [
     "trend_bias",
     "vol_expansion",
     "unusual_options_activity",
-    # Chart-pattern strategies (alphabetical within group)
-    *sorted(_pattern_key(n) for n in PATTERN_DETECTORS),
 ]
 
 
@@ -2294,6 +3148,16 @@ async def get_options_chain(
         expiries = sorted({(r.get("details") or {}).get("expiration_date") for r in rows if r.get("details")})
         expiries = [e for e in expiries if e]
 
+        # Filter out 0DTE and near-expiry contracts: require at least 7 calendar
+        # days from today so the chain viewer never shows same-day or next-day
+        # expiries that have near-zero time value and brutal bid-ask spreads.
+        from datetime import timedelta as _timedelta
+        _min_exp = (today + _timedelta(days=7)).strftime("%Y-%m-%d")
+        filtered_expiries = [e for e in expiries if e >= _min_exp]
+        # Fall back to raw list if the filter empties it (e.g. far-OTM scan).
+        if filtered_expiries:
+            expiries = filtered_expiries
+
         # Resolve the expiration to render: explicit request → nearest available.
         selected = expiration if expiration in expiries else (expiries[0] if expiries else None)
         filtered = (
@@ -2326,6 +3190,643 @@ async def get_options_chain(
     return payload
 
 
+# ─── /sleeves/options/reason ────────────────────────────────────────────────
+# On-demand DeepSeek V3 thesis for a single screener candidate.  Cached per
+# (ticker, date, signal-fingerprint) so the same card can be clicked multiple
+# times without repeating the LLM call.
+
+_reason_cache: dict[str, tuple[float, dict[str, str]]] = {}
+_REASON_CACHE_TTL_SECONDS = 86_400  # 1 day — stale after market close anyway
+
+
+class _ReasonRequest(BaseModel):
+    ticker: str
+    conviction_pct: float
+    signals: list[dict[str, Any]]
+    recommendation: dict[str, Any]
+    strategy: str | None = None
+
+
+@router.post("/options/reason")
+async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
+    """Generate a DeepSeek V3 thesis for a screener candidate with multi-expiry chain analysis.
+
+    Fetches the option chain at 14d, 35d, and 63d target expirations, extracts ATM call
+    premium, IV, and bid-ask spread for each, then asks the LLM to recommend the best
+    expiry based on the thesis timeline and pricing quality.
+
+    Response: {"thesis": "...", "recommended_expiry": "35d expiry — reason"}
+
+    Costs ~$0.002 per call (one chain fetch + LLM). Cached per
+    (ticker, strategy, today) for the full trading day so repeat clicks are free.
+    """
+    import hashlib
+
+    today_str = datetime.date.today().isoformat()
+    strategy_key = req.strategy or "unknown"
+    cache_key = f"{req.ticker}:{strategy_key}:{today_str}"
+
+    now = time.monotonic()
+    cached = _reason_cache.get(cache_key)
+    if cached and (now - cached[0]) < _REASON_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    fired = [s for s in req.signals if s.get("fired")]
+    signal_lines = "\n".join(
+        f"  - {s['label']}: {s.get('value_text', '')} — {s.get('tooltip', '')}"
+        for s in fired
+    ) or "  (no signals fired)"
+    direction = req.recommendation.get("direction", "call").upper()
+    reasoning = req.recommendation.get("reasoning", "")
+
+    # ── Multi-expiry chain analysis ──────────────────────────────────────────
+    # Fetch ATM call data at 14d, 35d, and 63d target expirations from the chain.
+    # Each target is a calendar-day offset from today; we find the nearest available
+    # expiry in the chain for each bucket. Failures are skipped gracefully.
+
+    def _fetch_expiry_pricing(
+        symbol: str, target_dte: int
+    ) -> dict[str, Any] | None:
+        """Return ATM call premium, IV, and spread for the nearest available expiry
+        to ``target_dte`` days from today. Returns None on any failure."""
+        try:
+            client = MassiveClient()
+            today = datetime.date.today()
+            target_date = today + datetime.timedelta(days=target_dte)
+            # Fetch chain in a ±7d window around the target date.
+            window_start = (target_date - datetime.timedelta(days=7)).isoformat()
+            window_end = (target_date + datetime.timedelta(days=7)).isoformat()
+            # Use 3% ATM window to find the nearest-the-money call.
+            spot_closes = _fetch_closes(
+                client, symbol,
+                (today - datetime.timedelta(days=10)).isoformat(),
+                today.isoformat(),
+            )
+            if not spot_closes:
+                return None
+            spot = spot_closes[-1]
+            low = spot * 0.97
+            high = spot * 1.03
+            raw = client.get_options_chain(
+                symbol,
+                expiration_date_gte=window_start,
+                expiration_date_lte=window_end,
+                strike_price_gte=low,
+                strike_price_lte=high,
+                limit=50,
+            )
+            rows = raw.get("results") or []
+            # Filter to calls only.
+            call_rows = [
+                r for r in rows
+                if (r.get("details") or {}).get("contract_type") == "call"
+            ]
+            if not call_rows:
+                return None
+            # Pick the contract closest to spot.
+            def _dist(r: dict) -> float:
+                s = (r.get("details") or {}).get("strike_price") or 999999
+                return abs(s - spot)
+            best = min(call_rows, key=_dist)
+            details = best.get("details") or {}
+            day = best.get("day") or {}
+            greeks = best.get("greeks") or {}
+            bid = day.get("bid") or day.get("last") or 0.0
+            ask = day.get("ask") or day.get("last") or 0.0
+            last = day.get("last") or day.get("close") or 0.0
+            premium = (bid + ask) / 2.0 if (bid and ask) else last
+            spread = abs(ask - bid) if (bid and ask) else None
+            iv = greeks.get("iv") or best.get("implied_volatility")
+            expiry_date = details.get("expiration_date", "")
+            actual_dte = (
+                (datetime.date.fromisoformat(expiry_date) - today).days
+                if expiry_date else target_dte
+            )
+            return {
+                "target_dte": target_dte,
+                "actual_dte": actual_dte,
+                "expiry": expiry_date,
+                "premium": round(premium, 2) if premium else None,
+                "iv": round(iv * 100, 1) if (iv and isinstance(iv, (int, float))) else None,
+                "spread": round(spread, 2) if spread else None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Chain fetch failed for %s %dd: %s", symbol, target_dte, exc)
+            return None
+
+    symbol = req.ticker.strip().upper()
+    target_dtes = [14, 35, 63]
+    expiry_data: list[dict[str, Any]] = []
+    for dte in target_dtes:
+        result = await asyncio.to_thread(_fetch_expiry_pricing, symbol, dte)
+        if result:
+            expiry_data.append(result)
+
+    # Build pricing summary string for the LLM prompt.
+    pricing_lines: list[str] = []
+    for ed in expiry_data:
+        premium_str = f"~${ed['premium']:.2f}" if ed["premium"] is not None else "N/A"
+        iv_str = f"{ed['iv']}%" if ed["iv"] is not None else "N/A"
+        spread_str = f"${ed['spread']:.2f}" if ed["spread"] is not None else "N/A"
+        label = f"{ed['target_dte']}d expiry ({ed.get('expiry', '')})"
+        pricing_lines.append(f"{label}: ATM call {premium_str} (IV: {iv_str}, spread: {spread_str})")
+    pricing_summary = "\n".join(pricing_lines) if pricing_lines else "(chain data unavailable)"
+
+    # ── LLM call ────────────────────────────────────────────────────────────
+    system_msg = (
+        "You are a derivatives trader at a fundamental quant fund. "
+        "You write concise trade rationales — no fluff, no disclaimers. "
+        "Two sentences max for the thesis. Cite specific signal values. Mention the direction and why now."
+    )
+    user_msg = (
+        f"Ticker: {req.ticker}\n"
+        f"Conviction: {req.conviction_pct:.0f}%\n"
+        f"Direction: {direction}\n"
+        f"Fired signals:\n{signal_lines}\n"
+        f"Strategy rationale: {reasoning}\n\n"
+        f"Option pricing across expiries:\n{pricing_summary}\n\n"
+        "Write a 2-sentence trade thesis. Be specific and direct.\n\n"
+        "Then, based on the option pricing above and the thesis timeline, recommend the BEST expiry "
+        "and structure. Consider: premium cost vs. time for thesis to play out, IV levels, and "
+        "bid-ask spread quality. Output your recommendation as exactly:\n"
+        "RECOMMENDED: [Xd expiry] — [one sentence why]"
+    )
+
+    def _call() -> tuple[str, str]:
+        """Returns (thesis, recommended_expiry) strings."""
+        import os as _os
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        fallback_rec = f"{target_dtes[1]}d expiry — default recommendation; chain data unavailable."
+        try:
+            llm = ChatOpenAI(
+                model="deepseek-chat",
+                openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+                openai_api_base="https://api.deepseek.com/v1",
+                temperature=0.3,
+                max_tokens=220,
+            )
+            response = llm.invoke([SystemMessage(content=system_msg), HumanMessage(content=user_msg)])
+            raw_text = str(response.content).strip()
+
+            # Parse the RECOMMENDED: line out of the response.
+            rec_match = re.search(r"RECOMMENDED:\s*(.+?)(?:\n|$)", raw_text, re.IGNORECASE)
+            if rec_match:
+                recommended = rec_match.group(1).strip()
+                # Thesis is everything before the RECOMMENDED line.
+                thesis_text = raw_text[: rec_match.start()].strip()
+                if not thesis_text:
+                    thesis_text = raw_text
+            else:
+                thesis_text = raw_text
+                recommended = fallback_rec
+
+            return thesis_text, recommended
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Options reason LLM call failed: %s", exc)
+            fallback_thesis = (
+                f"Signal constellation ({req.conviction_pct:.0f}% conviction) favours a "
+                f"{direction.lower()} position. Review the chain for optimal strike and expiry."
+            )
+            return fallback_thesis, fallback_rec
+
+    thesis, recommended_expiry = await asyncio.to_thread(_call)
+    result_payload: dict[str, str] = {
+        "thesis": thesis,
+        "recommended_expiry": recommended_expiry,
+    }
+    _reason_cache[cache_key] = (now, result_payload)
+    return result_payload
+
+
+# ─── /sleeves/quotes ─────────────────────────────────────────────────────────
+# Lightweight batch price endpoint for the left-nav sidebar.  Returns the
+# last close, 1-day change %, and a 20-bar sparkline for each ticker without
+# pulling full news/fundamentals (which is what /ticker/{ticker} fetches).
+
+_quote_cache: dict[str, tuple[float, dict]] = {}
+_QUOTE_CACHE_TTL = 60.0  # seconds
+
+# Company names are static, so cache them for the life of the process. Sentinel
+# "" means "looked up, none found" so we don't retry a miss every refresh.
+_name_cache: dict[str, str] = {}
+
+
+async def _warm_company_names(symbols: list[str]) -> None:
+    """Best-effort, time-boxed company-name warm — fills ``_name_cache``.
+
+    Names are a sidebar nicety, NOT essential like the price. This is kept
+    completely OFF the price hot-path: it runs separately, bounded to a few
+    concurrent Finnhub calls, and capped by an overall timeout so it can never
+    hang the /quotes request. Whatever resolves within the budget is cached
+    (permanently — names are static); the rest fill in on a later refresh.
+
+    Uses Finnhub (fast, independent of the price provider). We deliberately do
+    NOT use Polygon's reference endpoint here: it's slow, occasionally 500s, and
+    a fan-out across the whole sidebar would stall everything.
+    """
+    missing = [s for s in symbols if s not in _name_cache]
+    if not missing:
+        return
+    from src.tools.finnhub import get_finnhub_client
+
+    client = get_finnhub_client()
+    if client is None:
+        return  # no key → leave names blank, retry-free
+
+    sem = asyncio.Semaphore(4)
+
+    async def one(sym: str) -> None:
+        async with sem:
+            try:
+                prof = await asyncio.to_thread(client.company_profile, sym)
+                _name_cache[sym] = (prof.get("name") or "").strip()
+            except Exception:  # noqa: BLE001 — best-effort; uncached names retry later
+                pass
+
+    try:
+        await asyncio.wait_for(asyncio.gather(*[one(s) for s in missing]), timeout=6.0)
+    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        pass  # partial names are fine; the price response is unaffected
+
+
+@router.get("/quotes")
+async def get_quotes(tickers: str = "") -> dict[str, Any]:
+    """Batch last-close prices for sidebar display.
+
+    Query: ?tickers=AAPL,MSFT,NVDA (comma-separated, max 150)
+    Returns per-ticker: { last, prev_close, pct_change, spark: [closes] }
+
+    The cap is high enough to cover every sidebar ticker at once (all sleeves +
+    watchlists + the 10 sector ETFs); fetches run concurrently and quotes are
+    cached 60s, so a full sidebar refresh is cheap. The previous 50-cap silently
+    dropped the trailing tickers (the sector ETFs), leaving them blank.
+    """
+    symbols = [t.strip().upper() for t in tickers.split(",") if t.strip()][:150]
+    if not symbols:
+        return {"quotes": {}}
+
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=35)).isoformat()  # enough for 20 trading days
+
+    # Warm company names first (best-effort, time-boxed, off the price path).
+    await _warm_company_names(symbols)
+
+    # Bound concurrency so a full sidebar fetch can't exhaust the thread pool
+    # (and starve other endpoints). Cached tickers skip the semaphore entirely.
+    sem = asyncio.Semaphore(12)
+
+    async def fetch_one(symbol: str) -> tuple[str, dict]:
+        now = time.monotonic()
+        cached = _quote_cache.get(symbol)
+        if cached and (now - cached[0]) < _QUOTE_CACHE_TTL:
+            # Patch in a name that may have warmed since this was cached.
+            if not cached[1].get("name") and _name_cache.get(symbol):
+                cached[1]["name"] = _name_cache[symbol]
+            return symbol, cached[1]
+
+        # Price only — reliable. Name is read from cache (never fetched here).
+        # Short client timeout so a degraded provider fails fast instead of
+        # holding a thread for the default 30s per attempt.
+        def _compute() -> dict:
+            client = MassiveClient(timeout=6)
+            closes = _fetch_closes(client, symbol, start, today.isoformat())
+            name = _name_cache.get(symbol, "")
+            if not closes:
+                return {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": name}
+            spark = closes[-20:]
+            last = spark[-1]
+            prev = spark[-2] if len(spark) >= 2 else None
+            pct = round((last - prev) / prev * 100, 2) if prev else None
+            return {"last": round(last, 2), "prev_close": round(prev, 2) if prev else None, "pct_change": pct, "spark": [round(c, 2) for c in spark], "name": name}
+
+        async with sem:
+            try:
+                result = await asyncio.to_thread(_compute)
+            except Exception:
+                result = {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(symbol, "")}
+
+        _quote_cache[symbol] = (time.monotonic(), result)
+        return symbol, result
+
+    # Time-box the whole batch: return within the budget with whatever resolved
+    # so the sidebar loads fast even when the data provider is slow/down. Any
+    # ticker that didn't finish shows a null price ("—") and fills in on the
+    # next 60s refresh once the provider recovers.
+    tasks = [asyncio.create_task(fetch_one(s)) for s in symbols]
+    done, pending = await asyncio.wait(tasks, timeout=12.0)
+    for t in pending:
+        t.cancel()
+
+    quotes: dict[str, dict] = {}
+    for t in done:
+        try:
+            sym, res = t.result()
+            quotes[sym] = res
+        except Exception:  # noqa: BLE001
+            pass
+    # Fill any ticker that timed out / errored with a null placeholder.
+    for s in symbols:
+        quotes.setdefault(
+            s,
+            {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(s, "")},
+        )
+    return {"quotes": quotes}
+
+
+# ─── /sleeves/chat/stream ────────────────────────────────────────────────────
+# Context-aware AI chat over DeepSeek V3 streamed as SSE.
+# The frontend passes a context snapshot (current ticker, section, recent
+# screener/scan results) alongside the full message thread.  The backend
+# injects these as a system-message prefix and streams tokens back.
+
+_CHAT_SYSTEM = """\
+You are a financial research assistant for an AI-powered alpha-generation engine.
+You have direct access to the user's portfolio data, live scan results, options
+screener output, and pattern analysis.  Answer concisely and cite specific data
+points (tickers, conviction %, signals) when they are available.
+
+Rules:
+- Be direct and specific. Avoid vague hedge words.
+- If data shows conflicting signals, acknowledge the tension.
+- You are not a licensed advisor — do not give personalised investment advice.
+  Describe what the data shows, not what the user should do.
+- Keep answers under 4 short paragraphs unless the user asks for more.
+"""
+
+
+class _ChatMessage(BaseModel):
+    role: str  # 'user' | 'assistant'
+    content: str
+
+
+class _ChatContext(BaseModel):
+    section: str = "market"
+    selectedTicker: str | None = None
+    screenerSnapshot: dict[str, Any] | None = None
+    patternSnapshot: dict[str, Any] | None = None
+    scanSnapshot: dict[str, Any] | None = None
+
+
+class _ChatRequest(BaseModel):
+    messages: list[_ChatMessage]
+    context: _ChatContext = _ChatContext()
+
+
+def _build_chat_context_text(ctx: _ChatContext) -> str:
+    """Format the frontend context snapshot into plain text for the LLM."""
+    parts: list[str] = []
+    parts.append(f"Current page: {ctx.section}")
+    if ctx.selectedTicker:
+        parts.append(f"Active ticker: {ctx.selectedTicker}")
+
+    if ctx.screenerSnapshot:
+        cands = ctx.screenerSnapshot.get("candidates") or []
+        if cands:
+            top = cands[:8]
+            lines = [f"  - {c.get('ticker')} {c.get('conviction_pct', '?'):.0f}% conviction, {c.get('recommendation', {}).get('direction', '?')}"
+                     for c in top if isinstance(c, dict)]
+            strategy = ctx.screenerSnapshot.get("strategy", "")
+            parts.append(f"Options screener ({strategy}, {len(cands)} candidates — top 8):\n" + "\n".join(lines))
+
+    if ctx.patternSnapshot:
+        results = ctx.patternSnapshot.get("results") or []
+        if results:
+            top = results[:8]
+            lines = [f"  - {r.get('ticker')} {r.get('pattern')} {r.get('confidence', 0)*100:.0f}%" for r in top if isinstance(r, dict)]
+            parts.append(f"Pattern scan (top 8):\n" + "\n".join(lines))
+
+    if ctx.scanSnapshot:
+        rows = ctx.scanSnapshot.get("rows") or []
+        bull = sum(1 for r in rows if isinstance(r, dict) and r.get("consensus") == "bullish")
+        bear = sum(1 for r in rows if isinstance(r, dict) and r.get("consensus") == "bearish")
+        if rows:
+            parts.append(f"Morning scan: {len(rows)} tickers — {bull} bullish, {bear} bearish")
+            if ctx.selectedTicker:
+                row = next((r for r in rows if isinstance(r, dict) and r.get("ticker") == ctx.selectedTicker), None)
+                if row:
+                    parts.append(
+                        f"{ctx.selectedTicker} scan: consensus={row.get('consensus')} "
+                        f"score={row.get('weighted_score')} conf={row.get('avg_confidence')}"
+                    )
+
+    return "\n".join(parts) if parts else ""
+
+
+# Words that signal the user is asking about a catalyst / recent move, which is
+# when fetching live news is worth the latency. Mechanical/valuation questions
+# don't trip these, so we skip the news fetch for them.
+_NEWS_TRIGGER_WORDS = {
+    "news", "happening", "happened", "why", "moved", "moving", "move", "drop",
+    "dropped", "fell", "fall", "falling", "rally", "rallied", "surge", "surged",
+    "spike", "spiked", "jumped", "jump", "tanked", "crash", "crashed", "catalyst",
+    "headline", "headlines", "today", "recent", "recently", "latest", "announce",
+    "announced", "announcement", "report", "reported", "earnings", "guidance",
+    "upgrade", "downgrade", "lawsuit", "sec", "fda", "deal", "acquisition",
+}
+
+
+def _question_wants_news(text: str) -> bool:
+    """True when the question reads like a catalyst/news ask."""
+    words = {w.strip(".,!?'\"():;").lower() for w in text.split()}
+    return bool(words & _NEWS_TRIGGER_WORDS)
+
+
+def _chat_saved_analysis_block(ticker: str) -> str:
+    """Per-agent analysis for ``ticker`` from the most recent saved scan."""
+    scan = _latest_scan_summary()
+    if not scan:
+        return ""
+    row = next(
+        (r for r in (scan.get("rows") or []) if isinstance(r, dict) and r.get("ticker") == ticker),
+        None,
+    )
+    if not row:
+        return ""
+    lines = [f"Saved scan analysis for {ticker} (scan {scan.get('date')}):"]
+    lines.append(
+        f"  consensus={row.get('consensus')} weighted_score={row.get('weighted_score')} "
+        f"avg_confidence={row.get('avg_confidence')}"
+    )
+    if row.get("variant_perception"):
+        lines.append(f"  variant perception: {row.get('variant_perception')}")
+    for a in (row.get("per_agent") or [])[:6]:
+        if isinstance(a, dict):
+            lines.append(f"  - {a.get('agent')}: {a.get('signal')} ({a.get('confidence')}%)")
+    return "\n".join(lines)
+
+
+def _chat_fundamentals_block(ticker: str) -> str:
+    """Compact Finnhub fundamentals (growth, beat/miss, consensus, insider)."""
+    from src.tools.finnhub import get_finnhub_client
+    from src.tools.finnhub.converters import fundamentals_summary
+
+    client = get_finnhub_client()
+    if client is None:
+        return ""
+    try:
+        s = fundamentals_summary(client, ticker)
+    except Exception:  # noqa: BLE001 — context is best-effort
+        return ""
+    lines: list[str] = []
+    m = s.get("metrics") or {}
+    bits = []
+    for key, lbl in [
+        ("revenue_growth_ttm", "rev growth TTM"),
+        ("eps_growth_ttm", "EPS growth TTM"),
+        ("net_margin_ttm", "net margin"),
+        ("roe_ttm", "ROE"),
+        ("pe_ttm", "P/E"),
+    ]:
+        if key in m:
+            bits.append(f"{lbl} {m[key]:.1f}")
+    if bits:
+        lines.append("  " + ", ".join(bits))
+    earn = s.get("earnings") or []
+    if earn:
+        beats = sum(1 for e in earn if e.get("beat"))
+        first = earn[0]
+        lines.append(
+            f"  earnings beat/miss: {beats}/{len(earn)} recent quarters beat; "
+            f"last {first.get('period')} actual {first.get('actual')} vs est {first.get('estimate')}"
+        )
+    rec = s.get("recommendation")
+    if rec:
+        lines.append(
+            f"  analyst consensus: {rec.get('strong_buy', 0) + rec.get('buy', 0)} buy / "
+            f"{rec.get('hold', 0)} hold / {rec.get('sell', 0) + rec.get('strong_sell', 0)} sell"
+        )
+    flow = s.get("insider_flow")
+    if flow and flow.get("n"):
+        lines.append(
+            f"  insider flow: net {flow.get('net_shares')} sh "
+            f"({flow.get('buys')} buys / {flow.get('sells')} sells)"
+        )
+    if not lines:
+        return ""
+    return f"Fundamentals for {ticker} (Finnhub):\n" + "\n".join(lines)
+
+
+def _chat_news_block(ticker: str) -> str:
+    """Recent headlines for ``ticker`` — Finnhub primary, Polygon fallback."""
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=7)
+    items: list[tuple[str, str]] = []
+
+    from src.tools.finnhub import get_finnhub_client
+
+    client = get_finnhub_client()
+    if client is not None:
+        try:
+            raw = client.company_news(
+                ticker, start_date=start.isoformat(), end_date=end.isoformat()
+            )
+            items = [(r.get("headline"), r.get("source", "")) for r in raw[:6] if r.get("headline")]
+        except Exception:  # noqa: BLE001
+            items = []
+    if not items:
+        try:
+            from src.tools.api import get_company_news
+
+            raw_p = get_company_news(
+                ticker, end_date=end.isoformat(), start_date=start.isoformat(), limit=6
+            )
+            items = [(n.title, n.source) for n in raw_p[:6]]
+        except Exception:  # noqa: BLE001
+            items = []
+    if not items:
+        return ""
+    lines = [f"Recent news for {ticker} (last 7 days):"]
+    lines += [f"  - {title} ({src})" for title, src in items]
+    return "\n".join(lines)
+
+
+def _build_ticker_chat_blocks(ticker: str, want_news: bool) -> list[str]:
+    """Assemble the per-ticker context blocks for the chat system prompt.
+
+    Saved analysis + fundamentals are always included (cheap, grounding); live
+    news is fetched only when the question looks catalyst-related.
+    """
+    blocks = [
+        _chat_saved_analysis_block(ticker),
+        _chat_fundamentals_block(ticker),
+    ]
+    if want_news:
+        blocks.append(_chat_news_block(ticker))
+    return [b for b in blocks if b]
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: _ChatRequest) -> StreamingResponse:
+    """Stream a DeepSeek V3 chat response with frontend context.
+
+    SSE format:
+      data: {"token": "..."}\n\n   — partial content chunk
+      data: [DONE]\n\n             — stream complete
+      data: {"error": "..."}\n\n   — error occurred
+
+    Hard-caps: max 20 messages history, 50KB total context.
+    """
+    import os as _os
+
+    # Trim to last 20 turns to cap token cost.
+    messages = req.messages[-20:]
+    ctx_text = _build_chat_context_text(req.context)
+
+    system_content = _CHAT_SYSTEM
+    if ctx_text:
+        system_content += f"\n\n## Current context\n{ctx_text}"
+
+    # Ground answers about a specific stock in its saved agent analysis and
+    # fundamentals; pull live news only when the question is catalyst-related.
+    if req.context.selectedTicker:
+        ticker = req.context.selectedTicker.strip().upper()
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        want_news = _question_wants_news(last_user)
+        blocks = await asyncio.to_thread(_build_ticker_chat_blocks, ticker, want_news)
+        if blocks:
+            system_content += "\n\n## Stock detail\n" + "\n\n".join(blocks)
+
+    async def event_gen():
+        try:
+            from langchain_openai import ChatOpenAI
+            from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+
+            llm = ChatOpenAI(
+                model="deepseek-chat",
+                openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+                openai_api_base="https://api.deepseek.com/v1",
+                temperature=0.4,
+                max_tokens=600,
+                streaming=True,
+            )
+
+            lc_messages = [SystemMessage(content=system_content)]
+            for m in messages:
+                if m.role == "user":
+                    lc_messages.append(HumanMessage(content=m.content))
+                else:
+                    lc_messages.append(AIMessage(content=m.content))
+
+            async for chunk in llm.astream(lc_messages):
+                if chunk.content:
+                    yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+
+            yield "data: [DONE]\n\n"
+
+        except Exception as exc:
+            logger.warning("Chat stream error: %s", exc)
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── /sleeves/backtest/options-strategy (BSM-proxy SSE) ─────────────────────
 
 # Why a BSM proxy and not real historical chains: constructing valid Polygon
@@ -2343,7 +3844,6 @@ from src.backtesting.options_historical import (  # noqa: E402
     bsm_straddle_series,
     get_premium_series,
     pick_close,
-    scan_stop_loss,
 )
 from src.backtesting.options_proxy import (  # noqa: E402  (sits with the related code)
     RISK_FREE_RATE,
@@ -2387,7 +3887,24 @@ class OptionsBacktestRequest(BaseModel):
         ),
     )
     conviction_min: int = Field(
-        default=2, ge=0, le=3, description="Only open trades when conviction >= this."
+        default=2,
+        ge=0,
+        le=3,
+        description=(
+            "DEPRECATED — legacy integer conviction count (0-3). Used only as a "
+            "fallback when min_conviction_pct is not supplied. Prefer "
+            "min_conviction_pct."
+        ),
+    )
+    min_conviction_pct: float | None = Field(
+        default=40.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Only open trades when the candidate's conviction percentage "
+            "(0-100, magnitude-weighted) is >= this. The primary conviction "
+            "gate. None falls back to the legacy conviction_min count."
+        ),
     )
     direction: str = Field(
         default="straddle",
@@ -2397,7 +3914,34 @@ class OptionsBacktestRequest(BaseModel):
         ),
     )
     hold_days: int = Field(
-        default=5, ge=1, le=30, description="Trading days to hold before close-out."
+        default=30,
+        ge=1,
+        le=60,
+        description=(
+            "Max trading days to hold — the backstop exit when no other trigger "
+            "fires. Realistic options trades rarely run to a fixed short hold; "
+            "this is the outer bound, with profit-target / stop / DTE exits "
+            "closing most trades sooner."
+        ),
+    )
+    profit_target_pct: float | None = Field(
+        default=0.50,
+        ge=0.0,
+        description=(
+            "Take-profit on the option premium, as a positive fraction "
+            "(0.50 = close when premium is up 50%). None = no target. Checked "
+            "on each day's close/mark."
+        ),
+    )
+    dte_exit: int | None = Field(
+        default=21,
+        ge=0,
+        description=(
+            "Close when the contract reaches this many days-to-expiry, to step "
+            "out before the gamma/theta cliff. None = ignore DTE. In BSM proxy "
+            "mode the expiry is synthesized from the contract's target DTE, so "
+            "this is an approximation there."
+        ),
     )
     pricing: str = Field(
         default="real",
@@ -2410,15 +3954,28 @@ class OptionsBacktestRequest(BaseModel):
         ),
     )
     stop_loss_pct: float | None = Field(
-        default=None,
+        default=0.50,
         ge=0.0,
         le=0.99,
         description=(
             "Per-contract drawdown stop, expressed as a positive fraction "
             "(e.g. 0.50 = exit at -50% of entry premium). None = no stop, "
-            "always hold to ``hold_days``. The check runs on each trading "
-            "day's close (real fills) or walk-forward BSM premium (proxy "
-            "mode). Straddles stop on combined premium, not per leg."
+            "ride to another trigger or the hold_days backstop. Checked on "
+            "each trading day's close (real fills) or walk-forward BSM premium "
+            "(proxy mode). Straddles stop on combined premium, not per leg."
+        ),
+    )
+    slippage_pct: float | None = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.5,
+        description=(
+            "Round-trip bid/ask + execution cost, as a fraction of premium. "
+            "Modeled as a half-spread haircut per side: you buy at "
+            "entry x (1 + slippage/2) and sell at exit x (1 - slippage/2). "
+            "0.05 = a 5% spread, a realistic mid-cap default. None or 0 = "
+            "frictionless fills (optimistic — inflates win rate, especially "
+            "in BSM mode where the premium path is already smooth)."
         ),
     )
 
@@ -2438,10 +3995,13 @@ class TradeRecord(BaseModel):
     open_date: str
     close_date: str
     conviction: int
+    conviction_pct: float = 0.0
     strike: float
     sigma: float
     entry_spot: float
     exit_spot: float
+    # entry_premium / exit_premium are the *filled* prices — i.e. after the
+    # slippage haircut when slippage_pct is set, so pnl reflects real costs.
     entry_premium: float
     exit_premium: float
     pnl: float
@@ -2452,11 +4012,59 @@ class TradeRecord(BaseModel):
     synthetic: bool = True
     contract_ticker: str | None = None
     contract_expiry: str | None = None
-    # Stop-loss bookkeeping. ``stopped_out=True`` means the trade exited
-    # early because the drawdown breached ``stop_loss_pct``. ``exit_reason``
-    # is 'stop' or 'time'.
+    # Exit bookkeeping. ``stopped_out=True`` means the trade exited on the
+    # stop-loss specifically. ``exit_reason`` is one of:
+    #   'target' — profit target hit
+    #   'stop'   — stop-loss hit
+    #   'dte'    — closed at the days-to-expiry threshold
+    #   'expiry' — held to expiration (settled at intrinsic)
+    #   'time'   — hold_days backstop reached, nothing else fired
     stopped_out: bool = False
     exit_reason: str = "time"
+
+
+def _resolve_option_exit(
+    *,
+    series: list[tuple[datetime.date, float]],
+    entry_premium: float,
+    expiry: datetime.date | None,
+    profit_target_pct: float | None,
+    stop_loss_pct: float | None,
+    dte_exit: int | None,
+) -> tuple[float, datetime.date, str]:
+    """Walk a per-day premium series and return the first exit that triggers.
+
+    ``series`` is ordered ``[(date, premium), ...]`` with index 0 = entry day.
+    Each subsequent day is checked in priority order; the first hit wins:
+
+      1. stop-loss   (ret <= -stop_loss_pct)
+      2. profit target (ret >= profit_target_pct)
+      3. DTE exit     (days-to-expiry <= dte_exit)
+      4. expiry       (date at/after the contract expiration → settle there)
+
+    Stop is checked before target on purpose: with only one mark per day we
+    cannot know intraday ordering, so we assume the worse of the two. This
+    biases reported returns slightly downward — honest for risk sizing.
+
+    Falls back to the last point in the series with reason ``'time'`` (the
+    hold_days backstop) when nothing triggers.
+    """
+    if entry_premium <= 0 or len(series) < 2:
+        last_d, last_p = series[-1]
+        return last_p, last_d, "time"
+    for idx in range(1, len(series)):
+        dd, prem = series[idx]
+        ret = (prem - entry_premium) / entry_premium
+        if stop_loss_pct and ret <= -stop_loss_pct:
+            return prem, dd, "stop"
+        if profit_target_pct and ret >= profit_target_pct:
+            return prem, dd, "target"
+        if dte_exit is not None and expiry is not None and (expiry - dd).days <= dte_exit:
+            return prem, dd, "dte"
+        if expiry is not None and dd >= expiry:
+            return prem, dd, "expiry"
+    last_d, last_p = series[-1]
+    return last_p, last_d, "time"
 
 
 @router.post("/backtest/options-strategy")
@@ -2644,7 +4252,14 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                         continue
 
                     scored = scorer(bars_to_d, qqq_slice)
-                    if scored["conviction"] < req.conviction_min:
+                    # Primary gate is the conviction percentage (magnitude-
+                    # weighted). Fall back to the legacy integer count only when
+                    # min_conviction_pct is explicitly cleared.
+                    scored_conv_pct = float(scored.get("conviction_pct", 0.0))
+                    if req.min_conviction_pct is not None:
+                        if scored_conv_pct < req.min_conviction_pct:
+                            continue
+                    elif scored["conviction"] < req.conviction_min:
                         continue
 
                     closes_to_d = [b.close for b in bars_to_d]
@@ -2691,6 +4306,7 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                     actual_exit_date: datetime.date = exit_date
                     synthetic = True
                     stopped_out = False
+                    exit_reason = "time"
                     contract_ticker: str | None = None
                     contract_expiry: str | None = None
 
@@ -2757,29 +4373,30 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                                 )
                             entry_premium = entry_premium_opt
 
-                            # Stop-loss scan (real fills): if any day's close
-                            # in (entry, exit] breaches the threshold, exit there.
-                            stop_hit = (
-                                scan_stop_loss(
-                                    combined,
-                                    entry_premium=entry_premium,
-                                    entry_date=d,
-                                    exit_date=exit_date,
-                                    stop_loss_pct=req.stop_loss_pct,
-                                )
-                                if req.stop_loss_pct
+                            # Build the ordered per-day premium series over the
+                            # holding window, then resolve the exit against all
+                            # triggers (target / stop / DTE / expiry / backstop).
+                            real_series: list[tuple[datetime.date, float]] = []
+                            for dd in spot_dates:
+                                p = pick_close(combined, dd, max_back=2)
+                                if p is not None:
+                                    real_series.append((dd, p))
+                            if not real_series or real_series[0][0] != d:
+                                real_series.insert(0, (d, entry_premium))
+                            expiry_date = (
+                                datetime.date.fromisoformat(contract_expiry)
+                                if contract_expiry
                                 else None
                             )
-                            if stop_hit is not None:
-                                exit_premium, actual_exit_date = stop_hit
-                                stopped_out = True
-                            else:
-                                exit_premium_opt = pick_close(combined, exit_date, max_back=2)
-                                if exit_premium_opt is None:
-                                    raise NoAggregateData(
-                                        f"Missing exit bar for {contract_ticker} on {exit_date}"
-                                    )
-                                exit_premium = exit_premium_opt
+                            exit_premium, actual_exit_date, exit_reason = _resolve_option_exit(
+                                series=real_series,
+                                entry_premium=entry_premium,
+                                expiry=expiry_date,
+                                profit_target_pct=req.profit_target_pct,
+                                stop_loss_pct=req.stop_loss_pct,
+                                dte_exit=req.dte_exit,
+                            )
+                            stopped_out = exit_reason == "stop"
                             synthetic = False
                         except (NoSuchContract, NoAggregateData, MassiveError) as exc:
                             logger.info(
@@ -2811,21 +4428,31 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                             )
                         entry_premium = premium_series[0]
 
-                        if req.stop_loss_pct and entry_premium > 0:
-                            threshold = entry_premium * (1.0 - req.stop_loss_pct)
-                            stop_idx: int | None = None
-                            for i in range(1, len(premium_series)):
-                                if premium_series[i] <= threshold:
-                                    stop_idx = i
-                                    break
-                            if stop_idx is not None:
-                                exit_premium = premium_series[stop_idx]
-                                actual_exit_date = spot_dates[stop_idx]
-                                stopped_out = True
-                            else:
-                                exit_premium = premium_series[-1]
-                        else:
-                            exit_premium = premium_series[-1]
+                        # No real contract in proxy mode — synthesize the expiry
+                        # from the target DTE so the DTE/expiry exits resolve.
+                        # (This makes the DTE exit an approximation in BSM mode.)
+                        bsm_expiry = d + datetime.timedelta(days=target_expiry_days)
+                        # Surface the synthesized contract so the UI can show the
+                        # exact strike+expiry even for BSM-priced trades.
+                        contract_expiry = bsm_expiry.isoformat()
+                        bsm_series = list(zip(spot_dates, premium_series))
+                        exit_premium, actual_exit_date, exit_reason = _resolve_option_exit(
+                            series=bsm_series,
+                            entry_premium=entry_premium,
+                            expiry=bsm_expiry,
+                            profit_target_pct=req.profit_target_pct,
+                            stop_loss_pct=req.stop_loss_pct,
+                            dte_exit=req.dte_exit,
+                        )
+                        stopped_out = exit_reason == "stop"
+
+                    # Transaction-cost model: cross half the bid/ask spread on
+                    # each side. You buy higher and sell lower than the mark, so
+                    # marginal trades that look like wins on frictionless marks
+                    # become losers — this is what makes the win rate realistic.
+                    slip = req.slippage_pct or 0.0
+                    entry_premium = entry_premium * (1.0 + slip / 2.0)
+                    exit_premium = exit_premium * (1.0 - slip / 2.0)
 
                     pnl = exit_premium - entry_premium
                     return_pct = pnl / entry_premium if entry_premium > 0 else 0.0
@@ -2844,6 +4471,7 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                         open_date=d.isoformat(),
                         close_date=actual_exit_date.isoformat(),
                         conviction=scored["conviction"],
+                        conviction_pct=scored_conv_pct,
                         strike=float(strike),
                         sigma=sigma,
                         entry_spot=spot,
@@ -2856,7 +4484,7 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                         contract_ticker=contract_ticker,
                         contract_expiry=contract_expiry,
                         stopped_out=stopped_out,
-                        exit_reason="stop" if stopped_out else "time",
+                        exit_reason=exit_reason,
                     )
                     trades.append(record)
                     yield SleeveCompleteEvent(  # reuse event class for streaming trades
@@ -2874,17 +4502,31 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
             avg_return = sum(t.return_pct for t in trades) / n if n else 0.0
             win_rate = wins / n if n else 0.0
 
-            by_conviction: dict[int, list[TradeRecord]] = {}
+            # Bucket performance by conviction-percentage band rather than the
+            # legacy 0-3 count, matching the %-based gate.
+            def _conv_band(pct: float) -> str:
+                if pct >= 80:
+                    return "80-100%"
+                if pct >= 60:
+                    return "60-80%"
+                if pct >= 40:
+                    return "40-60%"
+                return "<40%"
+
+            by_conviction: dict[str, list[TradeRecord]] = {}
             for t in trades:
-                by_conviction.setdefault(t.conviction, []).append(t)
+                by_conviction.setdefault(_conv_band(t.conviction_pct), []).append(t)
+            # Emit bands in descending order so the UI table reads high→low.
+            _band_order = ["80-100%", "60-80%", "40-60%", "<40%"]
             conviction_summary = {
-                str(k): {
+                band: {
                     "n_trades": len(v),
                     "win_rate": sum(1 for x in v if x.pnl > 0) / len(v) if v else 0.0,
                     "avg_return_pct": sum(x.return_pct for x in v) / len(v) if v else 0.0,
                     "total_pnl": sum(x.pnl for x in v),
                 }
-                for k, v in by_conviction.items()
+                for band in _band_order
+                if (v := by_conviction.get(band))
             }
 
             n_synthetic = sum(1 for t in trades if t.synthetic)
@@ -2895,6 +4537,11 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                 if stopped_trades
                 else None
             )
+            # How did trades close? Counts keyed by exit_reason so the UI can
+            # show the mix (target / stop / dte / expiry / time backstop).
+            by_exit_reason: dict[str, int] = {}
+            for t in trades:
+                by_exit_reason[t.exit_reason] = by_exit_reason.get(t.exit_reason, 0) + 1
             yield CompleteEvent(data={
                 "n_trades": n,
                 "n_wins": wins,
@@ -2902,11 +4549,17 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                 "total_pnl_per_share": total_pnl,
                 "avg_return_pct": avg_return,
                 "by_conviction": conviction_summary,
+                "by_exit_reason": by_exit_reason,
                 "trades": [t.model_dump() for t in trades],
                 "pricing": req.pricing,
                 "n_synthetic": n_synthetic,
                 "n_stopped": n_stopped,
                 "stop_loss_pct": req.stop_loss_pct,
+                "profit_target_pct": req.profit_target_pct,
+                "dte_exit": req.dte_exit,
+                "hold_days": req.hold_days,
+                "slippage_pct": req.slippage_pct,
+                "min_conviction_pct": req.min_conviction_pct,
                 "avg_return_when_stopped": avg_loss_when_stopped,
             }).to_sse()
 
@@ -3354,6 +5007,85 @@ async def put_watchlist_endpoint(payload: WatchlistPayload) -> dict[str, Any]:
     return {"entries": persisted}
 
 
+# ─── Multi-watchlist endpoints ────────────────────────────────────────────────
+
+@router.get("/watchlists")
+async def get_watchlists() -> dict[str, Any]:
+    """Return all named watchlists."""
+    return {"watchlists": watchlists_service.get_all()}
+
+
+@router.post("/watchlists")
+async def create_watchlist(body: dict[str, Any]) -> dict[str, Any]:
+    """Create a new watchlist. Body: {name: str, tickers?: [{ticker, comment}]}"""
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    tickers = body.get("tickers", [])
+    result = watchlists_service.upsert(name, tickers)
+    return result
+
+
+@router.put("/watchlists/{name}")
+async def update_watchlist(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Replace the tickers in a watchlist. Body: {tickers: [{ticker, comment}]}"""
+    tickers = body.get("tickers", [])
+    result = watchlists_service.upsert(name, tickers)
+    return result
+
+
+@router.patch("/watchlists/{name}/rename")
+async def rename_watchlist(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Rename a watchlist. Body: {new_name: str}"""
+    new_name = body.get("new_name", "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="new_name is required")
+    ok = watchlists_service.rename(name, new_name)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Watchlist '{name}' not found")
+    return {"name": new_name}
+
+
+@router.delete("/watchlists/{name}")
+async def delete_watchlist(name: str) -> dict[str, Any]:
+    """Delete a watchlist by name."""
+    ok = watchlists_service.delete(name)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Watchlist '{name}' not found")
+    return {"deleted": name}
+
+
+# ─── /sleeves/portfolio/settings ────────────────────────────────────────────
+
+
+@router.get("/portfolio/settings")
+async def get_portfolio_settings() -> dict[str, Any]:
+    """Return the full per-ticker portfolio settings overlay.
+
+    Shape: ``{ "settings": { "<sleeve>": { "<TICKER>": { "allocation_pct": float, "agents": null | [...] } } } }``
+    """
+    return {"settings": portfolio_settings_service.get_all()}
+
+
+class PortfolioSettingsPayload(BaseModel):
+    """Body for full-replace of the portfolio settings overlay."""
+
+    settings: dict[str, Any] = Field(
+        description="Full settings dict — sleeve → ticker → {allocation_pct, agents}.",
+    )
+
+
+@router.put("/portfolio/settings")
+async def put_portfolio_settings(payload: PortfolioSettingsPayload) -> dict[str, Any]:
+    """Replace the entire per-ticker portfolio settings overlay atomically.
+
+    Useful for bulk edits (e.g. importing a pre-built allocation table). For
+    single-ticker updates prefer the per-ticker endpoints (when available).
+    """
+    updated = portfolio_settings_service.put_all(payload.settings)
+    return {"settings": updated}
+
+
 # ─── /sleeves/thesis/{scope} (LLM PM-memo synthesis) ────────────────────────
 
 
@@ -3454,6 +5186,118 @@ def _latest_scan_summary() -> dict[str, Any] | None:
         return None
     path = files[0]
     return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
+
+
+# ─── Per-ticker thesis (Portfolio Pulse "Run analysis") ─────────────────────
+
+_ticker_thesis_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, Any]:
+    """One DeepSeek call producing a trade thesis for a single name.
+
+    ``deep=False`` → a fast 2-3 sentence Quick take. ``deep=True`` → a richer
+    multi-section read (thesis, bull case, bear case, fundamentals incl. the
+    beat/miss record, catalysts, risks, verdict). Both are grounded in the
+    saved agent analysis + Finnhub fundamentals passed in ``context``.
+    """
+    import json as _json
+    import os as _os
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+
+    if deep:
+        system = (
+            "You are a senior buy-side analyst. Using the saved multi-agent signal "
+            "analysis and the fundamentals provided (growth, margins, earnings "
+            "beat/miss history, analyst consensus, insider flow) plus any recent "
+            "news, write a thorough trade thesis. Lead with the strongest evidence. "
+            "Respond ONLY with JSON: {\"bias\": \"bullish|bearish|neutral\", "
+            "\"condensed\": \"one-sentence call\", \"full\": \"markdown with these "
+            "sections: **Thesis**, **Bull case**, **Bear case**, **Fundamentals** "
+            "(cite the beat/miss record and growth), **Catalysts & risks**, "
+            "**Verdict**\"}."
+        )
+        max_tokens = 1100
+    else:
+        system = (
+            "You are a buy-side analyst. Using the saved signal analysis and "
+            "fundamentals (growth, earnings beat/miss, analyst consensus, insider "
+            "flow), write a concise trade thesis. Respond ONLY with JSON: "
+            "{\"bias\": \"bullish|bearish|neutral\", \"condensed\": \"one sentence\", "
+            "\"full\": \"2-4 sentences that cite the beat/miss history, growth, and "
+            "analyst consensus\"}."
+        )
+        max_tokens = 450
+
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+        openai_api_base="https://api.deepseek.com/v1",
+        temperature=0.3,
+        max_tokens=max_tokens,
+    )
+    user = f"Ticker: {ticker}\n\n{context}"
+    try:
+        resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+        txt = (resp.content or "").strip()
+        start, end = txt.find("{"), txt.rfind("}")
+        data = _json.loads(txt[start : end + 1]) if start >= 0 and end > start else {}
+        return {
+            "ticker": ticker,
+            "depth": "deep" if deep else "quick",
+            "bias": data.get("bias", "neutral"),
+            "condensed": data.get("condensed", ""),
+            "full": data.get("full", ""),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Ticker thesis generation failed for %s: %s", ticker, exc)
+        return {
+            "ticker": ticker,
+            "depth": "deep" if deep else "quick",
+            "bias": "neutral",
+            "condensed": "Could not generate a thesis — check the DeepSeek connection.",
+            "full": "",
+        }
+
+
+@router.post("/thesis/ticker/{ticker}")
+async def post_ticker_thesis(ticker: str, depth: str = "quick") -> dict[str, Any]:
+    """Per-name analysis for Portfolio Pulse.
+
+    ``depth=quick`` (default) returns a fast 2-3 sentence thesis; ``depth=deep``
+    returns a richer multi-section read and also pulls recent news. Both are
+    grounded in the saved scan agent analysis and Finnhub fundamentals.
+    Cached per (ticker, depth, day).
+    """
+    symbol = (ticker or "").strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Ticker is required.")
+    deep = depth == "deep"
+
+    today_str = datetime.date.today().isoformat()
+    cache_key = f"{symbol}:{depth}:{today_str}"
+    now = time.monotonic()
+    cached = _ticker_thesis_cache.get(cache_key)
+    if cached and (now - cached[0]) < _REASON_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    # Gather grounding context off the event loop.
+    def _gather() -> str:
+        blocks = [
+            _chat_saved_analysis_block(symbol),
+            _chat_fundamentals_block(symbol),
+        ]
+        if deep:
+            blocks.append(_chat_news_block(symbol))
+        joined = "\n\n".join(b for b in blocks if b)
+        return joined or "No saved analysis or fundamentals available for this ticker."
+
+    context = await asyncio.to_thread(_gather)
+    result = await asyncio.to_thread(_generate_ticker_thesis, symbol, context, deep)
+    _ticker_thesis_cache[cache_key] = (now, result)
+    return result
 
 
 @router.post("/thesis/portfolio")

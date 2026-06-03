@@ -16,10 +16,17 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { sleevesApi } from '@/services/sleeves-api';
-import { OptionContract, OptionsChainResponse, ScreenerRecommendation } from '@/types/sleeves';
+import { OptionContract, OptionLeg, OptionsChainResponse, ScreenerRecommendation } from '@/types/sleeves';
 import { Copy, Star } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { OptionLegRow } from './option-leg-row';
+
+/** A leg resolved to a concrete strike in the loaded chain. */
+interface ResolvedLeg {
+  direction: 'call' | 'put';
+  side: 'long' | 'short';
+  strike: number;
+}
 
 interface OptionChainViewerProps {
   ticker: string;
@@ -27,40 +34,91 @@ interface OptionChainViewerProps {
    *  highlights the matching contract and renders a callout above the
    *  tables explaining why. */
   recommendation?: ScreenerRecommendation;
+  /** When set (from an expiry tier pill click), the viewer pre-selects the
+   *  expiry whose DTE is closest to this value. */
+  preferredDte?: number;
+  /** Legs of the selected expiry tier's structure. When provided (and a tier
+   *  is a multi-leg spread), every leg's strike is highlighted with a BUY/SELL
+   *  tag. Falls back to the single ``recommendation`` strike when absent. */
+  legs?: OptionLeg[];
+  /** Display name of the selected structure, e.g. "call debit spread". Shown
+   *  in the recommendation callout when legs are present. */
+  structureLabel?: string;
 }
 
-export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerProps) {
+export function OptionChainViewer({
+  ticker,
+  recommendation,
+  preferredDte,
+  legs,
+  structureLabel,
+}: OptionChainViewerProps) {
   const [chain, setChain] = useState<OptionsChainResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Selected expiry (null = "nearest", populated once the user picks).
-  // Resets when the ticker changes — different underlying = different expiries.
+  // Resets when the ticker changes.
   const [expiry, setExpiry] = useState<string | null>(null);
+
+  // Tracks the preferredDte value we've already auto-applied. Lets us
+  // distinguish "the user clicked a new tier pill" (→ redirect to that DTE)
+  // from "the chain just reloaded" (→ keep the current expiry, don't override
+  // a manual dropdown pick). Without this, a second tier-pill click was
+  // ignored because `expiry` was no longer null after the first redirect.
+  const appliedDteRef = useRef<number | null>(null);
 
   useEffect(() => {
     setExpiry(null);
+    appliedDteRef.current = null;
   }, [ticker]);
 
   useEffect(() => {
     let cancelled = false;
+    let redirecting = false;  // true when we're about to re-fetch for preferredDte
+    // When the pill is toggled off, allow the same DTE to redirect again later.
+    if (preferredDte == null) appliedDteRef.current = null;
     setLoading(true);
     setError(null);
     sleevesApi
       .getOptionsChain(ticker, { expiration: expiry ?? undefined })
       .then((data) => {
-        if (!cancelled) setChain(data);
+        if (cancelled) return;
+        // If a preferred DTE was passed from a tier pill click AND we haven't
+        // applied it yet, silently redirect to the closest available expiry so
+        // the user sees that tier's chain without an extra click. The ref guard
+        // ensures this fires once per distinct pill click — not on every reload,
+        // which would clobber a manual expiry pick.
+        if (
+          preferredDte != null &&
+          appliedDteRef.current !== preferredDte &&
+          data.available_expirations.length > 0
+        ) {
+          const closest = data.available_expirations.reduce((best, d) => {
+            const diff = Math.abs(daysUntil(d) - preferredDte);
+            const bestDiff = Math.abs(daysUntil(best) - preferredDte);
+            return diff < bestDiff ? d : best;
+          });
+          appliedDteRef.current = preferredDte;
+          if (closest !== data.expiration) {
+            redirecting = true;
+            setExpiry(closest);
+            // Keep loading=true — the second fetch will turn it off.
+            return;
+          }
+        }
+        setChain(data);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !redirecting) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [ticker, expiry]);
+  }, [ticker, expiry, preferredDte]);
 
   // Recommended-strike resolution. Computed before any early-return so the
   // hooks fire in the same order every render (Rules of Hooks).
@@ -74,7 +132,6 @@ export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerP
   const putsList = chain?.puts ?? [];
   const spot = chain?.spot ?? 0;
   const selectedExpiration = chain?.expiration ?? null;
-  const recDir = recommendation?.direction;
 
   const daysToSelected = useMemo(() => {
     if (!selectedExpiration) return null;
@@ -111,6 +168,34 @@ export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerP
     const pool = recommendation.direction === 'call' ? callsList : putsList;
     return pool.find((c) => c.strike === recStrike) ?? null;
   }, [recStrike, recommendation, callsList, putsList]);
+
+  // Multi-leg resolution. Each leg's offset is sqrt-time scaled (same as the
+  // single-leg path) then snapped to the nearest available strike. When no
+  // legs are passed we synthesize one from the single recommendation so the
+  // highlight logic below is uniform.
+  const resolvedLegs: ResolvedLeg[] = useMemo(() => {
+    const scale = (base: number) =>
+      base === 0 || daysToSelected === null
+        ? base
+        : base * Math.sqrt(Math.max(1, daysToSelected) / 7);
+    const resolve = (direction: 'call' | 'put', offsetPct: number): number | null => {
+      if (!spot) return null;
+      const pool = direction === 'call' ? callsList : putsList;
+      return nearestStrike(pool, spot * (1 + scale(offsetPct) / 100));
+    };
+    if (legs && legs.length > 0) {
+      return legs
+        .map((l) => ({ direction: l.direction, side: l.side, strike: resolve(l.direction, l.strike_offset_pct) }))
+        .filter((l): l is ResolvedLeg => l.strike !== null);
+    }
+    if (recommendation && recStrike !== null) {
+      return [{ direction: recommendation.direction, side: 'long', strike: recStrike }];
+    }
+    return [];
+  }, [legs, recommendation, recStrike, spot, daysToSelected, callsList, putsList]);
+
+  const callLegs = useMemo(() => resolvedLegs.filter((l) => l.direction === 'call'), [resolvedLegs]);
+  const putLegs = useMemo(() => resolvedLegs.filter((l) => l.direction === 'put'), [resolvedLegs]);
 
   // Does the picked expiry match the strategy's recommended lean?
   // near = ≤14d, mid = 15–28d, far = 29+
@@ -161,6 +246,8 @@ export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerP
             scaledOffsetPct={scaledOffsetPct}
             daysToSelected={daysToSelected}
             expiryMatch={expiryMatch}
+            resolvedLegs={resolvedLegs}
+            structureLabel={structureLabel}
           />
         )}
 
@@ -220,7 +307,7 @@ export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerP
             contracts={chain.calls}
             underlying={chain.ticker}
             atmStrike={atmStrikeCalls}
-            recommendedStrike={recDir === 'call' ? recStrike : null}
+            highlightLegs={callLegs}
           />
           <ChainTable
             title="Puts"
@@ -228,7 +315,7 @@ export function OptionChainViewer({ ticker, recommendation }: OptionChainViewerP
             contracts={chain.puts}
             underlying={chain.ticker}
             atmStrike={atmStrikePuts}
-            recommendedStrike={recDir === 'put' ? recStrike : null}
+            highlightLegs={putLegs}
           />
         </div>
       </div>
@@ -265,15 +352,15 @@ function ChainTable({
   contracts,
   underlying,
   atmStrike,
-  recommendedStrike,
+  highlightLegs,
 }: {
   title: string;
   subtitle: string;
   contracts: OptionContract[];
   underlying: string;
   atmStrike: number | null;
-  /** Strike of the row to mark as RECOMMENDED, or null. */
-  recommendedStrike: number | null;
+  /** Legs (in this option type) to highlight, each tagged long/short. */
+  highlightLegs: ResolvedLeg[];
 }) {
   if (contracts.length === 0) {
     return (
@@ -322,15 +409,18 @@ function ChainTable({
           </tr>
         </thead>
         <tbody>
-          {contracts.map((c) => (
-            <OptionLegRow
-              key={c.ticker ?? `${c.type}-${c.strike}-${c.expiration}`}
-              contract={c}
-              underlying={underlying}
-              atm={atmStrike !== null && c.strike === atmStrike}
-              recommended={recommendedStrike !== null && c.strike === recommendedStrike}
-            />
-          ))}
+          {contracts.map((c) => {
+            const leg = highlightLegs.find((l) => l.strike === c.strike);
+            return (
+              <OptionLegRow
+                key={c.ticker ?? `${c.type}-${c.strike}-${c.expiration}`}
+                contract={c}
+                underlying={underlying}
+                atm={atmStrike !== null && c.strike === atmStrike}
+                highlight={leg?.side}
+              />
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -346,6 +436,8 @@ function RecommendationCallout({
   scaledOffsetPct,
   daysToSelected,
   expiryMatch,
+  resolvedLegs,
+  structureLabel,
 }: {
   recommendation: ScreenerRecommendation;
   contract: OptionContract | null;
@@ -354,7 +446,10 @@ function RecommendationCallout({
   scaledOffsetPct: number;
   daysToSelected: number | null;
   expiryMatch: 'match' | 'shorter' | 'longer' | 'unknown';
+  resolvedLegs: ResolvedLeg[];
+  structureLabel?: string;
 }) {
+  const isSpread = resolvedLegs.length > 1;
   const dirLabel = recommendation.direction === 'call' ? 'CALL' : 'PUT';
   const dirCls =
     recommendation.direction === 'call'
@@ -375,7 +470,7 @@ function RecommendationCallout({
 
   return (
     <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-      <div className="flex items-center gap-2 mb-1 flex-wrap">
+      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
         <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500 flex-shrink-0" />
         <span className="text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-400 font-semibold">
           Recommended trade
@@ -383,21 +478,49 @@ function RecommendationCallout({
         <Badge variant="outline" className={cn('text-[10px] font-mono', dirCls)}>
           {dirLabel}
         </Badge>
-        {contract ? (
-          <span className="text-xs font-mono">
-            {ticker} ${contract.strike.toFixed(2)} {recommendation.direction === 'call' ? 'C' : 'P'} · exp {contract.expiration}
-            {daysToSelected !== null && (
-              <span className="text-muted-foreground"> ({daysToSelected}d)</span>
-            )}
-          </span>
-        ) : (
-          <span className="text-xs italic text-muted-foreground">
-            no matching contract in current expiry — try a different expiry
-          </span>
+        {structureLabel && (
+          <Badge variant="outline" className="text-[10px] font-mono">
+            {structureLabel}
+          </Badge>
         )}
         <div className="flex-1" />
         <ExpiryMatchBadge match={expiryMatch} lean={recommendation.expiry_lean} />
       </div>
+
+      {/* Contract / legs — on their own line so multi-leg spreads read cleanly. */}
+      {isSpread ? (
+        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+          <span className="text-[11px] font-mono text-muted-foreground">{ticker}</span>
+          {resolvedLegs.map((l, i) => (
+            <span
+              key={i}
+              className={cn(
+                'inline-flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 rounded border',
+                l.side === 'long'
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                  : 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400',
+              )}
+            >
+              <span className="font-bold">{l.side === 'long' ? 'BUY' : 'SELL'}</span>
+              {l.strike.toFixed(2)}{recommendation.direction === 'call' ? 'C' : 'P'}
+            </span>
+          ))}
+          {daysToSelected !== null && (
+            <span className="text-[11px] text-muted-foreground">exp {daysToSelected}d</span>
+          )}
+        </div>
+      ) : contract ? (
+        <div className="text-xs font-mono mb-1.5">
+          {ticker} ${contract.strike.toFixed(2)} {recommendation.direction === 'call' ? 'C' : 'P'} · exp {contract.expiration}
+          {daysToSelected !== null && (
+            <span className="text-muted-foreground"> ({daysToSelected}d)</span>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs italic text-muted-foreground mb-1.5">
+          no matching contract in current expiry — try a different expiry
+        </div>
+      )}
       <div className="text-xs leading-relaxed text-foreground/85">
         <span className="text-muted-foreground">Strike rationale:</span> {offsetText}
         <span className="text-muted-foreground">{offsetScaledNote}</span>

@@ -12,7 +12,7 @@
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { SleevesProvider, useSleevesContext } from '@/contexts/sleeves-context';
+import { useSleevesContext } from '@/contexts/sleeves-context';
 import { cn } from '@/lib/utils';
 import { sleevesApi } from '@/services/sleeves-api';
 import { OptionsScreenerResponse, OptionsStrategyMeta } from '@/types/sleeves';
@@ -57,14 +57,10 @@ const STRATEGY_ICONS: Record<string, React.ComponentType<{ className?: string }>
 };
 
 export function OptionsTab() {
-  return (
-    <SleevesProvider>
-      <OptionsTabContent />
-    </SleevesProvider>
-  );
+  return <OptionsTabContent />;
 }
 
-function OptionsTabContent() {
+export function OptionsTabContent() {
   const { config } = useSleevesContext();
   const [strategies, setStrategies] = useState<OptionsStrategyMeta[]>([]);
   const [sleeve, setSleeve] = useState<string>(DEFAULT_SLEEVE);
@@ -91,11 +87,13 @@ function OptionsTabContent() {
   }, [explainerOpen]);
 
   // Load the strategy registry once on mount.
+  // Filter out any chart-pattern strategies (pattern_* keys) — these are
+  // pure technical screener strategies only.
   useEffect(() => {
     void (async () => {
       try {
         const resp = await sleevesApi.getOptionsStrategies();
-        setStrategies(resp.strategies);
+        setStrategies(resp.strategies.filter((s) => !s.key.startsWith('pattern_')));
       } catch (err) {
         console.error('Failed to load strategies catalog:', err);
       }
@@ -300,9 +298,12 @@ function Explainer({
         <div className="px-3 pb-3 space-y-3 text-xs leading-relaxed text-foreground/90 border-t border-sky-500/20 pt-3">
           <Section title="What this does">
             For every ticker in the selected sleeve, the active strategy runs
-            three short-term signals. Each signal that fires adds 1 to a{' '}
-            <Strong>conviction</Strong> score (0–3). Tickers ranked
-            highest-conviction first.
+            three short-term signals. Each fired signal is magnitude-weighted
+            (how far past the threshold?) to produce a{' '}
+            <Strong>conviction %</Strong> score (0–100%). Tickers ranked
+            highest-conviction first. Candidates scoring ≥40% receive expiry
+            tier recommendations; click a tier pill to jump to that DTE in
+            the chain viewer.
           </Section>
 
           <Section title="Strategies">
@@ -398,10 +399,10 @@ function ConvictionLegend() {
   return (
     <div className="hidden md:flex items-center gap-1.5 text-[10px] text-muted-foreground">
       <span className="mr-1">Conviction:</span>
-      <LegendChip label="3/3 strong" cls="border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" />
-      <LegendChip label="2/3" cls="border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400" />
-      <LegendChip label="1/3" cls="border-yellow-500/40 bg-yellow-500/5 text-yellow-700 dark:text-yellow-400" />
-      <LegendChip label="0/3" cls="opacity-60" />
+      <LegendChip label="≥80%" cls="border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" />
+      <LegendChip label="60–79%" cls="border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400" />
+      <LegendChip label="40–59%" cls="border-yellow-500/40 bg-yellow-500/5 text-yellow-700 dark:text-yellow-400" />
+      <LegendChip label="<40%" cls="opacity-60" />
     </div>
   );
 }

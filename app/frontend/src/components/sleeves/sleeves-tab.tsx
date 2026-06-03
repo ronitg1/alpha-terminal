@@ -11,7 +11,7 @@
  *   7. PositionsSection       — collapsible per-sleeve rich rows
  *   8. TickerDrillDrawer      — still mounted; Phase B will swap for inline expand
  */
-import { SleevesProvider, useSleevesContext } from '@/contexts/sleeves-context';
+import { useSleevesContext } from '@/contexts/sleeves-context';
 import { AlertCircle } from 'lucide-react';
 import { HighConvictionTiles } from './high-conviction-tiles';
 import { KpiTiles } from './kpi-tiles';
@@ -21,7 +21,7 @@ import { PortfolioThesisCard } from './portfolio-thesis-card';
 import { PositionsSection } from './positions-section';
 import { SleeveSummaryRow } from './sleeve-summary-row';
 
-function SleevesContent() {
+export function SleevesContent() {
   const { scanStatus, scanError, config } = useSleevesContext();
 
   if (scanStatus === 'loading' && !config) {
@@ -74,9 +74,5 @@ function SleevesContent() {
 }
 
 export function SleevesTab() {
-  return (
-    <SleevesProvider>
-      <SleevesContent />
-    </SleevesProvider>
-  );
+  return <SleevesContent />;
 }

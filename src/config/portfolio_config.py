@@ -4,12 +4,16 @@ Each sleeve names a panel of agents (referring to keys from
 :mod:`src.utils.analysts`) plus a per-agent weight used by the morning
 scan to combine signals into a single ranking.
 
-Two invariants enforced by :func:`validate_portfolio` at import time so
-a bad edit fails loudly:
+Invariants enforced by :func:`validate_portfolio` at import time so a bad
+edit fails loudly:
 
-* Sleeve allocations sum to exactly 100% (the four sleeves cover the full
-  notional book).
 * Per-sleeve agent weights sum to 1.0.
+* Sleeve allocations don't *over*-allocate the book (total <= 100%).
+
+Note: sleeve ``allocation_pct`` is informational — real capital allocation is
+tracked per-ticker in the portfolio-settings overlay — so allocations are NOT
+required to sum to exactly 100% (this is what lets sleeves be added/deleted
+freely from the dashboard).
 
 ``CASH_RESERVE_PCT`` is a *runtime floor* — the morning scan / allocator
 must refuse to size positions that would drop free cash below this level.
@@ -31,7 +35,7 @@ class Sleeve(TypedDict):
 
 # Runtime floor — the morning scan / allocator refuses to size positions
 # that would drop free cash below this percentage of the book. Distinct
-# from sleeve allocations, which always sum to 100%.
+# from (informational) sleeve allocations.
 CASH_RESERVE_PCT: float = 10.0
 
 
@@ -58,8 +62,6 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
             "BLNK",
             "EVGO",
             "RUN",
-            "NOVA",
-            "SUNW",
             "STEM",
             "BE",
             "PLPC",
@@ -80,13 +82,25 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
         },
         "tickers": ["NVDA", "MSFT", "GOOGL", "META", "AAPL", "AMZN", "TSLA"],
     },
+    "opportunistic": {
+        "allocation_pct": 10.0,
+        "agents": ["alpha_seeker", "stanley_druckenmiller", "charlie_munger", "aswath_damodaran", "ben_graham"],
+        "agent_weights": {
+            "alpha_seeker": 0.2,
+            "stanley_druckenmiller": 0.2,
+            "charlie_munger": 0.2,
+            "aswath_damodaran": 0.2,
+            "ben_graham": 0.19999999999999996,
+        },
+        "tickers": ["NBIS", "ASTS", "DELL", "MU"],
+    },
     "emerging_tech": {
         "allocation_pct": 20.0,
         "agents": ["emerging_tech", "alpha_seeker", "michael_burry"],
         "agent_weights": {
-            "emerging_tech": 0.3333333333333333,
             "alpha_seeker": 0.3333333333333333,
             "michael_burry": 0.33333333333333337,
+            "emerging_tech": 0.3333333333333333,
         },
         "tickers": [
             "ARM",
@@ -103,18 +117,6 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
             "AFRM",
             "NU",
         ],
-    },
-    "opportunistic": {
-        "allocation_pct": 10.0,
-        "agents": ["alpha_seeker", "stanley_druckenmiller", "charlie_munger", "aswath_damodaran", "ben_graham"],
-        "agent_weights": {
-            "alpha_seeker": 0.2,
-            "stanley_druckenmiller": 0.2,
-            "charlie_munger": 0.2,
-            "aswath_damodaran": 0.2,
-            "ben_graham": 0.19999999999999996,
-        },
-        "tickers": ["NBIS", "ASTS", "DELL", "MU"],
     },
 }
 
@@ -133,10 +135,16 @@ def validate_portfolio(
     sleeves = sleeves if sleeves is not None else PORTFOLIO_SLEEVES
     cash_reserve_pct = cash_reserve_pct if cash_reserve_pct is not None else CASH_RESERVE_PCT
 
+    # NOTE: sleeve ``allocation_pct`` is informational only — nothing in the
+    # scan/agents/backtest computes against it, and real capital allocation is
+    # tracked per-ticker in the portfolio-settings overlay. We therefore do NOT
+    # require the cross-sleeve total to equal 100% (that rule blocked adding or
+    # deleting sleeves via the dashboard). We only guard against over-allocating
+    # the book beyond 100%.
     total_alloc = sum(s["allocation_pct"] for s in sleeves.values())
-    if abs(total_alloc - 100.0) > tolerance:
+    if total_alloc > 100.0 + tolerance:
         raise PortfolioConfigError(
-            f"Sleeve allocations must sum to 100%; got {total_alloc}%."
+            f"Sleeve allocations cannot exceed 100%; got {total_alloc}%."
         )
     if not 0 <= cash_reserve_pct <= 100:
         raise PortfolioConfigError(

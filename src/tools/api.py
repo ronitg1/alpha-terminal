@@ -376,6 +376,28 @@ def _fds_line_items(
 # ─── Insider trades ──────────────────────────────────────────────────────────
 
 
+def _get_insider_trades_finnhub(
+    ticker: str, end_date: str, start_date: str | None
+) -> list[InsiderTrade] | None:
+    """Finnhub free-tier insider fallback. Returns None when not configured or
+    on error, so the caller can continue to its own empty-list handling."""
+    from src.tools.finnhub import get_finnhub_client
+    from src.tools.finnhub.client import FinnhubError
+    from src.tools.finnhub.converters import finnhub_insider_trades
+
+    client = get_finnhub_client()
+    if client is None:
+        return None
+    try:
+        payload = client.insider_transactions(
+            ticker, start_date=start_date, end_date=end_date
+        )
+        return finnhub_insider_trades(ticker, payload)
+    except (FinnhubError, ValueError, KeyError) as exc:
+        logger.info("Finnhub insider fallback failed for %s: %s", ticker, exc)
+        return None
+
+
 def get_insider_trades(
     ticker: str,
     end_date: str,
@@ -384,14 +406,20 @@ def get_insider_trades(
     api_key: str | None = None,
 ) -> list[InsiderTrade]:
     """Form-4-style insider trades. Massive doesn't publish them; route to
-    FDS when available, return empty otherwise."""
+    FDS when available, fall back to Finnhub's free tier, else return empty."""
     if not os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        # Finnhub free tier publishes Form 4 data — use it as the fallback so
+        # the Burry/Sentiment agents see real insider activity.
+        finnhub_trades = _get_insider_trades_finnhub(ticker, end_date, start_date)
+        if finnhub_trades is not None:
+            return finnhub_trades
+
         global _insider_warning_emitted
         if not _insider_warning_emitted:
             logger.warning(
-                "Insider trades unavailable: Massive/Polygon doesn't publish them "
-                "and FINANCIAL_DATASETS_API_KEY is not set. Returning [] for all "
-                "future calls this session."
+                "Insider trades unavailable: Massive/Polygon doesn't publish them, "
+                "FINANCIAL_DATASETS_API_KEY is not set, and no FINNHUB_API_KEY "
+                "fallback is configured. Returning [] for all future calls this session."
             )
             _insider_warning_emitted = True
         return []

@@ -38,27 +38,77 @@ type RunStatus = 'idle' | 'running' | 'done' | 'error';
 type Direction = 'auto' | 'straddle' | 'calls' | 'puts';
 type Pricing = 'real' | 'bsm';
 
+// Display order + styling for the exit-reason breakdown and per-trade tag.
+const EXIT_REASON_ORDER = ['target', 'stop', 'dte', 'expiry', 'time'] as const;
+const EXIT_REASON_META: Record<string, { label: string; tip: string; cls: string }> = {
+  target: {
+    label: 'Profit target',
+    tip: 'Closed when the premium hit the profit-target gain.',
+    cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  },
+  stop: {
+    label: 'Stop-loss',
+    tip: 'Closed when the premium fell to the stop threshold.',
+    cls: 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400',
+  },
+  dte: {
+    label: 'DTE roll',
+    tip: 'Closed at the days-to-expiry threshold to avoid the gamma/theta cliff.',
+    cls: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  },
+  expiry: {
+    label: 'Expiry',
+    tip: 'Held to expiration and settled at intrinsic value.',
+    cls: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400',
+  },
+  time: {
+    label: 'Hold backstop',
+    tip: 'Hit the max hold-days backstop — no other trigger fired.',
+    cls: 'border-border bg-muted/40 text-muted-foreground',
+  },
+};
+
 function isoNDaysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
 
+// Render the exact contract a trade entered, e.g. "470C 2026-06-20" (calls),
+// "200P 2026-07-18" (puts), or "470±  2026-06-20" (straddle = both legs).
+function contractLabel(t: OptionsBacktestTrade): string {
+  const code = t.direction === 'calls' ? 'C' : t.direction === 'puts' ? 'P' : '±';
+  const strike = t.strike.toFixed(0);
+  const exp = t.contract_expiry ? ` ${t.contract_expiry}` : '';
+  return `${strike}${code}${exp}`;
+}
+
 export function OptionsBacktestPanel() {
   const { config } = useSleevesContext();
 
   const [strategies, setStrategies] = useState<OptionsStrategyMeta[]>([]);
-  const [startDate, setStartDate] = useState(isoNDaysAgo(60));
+  // Default to ~6 months so the window spans more than one regime — a 1-2 month
+  // window overfits to whatever the market just did and produces unrealistic
+  // (often 100%) win rates.
+  const [startDate, setStartDate] = useState(isoNDaysAgo(180));
   const [endDate, setEndDate] = useState(isoNDaysAgo(0));
   const [sleeve, setSleeve] = useState<string>('mega_tech');
   const [tickerInput, setTickerInput] = useState('');
   const [strategy, setStrategy] = useState<string>('weakness');
   const [direction, setDirection] = useState<Direction>('auto');
-  const [convictionMin, setConvictionMin] = useState(2);
-  const [holdDays, setHoldDays] = useState(5);
+  // Conviction gate is now percentage-based (magnitude-weighted 0-100).
+  const [minConvictionPct, setMinConvictionPct] = useState(40);
+  // hold_days is now the max-hold backstop, not a fixed exit. Realistic exits
+  // (target / stop / DTE) close most trades before this.
+  const [holdDays, setHoldDays] = useState(30);
   const [pricing, setPricing] = useState<Pricing>('real');
-  // Stop-loss is stored as a positive fraction (e.g. 0.5 = -50%). null = off.
-  const [stopLossPct, setStopLossPct] = useState<number | null>(null);
+  // Exit policy — all stored as positive fractions (0.5 = 50%). null = off.
+  const [stopLossPct, setStopLossPct] = useState<number | null>(0.5);
+  const [profitTargetPct, setProfitTargetPct] = useState<number | null>(0.5);
+  // DTE-based exit: close when contract reaches this many days-to-expiry. null = off.
+  const [dteExit, setDteExit] = useState<number | null>(21);
+  // Transaction-cost model — round-trip spread as a fraction of premium. null = frictionless.
+  const [slippagePct, setSlippagePct] = useState<number | null>(0.05);
 
   const [status, setStatus] = useState<RunStatus>('idle');
   const [progress, setProgress] = useState<string>('');
@@ -122,10 +172,13 @@ export function OptionsBacktestPanel() {
           tickers: tickers.length ? tickers : null,
           strategy,
           direction,
-          conviction_min: convictionMin,
+          min_conviction_pct: minConvictionPct,
           hold_days: holdDays,
           pricing,
           stop_loss_pct: stopLossPct,
+          profit_target_pct: profitTargetPct,
+          dte_exit: dteExit,
+          slippage_pct: slippagePct,
         },
         (event, data) => {
           if (event === 'progress') {
@@ -195,6 +248,14 @@ export function OptionsBacktestPanel() {
               Useful for ranking; not a substitute for a live-quote backtest.
             </>
           )}
+          <div className="mt-1 text-foreground/80">
+            <strong>Exit model:</strong> each trade is checked every day and
+            closes on the first trigger — profit target, stop-loss, DTE roll-out,
+            or the hold-days backstop. When a day could hit both the stop and the
+            target, the stop is assumed first (conservative, biases returns
+            slightly down). In BSM mode the DTE exit is approximate (expiry is
+            synthesized from the contract's target DTE).
+          </div>
           {activeStrategyMeta && (
             <div className="mt-1 text-foreground/80">
               <strong>Active strategy ({activeStrategyMeta.label}):</strong>{' '}
@@ -243,9 +304,45 @@ export function OptionsBacktestPanel() {
         <div
           className="flex items-center gap-2"
           title={
+            'Take-profit. Closes on the first day the option premium closes at ' +
+            'or above entry × (1 + target %). Straddles use combined premium. ' +
+            'Off = no target.'
+          }
+        >
+          <span className="text-muted-foreground uppercase tracking-wide text-[10px]">
+            Profit target:
+          </span>
+          <div className="inline-flex rounded-md border border-border overflow-hidden font-mono">
+            {([
+              { label: 'Off', value: null },
+              { label: '+25%', value: 0.25 },
+              { label: '+50%', value: 0.5 },
+              { label: '+100%', value: 1.0 },
+            ] as { label: string; value: number | null }[]).map((opt, i) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setProfitTargetPct(opt.value)}
+                className={cn(
+                  'px-2.5 py-1',
+                  i > 0 && 'border-l border-border',
+                  profitTargetPct === opt.value
+                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className="flex items-center gap-2"
+          title={
             'Per-contract stop-loss. Exits early on the first day the option ' +
             'premium closes at or below entry × (1 − stop %). Straddles stop ' +
-            'on combined premium. Off = always hold to "Hold days".'
+            'on combined premium. Off = no stop.'
           }
         >
           <span className="text-muted-foreground uppercase tracking-wide text-[10px]">
@@ -268,6 +365,43 @@ export function OptionsBacktestPanel() {
                   i > 0 && 'border-l border-border',
                   stopLossPct === opt.value
                     ? 'bg-rose-500/10 text-rose-700 dark:text-rose-400'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className="flex items-center gap-2"
+          title={
+            'Transaction cost. Models the bid/ask spread you cross: buy at ' +
+            'entry x (1 + slippage/2), sell at exit x (1 - slippage/2). ' +
+            'Frictionless fills overstate the win rate — keep this on for ' +
+            'realistic numbers.'
+          }
+        >
+          <span className="text-muted-foreground uppercase tracking-wide text-[10px]">
+            Slippage:
+          </span>
+          <div className="inline-flex rounded-md border border-border overflow-hidden font-mono">
+            {([
+              { label: 'Off', value: null },
+              { label: '5%', value: 0.05 },
+              { label: '10%', value: 0.1 },
+              { label: '15%', value: 0.15 },
+            ] as { label: string; value: number | null }[]).map((opt, i) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setSlippagePct(opt.value)}
+                className={cn(
+                  'px-2.5 py-1',
+                  i > 0 && 'border-l border-border',
+                  slippagePct === opt.value
+                    ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -345,25 +479,49 @@ export function OptionsBacktestPanel() {
             <option value="puts">puts</option>
           </select>
         </Field>
-        <Field label="Min conviction">
+        <Field
+          label="Min conviction %"
+          hint="Only open trades when the candidate's magnitude-weighted conviction percentage is at or above this."
+        >
           <select
-            value={convictionMin}
-            onChange={(e) => setConvictionMin(Number(e.target.value))}
+            value={minConvictionPct}
+            onChange={(e) => setMinConvictionPct(Number(e.target.value))}
             className="bg-background border border-border rounded px-2 py-1 w-full font-mono"
           >
-            <option value={0}>0 (all)</option>
-            <option value={1}>1</option>
-            <option value={2}>2</option>
-            <option value={3}>3 (strictest)</option>
+            <option value={0}>0% (all)</option>
+            <option value={40}>40%</option>
+            <option value={50}>50%</option>
+            <option value={60}>60%</option>
+            <option value={70}>70%</option>
+            <option value={80}>80% (strictest)</option>
           </select>
         </Field>
-        <Field label="Hold days">
+        <Field
+          label="Hold days (max)"
+          hint="Backstop exit if no target/stop/DTE trigger fires first. Realistic trades usually close sooner."
+        >
           <input
             type="number"
             min={1}
-            max={30}
+            max={60}
             value={holdDays}
-            onChange={(e) => setHoldDays(Number(e.target.value) || 5)}
+            onChange={(e) => setHoldDays(Number(e.target.value) || 30)}
+            className="bg-background border border-border rounded px-2 py-1 w-full font-mono"
+          />
+        </Field>
+        <Field
+          label="DTE exit"
+          hint="Close when the contract reaches this many days-to-expiry (steps out before the gamma/theta cliff). 0 = off."
+        >
+          <input
+            type="number"
+            min={0}
+            max={60}
+            value={dteExit ?? 0}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setDteExit(v > 0 ? v : null);
+            }}
             className="bg-background border border-border rounded px-2 py-1 w-full font-mono"
           />
         </Field>
@@ -400,6 +558,28 @@ export function OptionsBacktestPanel() {
 
       {summary && summary.n_trades > 0 && (
         <>
+          {(summary.pricing === 'bsm' || !summary.slippage_pct) && (
+            <div className="text-xs px-2 py-2 rounded border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+              <strong>Reality check:</strong>{' '}
+              {summary.pricing === 'bsm'
+                ? 'BSM proxy produces a smooth premium path with no intraday noise, so it overstates win rate — especially in a trending window. '
+                : ''}
+              {!summary.slippage_pct
+                ? 'Slippage is off, so fills are frictionless (no bid/ask cost). '
+                : ''}
+              For believable numbers, run with Real (Polygon) pricing and slippage on.
+            </div>
+          )}
+
+          {summary.n_trades < 20 && (
+            <div className="text-xs px-2 py-2 rounded border border-sky-500/30 bg-sky-500/5 text-sky-700 dark:text-sky-400">
+              <strong>Small sample ({summary.n_trades} trades).</strong> A win rate
+              from this few trades isn't statistically meaningful and is heavily
+              swayed by the market regime in this window. Widen the date range,
+              add tickers, or lower the conviction gate for a representative read.
+            </div>
+          )}
+
           {summary.pricing === 'real' &&
             typeof summary.n_synthetic === 'number' &&
             summary.n_synthetic > 0 && (
@@ -439,6 +619,35 @@ export function OptionsBacktestPanel() {
                 . Stopped rows are marked 🛑 in the trades table.
               </div>
             )}
+
+          {summary.by_exit_reason && Object.keys(summary.by_exit_reason).length > 0 && (
+            <section>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                How trades closed
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {EXIT_REASON_ORDER.filter((r) => (summary.by_exit_reason?.[r] ?? 0) > 0).map((r) => {
+                  const meta = EXIT_REASON_META[r];
+                  const n = summary.by_exit_reason?.[r] ?? 0;
+                  const pct = summary.n_trades ? (n / summary.n_trades) * 100 : 0;
+                  return (
+                    <span
+                      key={r}
+                      title={meta.tip}
+                      className={cn(
+                        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono',
+                        meta.cls,
+                      )}
+                    >
+                      {meta.label}
+                      <span className="font-semibold">{n}</span>
+                      <span className="opacity-60">({pct.toFixed(0)}%)</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           <section className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-mono">
             <Metric
@@ -500,7 +709,7 @@ export function OptionsBacktestPanel() {
               <table className="w-full text-[11px] font-mono">
                 <thead>
                   <tr className="text-muted-foreground border-b border-border">
-                    <th className="text-left px-2 py-1">Conviction</th>
+                    <th className="text-left px-2 py-1">Conviction band</th>
                     <th className="text-right px-2 py-1">Trades</th>
                     <th className="text-right px-2 py-1">Win%</th>
                     <th className="text-right px-2 py-1">Avg return</th>
@@ -509,11 +718,10 @@ export function OptionsBacktestPanel() {
                 </thead>
                 <tbody>
                   {Object.entries(summary.by_conviction)
-                    .sort(([a], [b]) => Number(b) - Number(a))
                     .map(([k, v]) => (
                       <tr key={k} className="border-b border-border/40 last:border-0">
                         <td className="px-2 py-1">
-                          <Badge variant="outline">{k}/3</Badge>
+                          <Badge variant="outline">{k}</Badge>
                         </td>
                         <td className="px-2 py-1 text-right">{v.n_trades}</td>
                         <td className="px-2 py-1 text-right">{(v.win_rate * 100).toFixed(1)}%</td>
@@ -552,11 +760,11 @@ export function OptionsBacktestPanel() {
               <thead className="sticky top-0 bg-background border-b border-border">
                 <tr className="text-muted-foreground">
                   <th className="text-left px-2 py-1">Ticker</th>
+                  <th className="text-left px-2 py-1">Contract</th>
                   <th className="text-left px-2 py-1">Dir</th>
-                  <th className="text-left px-2 py-1">Conv</th>
-                  <th className="text-left px-2 py-1">Open</th>
-                  <th className="text-left px-2 py-1">Close</th>
-                  <th className="text-right px-2 py-1">K</th>
+                  <th className="text-right px-2 py-1">Conv%</th>
+                  <th className="text-left px-2 py-1">Entered</th>
+                  <th className="text-left px-2 py-1">Exited</th>
                   <th className="text-right px-2 py-1">σ</th>
                   <th className="text-right px-2 py-1">Entry $</th>
                   <th className="text-right px-2 py-1">Exit $</th>
@@ -582,22 +790,30 @@ export function OptionsBacktestPanel() {
                         </span>
                       )}
                     </td>
+                    <td
+                      className="px-2 py-1 whitespace-nowrap"
+                      title={t.contract_ticker ?? 'BSM-priced — synthetic contract'}
+                    >
+                      {contractLabel(t)}
+                    </td>
                     <td className="px-2 py-1 lowercase">{t.direction}</td>
-                    <td className="px-2 py-1">{t.conviction}</td>
-                    <td className="px-2 py-1">{t.open_date}</td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1 text-right">
+                      {t.conviction_pct != null ? `${t.conviction_pct.toFixed(0)}%` : '—'}
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">{t.open_date}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">
                       {t.close_date}
-                      {t.stopped_out && (
+                      {t.exit_reason && EXIT_REASON_META[t.exit_reason] && (
                         <span
-                          className="ml-1"
-                          title="Exited early — premium hit the stop-loss threshold"
+                          title={EXIT_REASON_META[t.exit_reason].tip}
+                          className={cn(
+                            'ml-1 px-1 rounded-sm border text-[8px] font-bold align-middle',
+                            EXIT_REASON_META[t.exit_reason].cls,
+                          )}
                         >
-                          🛑
+                          {EXIT_REASON_META[t.exit_reason].label}
                         </span>
                       )}
-                    </td>
-                    <td className="px-2 py-1 text-right" title={t.contract_ticker ?? undefined}>
-                      {t.strike.toFixed(0)}
                     </td>
                     <td className="px-2 py-1 text-right">{(t.sigma * 100).toFixed(0)}%</td>
                     <td className="px-2 py-1 text-right">${t.entry_premium.toFixed(2)}</td>

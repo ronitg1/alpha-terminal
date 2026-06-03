@@ -10,12 +10,15 @@ so subsequent endpoints in the same uvicorn process see the new sleeves
 without a restart.
 
 Sleeve invariants enforced before writing:
-* Allocation across all sleeves must sum to 100%.
 * Agent weights within a sleeve must sum to 1.0.
 * Every agent in ``agents`` must have a matching ``agent_weights`` key.
 * Sleeve name must be unique and a valid Python identifier.
 * Tickers must match the same uppercase-alphanumeric pattern the watchlist
   service uses.
+
+Note: per-sleeve ``allocation_pct`` is stored on the sleeve definition but is
+no longer required to sum to 100% across sleeves — per-ticker portfolio
+allocation is tracked in a separate overlay (``portfolio_settings_service``).
 """
 from __future__ import annotations
 
@@ -139,18 +142,6 @@ def _validate_sleeve_payload(name: str, sleeve: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _validate_total_allocation(sleeves: dict[str, dict[str, Any]]) -> None:
-    total = sum(s["allocation_pct"] for s in sleeves.values())
-    if abs(total - 100.0) > _ALLOC_TOLERANCE:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Sleeve allocations must sum to 100% (currently {total:.2f}%). "
-                "Adjust allocations across sleeves before saving."
-            ),
-        )
-
-
 # ─── Mutate ─────────────────────────────────────────────────────────────────
 
 
@@ -166,7 +157,6 @@ def replace_all_sleeves(sleeves: dict[str, dict[str, Any]]) -> dict[str, dict[st
     validated: dict[str, dict[str, Any]] = {}
     for name, sleeve in sleeves.items():
         validated[name] = _validate_sleeve_payload(name, sleeve)
-    _validate_total_allocation(validated)
     _persist(validated)
     return read_sleeves()
 
@@ -178,7 +168,6 @@ def create_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
         raise HTTPException(status_code=409, detail=f"Sleeve '{name}' already exists.")
     validated = _validate_sleeve_payload(name, sleeve)
     current[name] = validated
-    _validate_total_allocation(current)
     _persist(current)
     return read_sleeves()
 
@@ -190,39 +179,52 @@ def update_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
         raise HTTPException(status_code=404, detail=f"Sleeve '{name}' not found.")
     validated = _validate_sleeve_payload(name, sleeve)
     current[name] = validated
-    _validate_total_allocation(current)
     _persist(current)
     return read_sleeves()
 
 
 def delete_sleeve(name: str) -> dict[str, dict[str, Any]]:
-    """Delete a sleeve. Raises 404 if missing; refuses if it would orphan
-    allocations (caller must reassign the deleted sleeve's allocation_pct
-    first)."""
+    """Delete a sleeve. Raises 404 if missing; refuses to delete the last sleeve."""
     current = read_sleeves()
     if name not in current:
         raise HTTPException(status_code=404, detail=f"Sleeve '{name}' not found.")
-    deleted_alloc = current[name]["allocation_pct"]
     if len(current) == 1:
         raise HTTPException(
             status_code=400, detail="Cannot delete the only remaining sleeve."
         )
     del current[name]
-    # If the deleted sleeve had allocation > 0, allocations no longer sum to
-    # 100% — caller is expected to top up another sleeve via update_sleeve
-    # before delete. We surface the violation rather than silently re-balancing.
-    if deleted_alloc > 0:
-        total = sum(s["allocation_pct"] for s in current.values())
-        if abs(total - 100.0) > _ALLOC_TOLERANCE:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Deleting '{name}' would leave allocations at {total:.2f}% "
-                    f"(was using {deleted_alloc:.2f}%). Reassign that allocation to "
-                    "another sleeve first via PUT /sleeves/config/sleeve/{name}."
-                ),
-            )
     _persist(current)
+    return read_sleeves()
+
+
+def rename_sleeve(old_name: str, new_name: str) -> dict[str, dict[str, Any]]:
+    """Rename a sleeve from ``old_name`` to ``new_name``.
+
+    Raises 400 if ``new_name`` is not a valid sleeve identifier, 404 if
+    ``old_name`` does not exist, and 409 if ``new_name`` already exists.
+    Returns the updated full sleeves snapshot.
+    """
+    if not _SLEEVE_NAME_RE.match(new_name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid sleeve name '{new_name}'. Use lowercase letters, digits, "
+                "underscores; start with a letter; max 31 chars."
+            ),
+        )
+    current = read_sleeves()
+    if old_name not in current:
+        raise HTTPException(status_code=404, detail=f"Sleeve '{old_name}' not found.")
+    if new_name in current:
+        raise HTTPException(status_code=409, detail=f"Sleeve '{new_name}' already exists.")
+    # Build new ordered dict preserving insertion order with the rename in place.
+    updated: dict[str, dict[str, Any]] = {}
+    for key, val in current.items():
+        if key == old_name:
+            updated[new_name] = val
+        else:
+            updated[key] = val
+    _persist(updated)
     return read_sleeves()
 
 

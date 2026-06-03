@@ -7,7 +7,6 @@
  * simpler and keeps the UI footprint flat.
  */
 
-import { SleevesProvider } from '@/contexts/sleeves-context';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import { OptionsBacktestPanel } from './options-backtest-panel';
@@ -18,14 +17,10 @@ type SubTab = 'sleeves' | 'options';
 // Wraps in SleevesProvider so the sub-panels can read `config.sleeves` for
 // the sleeve picker. Tab-scoped — same pattern as SleevesTab + OptionsTab.
 export function BacktestTab() {
-  return (
-    <SleevesProvider>
-      <BacktestTabContent />
-    </SleevesProvider>
-  );
+  return <BacktestTabContent />;
 }
 
-function BacktestTabContent() {
+export function BacktestTabContent() {
   const [sub, setSub] = useState<SubTab>('options');
 
   return (
@@ -34,8 +29,8 @@ function BacktestTabContent() {
         <h1 className="text-xl font-semibold">Backtest</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Two engines.{' '}
-          <strong>Strategy</strong> backtests any of the 22 screener strategies
-          (10 technical + 12 chart patterns) via Black-Scholes pricing — fast, deterministic, free per run.{' '}
+          <strong>Strategy</strong> backtests any of the 10 technical screener strategies
+          via Black-Scholes pricing — fast, deterministic, free per run.{' '}
           <strong>Sleeves</strong> backtests the real LLM agent panel making
           long/short equity decisions per trading day — slower and costs LLM credits.
         </p>

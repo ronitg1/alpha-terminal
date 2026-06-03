@@ -14,6 +14,8 @@
 import { sleevesApi } from '@/services/sleeves-api';
 import {
   AnalystMetadata,
+  NamedWatchlist,
+  PortfolioSettings,
   ScanListItem,
   ScanSummary,
   SleevesConfig,
@@ -62,10 +64,26 @@ interface SleevesContextType {
   stopScan: () => void;
   clearActivity: () => void;
 
-  // Watchlist
+  // Watchlist (legacy single)
   watchlist: WatchlistEntry[];
   loadWatchlist: () => Promise<void>;
   saveWatchlist: (entries: WatchlistEntry[]) => Promise<void>;
+
+  // Named watchlists
+  watchlists: NamedWatchlist[];
+  loadWatchlists: () => Promise<void>;
+  createNamedWatchlist: (name: string, tickers?: WatchlistEntry[]) => Promise<void>;
+  updateNamedWatchlist: (name: string, tickers: WatchlistEntry[]) => Promise<void>;
+  renameNamedWatchlist: (oldName: string, newName: string) => Promise<void>;
+  deleteNamedWatchlist: (name: string) => Promise<void>;
+
+  // Portfolio settings (per-ticker allocation + agents overlay)
+  portfolioSettings: PortfolioSettings;
+  loadPortfolioSettings: () => Promise<void>;
+  savePortfolioSettings: (settings: PortfolioSettings) => Promise<void>;
+
+  // Sleeve rename (separate from updateSleeve which requires full payload)
+  renameSleeve: (oldName: string, newName: string) => Promise<void>;
 
   // Scan history
   scanHistory: ScanListItem[];
@@ -99,6 +117,8 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   const [liveActivity, setLiveActivity] = useState<ActivityEvent[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [watchlists, setWatchlists] = useState<NamedWatchlist[]>([]);
+  const [portfolioSettings, setPortfolioSettings] = useState<PortfolioSettings>({});
   const [scanHistory, setScanHistory] = useState<ScanListItem[]>([]);
   const [analystMeta, setAnalystMeta] = useState<Record<string, AnalystMetadata>>({});
 
@@ -145,6 +165,61 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     setWatchlist(persisted);
   }, []);
 
+  const loadWatchlists = useCallback(async () => {
+    try {
+      const { watchlists: wls } = await sleevesApi.getWatchlists();
+      setWatchlists(wls);
+    } catch (err) {
+      console.error('loadWatchlists failed:', err);
+    }
+  }, []);
+
+  const createNamedWatchlist = useCallback(async (name: string, tickers: WatchlistEntry[] = []) => {
+    const wl = await sleevesApi.createWatchlist(name, tickers);
+    setWatchlists((prev) => [...prev, wl]);
+  }, []);
+
+  const updateNamedWatchlist = useCallback(async (name: string, tickers: WatchlistEntry[]) => {
+    const wl = await sleevesApi.updateWatchlist(name, tickers);
+    setWatchlists((prev) => prev.map((w) => w.name === name ? wl : w));
+  }, []);
+
+  const renameNamedWatchlist = useCallback(async (oldName: string, newName: string) => {
+    await sleevesApi.renameWatchlist(oldName, newName);
+    setWatchlists((prev) => prev.map((w) => w.name === oldName ? { ...w, name: newName } : w));
+  }, []);
+
+  const deleteNamedWatchlist = useCallback(async (name: string) => {
+    await sleevesApi.deleteWatchlist(name);
+    setWatchlists((prev) => prev.filter((w) => w.name !== name));
+  }, []);
+
+  const loadPortfolioSettings = useCallback(async () => {
+    try {
+      const { settings } = await sleevesApi.getPortfolioSettings();
+      setPortfolioSettings(settings);
+    } catch (err) {
+      console.error('loadPortfolioSettings failed:', err);
+    }
+  }, []);
+
+  const savePortfolioSettings = useCallback(async (settings: PortfolioSettings) => {
+    const { settings: saved } = await sleevesApi.putPortfolioSettings(settings);
+    setPortfolioSettings(saved);
+  }, []);
+
+  const renameSleeve = useCallback(async (oldName: string, newName: string) => {
+    await sleevesApi.renameSleeve(oldName, newName);
+    await refresh();
+    // Also migrate portfolio settings key
+    setPortfolioSettings((prev) => {
+      if (!(oldName in prev)) return prev;
+      const next = { ...prev, [newName]: prev[oldName] };
+      delete next[oldName];
+      return next;
+    });
+  }, [refresh]);
+
   const loadScanHistory = useCallback(async () => {
     try {
       const { scans } = await sleevesApi.listScans(30);
@@ -180,9 +255,11 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
     void loadWatchlist();
+    void loadWatchlists();
     void loadScanHistory();
     void loadAnalystMeta();
-  }, [refresh, loadWatchlist, loadScanHistory, loadAnalystMeta]);
+    void loadPortfolioSettings();
+  }, [refresh, loadWatchlist, loadWatchlists, loadScanHistory, loadAnalystMeta, loadPortfolioSettings]);
 
   const clearActivity = useCallback(() => {
     setLiveActivity([]);
@@ -356,6 +433,16 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
     watchlist,
     loadWatchlist,
     saveWatchlist,
+    watchlists,
+    loadWatchlists,
+    createNamedWatchlist,
+    updateNamedWatchlist,
+    renameNamedWatchlist,
+    deleteNamedWatchlist,
+    portfolioSettings,
+    loadPortfolioSettings,
+    savePortfolioSettings,
+    renameSleeve,
     scanHistory,
     loadScanHistory,
     loadScanByDate,

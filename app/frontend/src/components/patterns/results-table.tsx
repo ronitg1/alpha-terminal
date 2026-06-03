@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { ConfidenceBadge } from './confidence-badge';
 import type { ScanResult, HistoricalStats } from '@/types/patterns';
+import type { ScreenerRecommendation } from '@/types/sleeves';
+import { OptionChainViewer } from '@/components/sleeves/options/option-chain-viewer';
 
 const BULLISH_PATTERNS = new Set([
   'Bullish Flag', 'Bull Pennant', 'Double Bottom', 'Inverse Head and Shoulders',
@@ -45,15 +47,59 @@ function WinRateBadge({ stats }: { stats: HistoricalStats | undefined }) {
   );
 }
 
+/**
+ * ContractPanel — full option chain for a pattern hit, with the expiry
+ * selector and recommended-contract highlight from the shared
+ * OptionChainViewer. Bullish patterns lean calls, bearish lean puts; the
+ * preferred DTE is the pattern's historical average hold so the default
+ * expiry lands near the window the move is expected to play out in.
+ */
+function ContractPanel({
+  ticker,
+  bullish,
+  horizonDays,
+  onClose,
+}: {
+  ticker: string;
+  bullish: boolean;
+  horizonDays: number;
+  onClose: () => void;
+}) {
+  const direction: 'call' | 'put' = bullish ? 'call' : 'put';
+  const dte = Math.max(14, Math.round(horizonDays));
+  const expiryLean: ScreenerRecommendation['expiry_lean'] =
+    dte <= 14 ? 'near' : dte <= 28 ? 'mid' : 'far';
+
+  const recommendation: ScreenerRecommendation = {
+    direction,
+    strike_offset_pct: 0, // ATM — clearest expression of a directional pattern bet
+    expiry_lean: expiryLean,
+    reasoning: `${bullish ? 'Bullish' : 'Bearish'} pattern — an ATM ${direction} expresses the directional bet. This pattern historically resolves over ~${Math.round(horizonDays)} trading days, so an expiry near ${dte}d gives the move room to play out before theta bites.`,
+  };
+
+  return (
+    <div className="mx-4 mb-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-800/40 text-xs">
+      <div className="flex items-center justify-between mb-1">
+        <span className="font-semibold text-indigo-300">
+          Recommended {direction.toUpperCase()} · {ticker}
+        </span>
+        <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>
+      </div>
+      <OptionChainViewer ticker={ticker} recommendation={recommendation} preferredDte={dte} />
+    </div>
+  );
+}
+
 type SortKey = 'ticker' | 'pattern' | 'end_date' | 'confidence';
 
-const COLS: { key: SortKey | 'win_rate' | 'description'; label: string; noSort?: boolean }[] = [
+const COLS: { key: SortKey | 'win_rate' | 'description' | 'contract'; label: string; noSort?: boolean }[] = [
   { key: 'ticker', label: 'Ticker' },
   { key: 'pattern', label: 'Pattern' },
   { key: 'end_date', label: 'Signal Date' },
   { key: 'confidence', label: 'Confidence' },
   { key: 'win_rate', label: 'Win Rate', noSort: true },
   { key: 'description', label: 'Description', noSort: true },
+  { key: 'contract', label: 'Contract', noSort: true },
 ];
 
 interface ResultsTableProps {
@@ -67,6 +113,7 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
   const [sortAsc, setSortAsc] = useState(false);
   const [filterPattern, setFilterPattern] = useState('');
   const [filterTicker, setFilterTicker] = useState('');
+  const [contractRow, setContractRow] = useState<string | null>(null); // "ticker:pattern:idx"
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc(!sortAsc);
@@ -83,8 +130,8 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
       );
     })
     .sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
+      const av = a[sortKey as SortKey];
+      const bv = b[sortKey as SortKey];
       if (typeof av === 'string' && typeof bv === 'string')
         return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -149,27 +196,60 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
               {filtered.map((r, idx) => {
                 const accent = rowAccent(r.pattern);
                 const bullish = BULLISH_PATTERNS.has(r.pattern);
+                const rowKey = `${r.ticker}:${r.pattern}:${idx}`;
+                const stats = winRates.get(`${r.ticker}:${r.pattern}`);
+                const horizonDays = stats ? stats.outcome_bars * 1.5 : 30;
+                const contractOpen = contractRow === rowKey;
                 return (
-                  <tr
-                    key={idx}
-                    onClick={() => onRowClick(r)}
-                    className={`border-l-2 cursor-pointer transition-colors ${accent} border-b border-gray-800/50`}
-                  >
-                    <td className="px-4 py-3 font-mono font-bold text-white whitespace-nowrap">{r.ticker}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${bullish ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>
-                        {bullish ? '▲' : '▼'} {r.pattern}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">{r.end_date}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <ConfidenceBadge confidence={r.confidence} />
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap min-w-[140px]">
-                      <WinRateBadge stats={winRates.get(`${r.ticker}:${r.pattern}`)} />
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs max-w-sm truncate">{r.description}</td>
-                  </tr>
+                  <React.Fragment key={rowKey}>
+                    <tr
+                      onClick={() => onRowClick(r)}
+                      className={`border-l-2 cursor-pointer transition-colors ${accent} border-b border-gray-800/50`}
+                    >
+                      <td className="px-4 py-3 font-mono font-bold text-white whitespace-nowrap">{r.ticker}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${bullish ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>
+                          {bullish ? '▲' : '▼'} {r.pattern}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">{r.end_date}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <ConfidenceBadge confidence={r.confidence} />
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap min-w-[140px]">
+                        <WinRateBadge stats={stats} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs max-w-sm truncate">{r.description}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setContractRow((prev) => (prev === rowKey ? null : rowKey));
+                          }}
+                          className={`text-xs px-2 py-1 rounded border transition-colors ${
+                            contractOpen
+                              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+                              : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-indigo-600 hover:text-indigo-400'
+                          }`}
+                        >
+                          {contractOpen ? 'Hide' : 'Contract'}
+                        </button>
+                      </td>
+                    </tr>
+                    {contractOpen && (
+                      <tr className="border-b border-gray-800/30">
+                        <td colSpan={COLS.length} className="p-0">
+                          <ContractPanel
+                            ticker={r.ticker}
+                            bullish={bullish}
+                            horizonDays={horizonDays}
+                            onClose={() => setContractRow(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -181,7 +261,7 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
       {results.length > 0 && (
         <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
           <span className="text-xs text-gray-600">
-            Sorted by confidence · Click any row to view chart
+            Sorted by confidence · Click row for chart · Contract for options rec
             {winRates.size < totalUniquePairs && (
               <span className="ml-2 text-indigo-600 animate-pulse">· Loading win rates…</span>
             )}

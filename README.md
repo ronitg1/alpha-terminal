@@ -2,19 +2,19 @@
 
 # Alpha Terminal
 
-**A research dashboard for retail investors. AI agent panels score your stocks, a real-fill options backtester checks your strategies, and you run it all from your laptop.**
+**A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#roadmap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-156%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!WARNING]
-> **🚧 Beta — actively under development.** Core features (Sleeves dashboard, options screener, backtest engine, My Stocks) are working and tested, but the project is on `v0.1.0` and the roadmap is open. Expect rough edges, breaking changes between versions, and missing pieces. See the [Roadmap](#roadmap) for what's coming. Pin a specific commit if you need stability.
+> **🚧 Beta — actively under development.** The five tabs (Market, Screening, Portfolio, News, Calls), the options screener + realistic backtester, and the Finnhub fundamentals integration are working and tested, but the project is pre-`1.0` and the roadmap is open. Expect rough edges and breaking changes between versions. See the [Roadmap](#roadmap). Pin a specific commit if you need stability.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -26,19 +26,20 @@ Alpha Terminal sits between your watchlist and your brokerage. It runs a panel o
 
 ```
 ┌────────────────────┐    ┌────────────────────┐    ┌────────────────────┐
-│  Your tickers      │ ─► │  Agent panel       │ ─► │  Visual dashboard  │
-│  • sleeves         │    │  • alpha_seeker    │    │  • bias + conv     │
-│  • watchlist       │    │  • damodaran       │    │  • LLM PM memo     │
-│  • my stocks       │    │  • burry, graham…  │    │  • per-ticker      │
+│  Your tickers      │ ─► │  Agent panel       │ ─► │  Portfolio Pulse   │
+│  • sleeves         │    │  • alpha_seeker    │    │  • per-agent cards │
+│  • watchlists      │    │  • damodaran       │    │  • Finnhub snapshot│
+│  • sector ETFs     │    │  • burry, graham…  │    │  • LLM idea synth  │
 └────────────────────┘    └────────────────────┘    └────────────────────┘
-                                                              │
-                                                              ▼
-                          ┌────────────────────┐    ┌────────────────────┐
-                          │  Backtest before   │ ◄─ │  11 options        │
-                          │  you buy           │    │  strategy screener │
-                          │  • real fills      │    │  • adaptive strikes│
-                          │  • per-strategy    │    │  • per-card chart  │
-                          └────────────────────┘    └────────────────────┘
+       │                                                      │
+       ▼                                                      ▼
+┌────────────────────┐  ┌────────────────────┐    ┌────────────────────┐
+│  Market News +     │  │  11 options        │ ─► │  Realistic options │
+│  Earnings Calls    │  │  strategy screener │    │  backtester        │
+│  • macro buckets   │  │  • adaptive strikes│    │  • profit/stop/DTE │
+│  • 9-section call  │  │  • spread legs     │    │  • slippage model  │
+│    breakdown       │  │  • real chains     │    │  • real or BSM     │
+└────────────────────┘  └────────────────────┘    └────────────────────┘
 ```
 
 ## Why this exists
@@ -64,9 +65,12 @@ poetry install --no-root
 # 3. Frontend deps
 cd app/frontend && npm install && cd ../..
 
-# 4. Get API keys (free tiers work):
-#    DeepSeek         https://platform.deepseek.com/  (LLM, ~$0.05 / agent call)
-#    Polygon Stocks   https://polygon.io/  (free tier: 5 req/min, paid: ~$30/mo for full features)
+# 4. Get API keys:
+#    DeepSeek         https://platform.deepseek.com/  (required — LLM, ~$0.05 / agent call)
+#    Polygon Stocks   https://polygon.io/  (required — free: 5 req/min, Starter ~$29/mo: unlimited)
+#    Finnhub          https://finnhub.io/register  (optional but recommended — free 60/min;
+#                     powers the News tab, earnings-beat/insider data, and fills Polygon's
+#                     insider + growth/turnover gaps)
 #    (optional) Financialdatasets.ai  https://financialdatasets.ai/  for richer ratios
 #
 # 5. Configure
@@ -80,11 +84,23 @@ cd app/frontend && npm run dev
 # 7. Open http://localhost:5173
 ```
 
-The Sleeves dashboard auto-loads on first open. Use the watchlist button (top-right) to add tickers, then click **Run portfolio** to score them.
+The dashboard opens on the **Market** tab. The left rail lists your sleeves, watchlists, and sector ETFs with live quotes; the top tabs switch between **Market · Screening · Portfolio · News · Calls**. Run a morning scan (`poetry run python -m src.run_morning_scan`) to populate Portfolio Pulse with agent verdicts.
 
 ---
 
 ## The dashboard at a glance
+
+A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs with live quotes + sparklines + company names), a **main pane** that switches across five tabs, and a context-aware **AI chat** drawer.
+
+| Tab | What it's for |
+| --- | --- |
+| **Market** | Per-ticker chart (price + volume), company overview, key financials, and a Finnhub fundamentals panel (growth/turnover, analyst consensus, earnings beat/miss, peers, insider flow). |
+| **Screening** | Pattern Scanner · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
+| **Portfolio** | Portfolio Pulse — bias/conviction rollup, high-conviction names, LLM memo, and per-name deep dives. |
+| **News** | Three-column market-news desk (your book · ticker search · auto-categorized macro) with per-article AI summaries. |
+| **Calls** | Earnings-call analysis — paste text / URL / PDF → a 9-section structured breakdown. |
+
+**Portfolio Pulse** is the home base:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -125,11 +141,11 @@ The Sleeves dashboard auto-loads on first open. Use the watchlist button (top-ri
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Click any ticker row to expand inline: 90-day price chart with timeframe selector
-(1W / 1M / 3M / 6M / YTD / 1Y / 2Y), a 2-sentence company overview from
-Polygon's reference data, the full key-financials TTM grid (P/E, margins, ROE,
-debt/equity, …), and the full per-agent thesis with each analyst's reasoning,
-catalysts, kill-switch, and variant perception.
+Click any ticker row to expand its **deep dive** — built for idea generation, not just numbers:
+
+1. **Finnhub snapshot strip** — analyst consensus, earnings beat/miss, growth, margin, P/E, insider flow.
+2. **Agent verdict cards** — one per analyst, each with a bull/bear/neutral pill, confidence bar, full reasoning, and (for the custom agents) the edge thesis, catalysts, and kill-switch.
+3. **Idea synthesis** — a one-click **Quick take** (fast DeepSeek thesis) or **Deep analysis** (richer, multi-section, pulls recent news), both grounded in the agent signals *and* the Finnhub fundamentals.
 
 ---
 
@@ -159,7 +175,7 @@ PM voice. Cached server-side by scan signature so re-fetching is free.
 | **Vol Expansion** | Realized-vol regime change |
 | **Unusual Options Activity** | Live chain vol/OI extremes |
 
-Each strategy ships a **strike + expiry recommendation** that **adapts to your picked expiry** — a +2% OTM call at 7d becomes ~+5% OTM at 50d via √-time strike scaling, same statistical reach across maturities. Click any row to drop into the chain viewer with the recommended contract highlighted.
+Each strategy ships a **strike + expiry recommendation** that **adapts to your picked expiry** — a +2% OTM call at 7d becomes ~+5% OTM at 50d via √-time strike scaling, same statistical reach across maturities. Click any candidate to drop into the chain viewer (calls/puts, ATM-highlighted) with the recommended contract starred; multi-leg structures (e.g. debit spreads) highlight **both** legs with BUY/SELL tags, and the "Plays" pills jump the chain to each expiry tier.
 
 ### 🧪 Backtest engine (two modes)
 
@@ -168,13 +184,13 @@ Each strategy ships a **strike + expiry recommendation** that **adapts to your p
 - **Real fills (Polygon)** — fetches the actual listed contract closest to the strategy's target strike + expiry (~2.5× hold-days out), then entry/exit at the actual daily close. Falls back to BSM per-trade if the contract or bar is missing.
 - **BSM proxy** — Black-Scholes against the underlying's trailing 30-day realized vol. Deterministic, no API calls. Useful for ranking strategies.
 
-Plus a **per-contract stop-loss** (toggleable off / −25% / −40% / −50% / −75%) that scans daily closes and exits early on the first breach.
+**Realistic exit model** — every trade is checked each day and closes on the first trigger: **profit target** (default +50%), **stop-loss** (default −50%), **DTE roll-out** (default 21 DTE, to step out before the gamma/theta cliff), or the **hold-days backstop**. A **slippage** model (default 5% round-trip spread) crosses half the bid/ask on each side, so frictionless win rates don't mislead. The conviction gate is **percentage-based** (magnitude-weighted, not a 0–3 count), the trades table shows the **exact entered contract** (strike + expiry) with entry/exit dates, and the summary breaks trades down by how they closed (target / stop / DTE / expiry / time). A "reality check" banner flags when BSM or frictionless settings are inflating results.
 
 **Sleeves mode** — wraps the LLM agent panel into a backtest. Each trading day, the full agent panel votes; portfolio positions follow the consensus. Equity curve with amber-entry / blue-exit trade markers, closed-trades table with per-agent attribution.
 
-### 📊 My Stocks dashboard
+### 📊 Market tab
 
-Editable per-card price + sparkline + timeframe selector. Each card persists its own timeframe in localStorage so you can have NVDA on 2Y while MSFT shows 1M. Add tickers via a single input; reorder via up/down arrows; remove via trash icon. Click "Overview" on any card to reveal the 2-sentence company description + key financials grid.
+Click any ticker (left rail, sleeve, or search) to open its detail view: a price + volume chart with a timeframe selector (1W → 2Y), a company overview, the key-financials grid, and a **Finnhub fundamentals panel** — growth/turnover metrics, an analyst-consensus bar, EPS beat/miss history, peers, and recent insider flow. Falls back gracefully (price-only, "—" placeholders) when a data provider is slow or down.
 
 ### 🛠 Custom agents
 
@@ -183,6 +199,22 @@ Three custom agents written specifically for this project, in addition to the 19
 - **`alpha_seeker`** — sector-agnostic alpha generation. Two-tier framing: STRONG EDGE requires a full variant perception ("Consensus is wrong because X"); DIRECTIONAL LEAN allows lower-conviction reads grounded in momentum + fundamentals + news flow.
 - **`energy_transition`** — IRA tax-credit + FEOC compliance scorecard. Allowed to use industry knowledge to infer FEOC status when news flow is silent (e.g., FSLR thin-film → clean; Chinese-cell inverter shops → amber/red).
 - **`emerging_tech`** — moat + S-curve + AI-tailwind + valuation scorecard. Calibrated confidence anchors (70-90 for full alignment, 30-50 for thin data).
+
+### 📰 Market News
+
+Three-column news desk: **your book** (headlines fanned across sleeve + watchlist tickers), **ticker search** (news for any symbol), and a **macro feed** auto-categorized into Monetary / Geopolitics / Government / Economy / Energy / Markets via keyword rules. Each article has an **AI summarize** action — 3 bullets + a "why it matters to your book" relevance read grounded in which sleeve holds the related ticker. Finnhub-primary with a Polygon fallback for per-ticker news.
+
+### 🎙 Earnings Call Analysis
+
+Paste a transcript, paste a URL, or upload a PDF; the analysis returns a 9-section structured read: sentiment vs prior quarter, tone delta, key themes with quotes, **hedging-language flags**, **dodged-question detection**, competitive + regulatory (IRA 45X / FEOC / tariff) mentions, and an explicit **thesis-impact verdict** (confirms / strengthens / weakens / breaks). URL extraction uses httpx + BeautifulSoup; PDF parsing uses pypdf.
+
+### 🧠 Per-name analysis (Portfolio Pulse)
+
+Each portfolio name has a **Quick take** (fast DeepSeek thesis) and **Deep analysis** (richer multi-section read that also pulls news). Both are grounded in the saved agent signals **and** Finnhub fundamentals — earnings beat/miss history, growth/turnover, analyst consensus, and insider flow — so the thesis reasons over fundamentals, not just price.
+
+### 🔌 Finnhub free-tier fallback (optional)
+
+When `FINNHUB_API_KEY` is set, Finnhub backfills the two gaps in Massive: **insider (Form 4) transactions** (Massive returns none) and the **growth / turnover / DSO ratios** its `/ratios` endpoint omits. It also enriches the Market tab's financials with a 130-metric fundamentals grid, earnings beat/miss history, analyst consensus, peers, and insider flow. Strictly additive — the app runs unchanged without the key. (Forward analyst estimates are premium-gated and not used.)
 
 ---
 
@@ -268,14 +300,15 @@ The two data providers have different sweet spots. Alpha Terminal routes each da
 | Data | Primary | Fallback | Why |
 |---|---|---|---|
 | Prices | Polygon | FDS | Polygon covers full US universe |
-| Company news | Polygon | FDS | Polygon's news feed is fresher |
+| Company news (tab) | Finnhub | Polygon | Finnhub's per-ticker + macro feeds are richer |
 | Market cap | Polygon reference | FDS company facts | Polygon has it on every ticker |
 | Fundamentals | FDS | Polygon ratios | FDS covers ratios cheaply; Polygon needs an add-on |
-| Line items | FDS | Polygon financials | Same reason |
-| Insider trades | FDS only | — | Polygon doesn't publish them |
+| Growth / turnover ratios | FDS | **Finnhub** `metric/all` | Polygon `/ratios` omits these |
+| Insider trades | FDS | **Finnhub** insider-transactions | Polygon doesn't publish them |
+| Analyst consensus / beat-miss | Finnhub | — | Free-tier `recommendation` + `earnings` |
 | Options chain | Polygon | — | Polygon Options plan only |
 
-Set neither `DATA_PROVIDER` nor both keys and the routing degrades gracefully — whichever provider you have, the dashboard still renders the data it can.
+Finnhub access is gated behind a single process-wide token-bucket limiter (≈50/min, under the free-tier 60/min ceiling) shared across every caller, so heavy navigation never trips a 429. Forward analyst estimates are premium-gated and intentionally unused. Set neither `DATA_PROVIDER` nor both keys and the routing degrades gracefully — whichever provider you have, the dashboard still renders the data it can.
 
 ---
 
@@ -305,18 +338,32 @@ alpha-terminal/
 │   │   └── watchlist.py             opportunistic queue
 │   ├── tools/
 │   │   ├── api.py                   per-type provider routing
-│   │   └── massive/                 Polygon REST client
+│   │   ├── massive/                 Polygon REST client
+│   │   └── finnhub/                 Finnhub client (rate-limited) + converters
 │   └── run_morning_scan.py          CLI entry point
 │
 ├── app/
 │   ├── backend/                 FastAPI
-│   │   ├── routes/sleeves.py        every /sleeves/* endpoint
-│   │   ├── services/                thesis, watchlist, sleeve config
-│   │   └── models/                  events + schemas
+│   │   ├── routes/
+│   │   │   ├── sleeves.py               /sleeves/* (config, quotes, screener,
+│   │   │   │                            backtest, chat, ticker enrichment, thesis)
+│   │   │   ├── news.py                  /news/* (feed, ticker search, summarize)
+│   │   │   └── transcripts.py           /transcripts/* (extract, upload, analyze)
+│   │   ├── services/                    thesis, sleeve config, watchlists,
+│   │   │                                portfolio settings, finnhub_news,
+│   │   │                                transcript_analysis
+│   │   └── models/                      events + schemas
 │   └── frontend/                React + Vite
-│       └── src/components/sleeves/  the entire UI lives here
+│       └── src/
+│           ├── components/dashboard/    3-pane shell: left-nav, main-content,
+│           │                            market-view, portfolio-section, finnhub panels
+│           ├── components/sleeves/      screener, chain viewer, backtest
+│           ├── components/news/         Market News tab
+│           ├── components/transcripts/  Earnings Calls tab
+│           ├── contexts/                sleeves + dashboard state
+│           └── services/                typed API clients
 │
-├── tests/                   ← 108 tests, pytest
+├── tests/                   ← 156 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
@@ -450,20 +497,30 @@ Fixed in the current version. If you see it on an older build, the cause was a s
 
 ## Roadmap
 
-Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues). The shortlist:
+Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
-- [ ] Earnings calendar integration (12th screener strategy)
+Recently shipped:
+
+- [x] Market News tab (Finnhub-backed, macro auto-categorization, AI summaries)
+- [x] Earnings-call analysis tab (paste/URL/PDF → 9-section breakdown)
+- [x] Finnhub free-tier integration — insider + growth/turnover backfill, fundamentals enrichment, shared rate limiter
+- [x] Realistic options backtester — profit-target / stop / DTE exits + slippage model
+- [x] Per-name analysis in Portfolio Pulse (Quick take / Deep analysis)
+
+The shortlist:
+
 - [ ] Trailing / peak drawdown stop-loss mode (currently only fixed-% from entry)
+- [ ] Remove the orphaned legacy IDE-shell components inherited from the upstream fork
+- [ ] Consolidate the two runtime-data dirs (`app/data/` + `app/backend/data/`)
 - [ ] Sleeve sparkline history (needs ≥3 historical scans before it's meaningful)
 - [ ] Diff highlight vs previous scan
 - [ ] Cost meter — running tally of LLM credits per session
-- [ ] Per-agent backtest customization
 
 ---
 
 ## Credits
 
-Built on the shoulders of [`virattt/ai-hedge-fund`](https://github.com/virattt/ai-hedge-fund) (MIT). The 19 upstream investor-persona agents (Warren Buffett, Aswath Damodaran, Stanley Druckenmiller, Ben Graham, Charlie Munger, Michael Burry, Phil Fisher, etc.) come from there essentially unchanged. The custom analysts, sleeves dashboard, options screener, real-fill backtest engine, My Stocks tab, and per-type data routing are new in this project.
+Built on the shoulders of [`virattt/ai-hedge-fund`](https://github.com/virattt/ai-hedge-fund) (MIT). The 19 upstream investor-persona agents (Warren Buffett, Aswath Damodaran, Stanley Druckenmiller, Ben Graham, Charlie Munger, Michael Burry, Phil Fisher, etc.) come from there essentially unchanged. The custom analysts, the five-tab dashboard, the options screener, the realistic options backtester, the Market News + earnings-call desks, the Finnhub integration, and the per-type data routing are new in this project.
 
 See [ATTRIBUTION.md](ATTRIBUTION.md) for the full diff.
 

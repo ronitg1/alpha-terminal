@@ -10,18 +10,13 @@
  */
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SleevesProvider } from '@/contexts/sleeves-context';
 import { LayoutGrid, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { StockCard } from './stock-card';
 import { useMyStocks } from './use-my-stocks';
 
 export function StocksTab() {
-  return (
-    <SleevesProvider>
-      <StocksTabContent />
-    </SleevesProvider>
-  );
+  return <StocksTabContent />;
 }
 
 function StocksTabContent() {

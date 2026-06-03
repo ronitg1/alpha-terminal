@@ -1,10 +1,10 @@
-import { Layout } from './components/Layout';
+import { DashboardLayout } from './components/DashboardLayout';
 import { Toaster } from './components/ui/sonner';
 
 export default function App() {
   return (
     <>
-      <Layout />
+      <DashboardLayout />
       <Toaster />
     </>
   );
