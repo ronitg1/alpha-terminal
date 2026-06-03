@@ -86,3 +86,8 @@ app/backend/alembic/versions/__pycache__/
 _smoke*.py
 _test_*.py
 scratch_*.py
+
+# ─── AI-session handoff docs ─────────────────────────────────────────────────
+# HANDOFF.md is a local-only doc that bridges Claude sessions on this machine.
+# Useful to maintain but not part of the public repo.
+HANDOFF.md
