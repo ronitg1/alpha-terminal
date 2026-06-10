@@ -334,21 +334,24 @@ export function LeftNav() {
         </button>
       </div>
 
-      {/* Section navigation */}
-      <div className="flex border-b border-border">
+      {/* Section navigation — 3×2 grid of pills. Six destinations don't fit
+          one row in a 240px rail ("Screening" alone needs ~46px at 10px
+          type), and a bottom-border tab metaphor reads poorly on two rows,
+          so the active state is a filled pill instead. */}
+      <div className="grid grid-cols-3 gap-1 p-2 border-b border-border">
         {navItems.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
             onClick={() => setSection(id)}
             className={cn(
-              'flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors',
+              'flex flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium transition-colors',
               section === id
-                ? 'text-foreground border-b-2 border-foreground -mb-px'
-                : 'text-muted-foreground hover:text-foreground border-b-2 border-transparent -mb-px',
+                ? 'bg-accent text-accent-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
             )}
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon className="h-4 w-4" />
             {label}
           </button>
         ))}
