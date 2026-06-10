@@ -859,6 +859,28 @@ function SleeveGroup({
   const [thesisLoading, setThesisLoading] = useState(false);
   const [thesisErr, setThesisErr] = useState<string | null>(null);
 
+  // Sleeve-wide agent run — a filtered live scan over just this sleeve.
+  // Results stream in via the shared SSE handler (sleeve_complete merges
+  // rows into latestScan) and persist merged into today's saved scan.
+  const { runScan, scanStatus, liveActivity } = useSleevesContext();
+  const [scanningSleeve, setScanningSleeve] = useState(false);
+
+  const runAgents = useCallback(async () => {
+    if (scanningSleeve || scanStatus === 'running') return;
+    setScanningSleeve(true);
+    setOpen(true);
+    try {
+      await runScan({ sleeves: [sleeveName] });
+    } finally {
+      setScanningSleeve(false);
+    }
+  }, [runScan, scanningSleeve, scanStatus, sleeveName]);
+
+  // Latest progress line while THIS sleeve's scan is running.
+  const lastActivity = scanningSleeve && liveActivity.length > 0
+    ? liveActivity[liveActivity.length - 1]
+    : null;
+
   const sleeveRows = rows.filter((r) => r.sleeve === sleeveName);
   const rowMap = Object.fromEntries(sleeveRows.map((r) => [r.ticker, r]));
 
@@ -922,6 +944,16 @@ function SleeveGroup({
         )}
         <button
           type="button"
+          onClick={() => void runAgents()}
+          disabled={scanningSleeve || scanStatus === 'running'}
+          title={`Run the agent panel on all ${tickers.length} names in this sleeve (updates today's saved scan)`}
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50 flex-shrink-0"
+        >
+          <Zap className="h-3 w-3" />
+          {scanningSleeve ? 'Running agents…' : 'Run agents'}
+        </button>
+        <button
+          type="button"
           onClick={() => void runThesis()}
           disabled={thesisLoading}
           title="Synthesize an LLM thesis across this sleeve's scanned names"
@@ -931,6 +963,15 @@ function SleeveGroup({
           {thesisLoading ? 'Analyzing…' : thesis ? 'Refresh thesis' : 'Run thesis'}
         </button>
       </div>
+
+      {/* Live agent progress while this sleeve's scan runs */}
+      {scanningSleeve && (
+        <div className="ml-7 text-[11px] text-muted-foreground italic">
+          {lastActivity
+            ? `${lastActivity.agent.replace(/_/g, ' ')}${lastActivity.ticker ? ` · ${lastActivity.ticker}` : ''}: ${lastActivity.status}`
+            : 'Starting agent panel…'}
+        </div>
+      )}
 
       {/* Sleeve thesis result */}
       {thesisErr && (

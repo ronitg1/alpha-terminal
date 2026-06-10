@@ -434,12 +434,20 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
               if (idx >= 0) partialRows[idx] = row;
               else partialRows.push(row);
             }
-            setLatestScan((prev) => ({
-              date: ev.date ?? prev?.date ?? '',
-              path: prev?.path ?? '',
-              row_count: partialRows.length,
-              rows: [...partialRows],
-            }));
+            // Merge into the existing scan rather than replacing it — a
+            // filtered run (one sleeve) must not blank the rest of the book
+            // mid-scan. Rescanned tickers take the fresh row.
+            setLatestScan((prev) => {
+              const fresh = new Set(partialRows.map((r) => r.ticker));
+              const kept = (prev?.rows ?? []).filter((r) => !fresh.has(r.ticker));
+              const rows = [...kept, ...partialRows];
+              return {
+                date: ev.date ?? prev?.date ?? '',
+                path: prev?.path ?? '',
+                row_count: rows.length,
+                rows,
+              };
+            });
             return;
           }
           case 'complete': {

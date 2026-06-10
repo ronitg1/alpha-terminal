@@ -546,13 +546,18 @@ def _read_scan_file(path: Path) -> dict[str, Any]:
 
 def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -> Path:
     """Companion to write_csv — persist the full UI shape (with agent raw)."""
+    return _write_scan_json_ui([_tickerrow_to_ui(r) for r in rows], outputs_dir, scan_date)
+
+
+def _write_scan_json_ui(rows_ui: list[dict[str, Any]], outputs_dir: Path, scan_date: str) -> Path:
+    """Persist UI-shaped rows as the JSON sidecar (atomic write)."""
     outputs_dir.mkdir(parents=True, exist_ok=True)
     path = outputs_dir / f"{scan_date}_morning_scan.json"
     payload = {
         "date": scan_date,
         "path": str(path).replace("\\", "/"),
-        "row_count": len(rows),
-        "rows": [_tickerrow_to_ui(r) for r in rows],
+        "row_count": len(rows_ui),
+        "rows": rows_ui,
     }
     # Atomic write: temp file in same dir + os.replace.
     fd, tmp = tempfile.mkstemp(prefix=".scan.", suffix=".tmp", dir=str(outputs_dir))
@@ -567,6 +572,68 @@ def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -
             pass
         raise
     return path
+
+
+def _write_scan_csv_ui(rows_ui: list[dict[str, Any]], outputs_dir: Path, scan_date: str) -> Path:
+    """Write the scan CSV from UI-shaped rows.
+
+    Byte-compatible with ``src.run_morning_scan.write_csv`` (same columns,
+    same per_agent serialization) so the CLI and history parsers keep
+    working on files written by merged partial scans.
+    """
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    path = outputs_dir / f"{scan_date}_morning_scan.csv"
+    fieldnames = [
+        "ticker", "sleeve", "consensus", "weighted_score", "avg_confidence",
+        "highlight", "position_type", "hold_period", "has_variant_perception",
+        "variant_perception", "per_agent_signals",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows_ui:
+            writer.writerow({
+                "ticker": r.get("ticker", ""),
+                "sleeve": r.get("sleeve", ""),
+                "consensus": r.get("consensus", "neutral"),
+                "weighted_score": round(float(r.get("weighted_score") or 0), 2),
+                "avg_confidence": round(float(r.get("avg_confidence") or 0), 2),
+                "highlight": r.get("highlight", "neutral"),
+                "position_type": r.get("position_type", ""),
+                "hold_period": r.get("hold_period", ""),
+                "has_variant_perception": r.get("has_variant_perception", False),
+                "variant_perception": r.get("variant_perception", ""),
+                "per_agent_signals": "; ".join(
+                    f"{a.get('agent')}={a.get('signal')}({float(a.get('confidence') or 0):.0f})"
+                    for a in (r.get("per_agent") or [])
+                    if isinstance(a, dict)
+                ),
+            })
+    return path
+
+
+def _merge_into_today(rows_ui: list[dict[str, Any]], scan_date: str) -> list[dict[str, Any]]:
+    """Fold freshly-scanned rows into today's existing scan, keyed by ticker.
+
+    A filtered run (one sleeve, a few tickers) must not clobber the rest of
+    the day's book on disk — rescanned tickers replace their old rows, all
+    other rows survive. Returns just the fresh rows when no readable scan
+    exists for ``scan_date``.
+    """
+    existing: list[dict[str, Any]] = []
+    for path in (
+        _OUTPUTS_DIR / f"{scan_date}_morning_scan.json",
+        _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv",
+    ):
+        if path.exists():
+            try:
+                existing = _read_scan_file(path).get("rows") or []
+                break
+            except HTTPException:
+                continue
+    fresh_tickers = {r.get("ticker") for r in rows_ui}
+    kept = [r for r in existing if isinstance(r, dict) and r.get("ticker") not in fresh_tickers]
+    return kept + rows_ui
 
 
 def _row_to_ui(raw: dict[str, str]) -> dict[str, Any]:
@@ -840,23 +907,35 @@ async def run_scan(req: ScanRequest, request: Request):
             # source of truth for backwards compat / CLI use; JSON carries
             # the full UI shape including each agent's raw output dict so
             # the drill drawer's rich fields work on historical scans too.
+            #
+            # Filtered runs (a single sleeve, ad-hoc tickers) MERGE into
+            # today's existing scan instead of replacing it — a one-sleeve
+            # rescan must not wipe the rest of the book from disk. Full runs
+            # write fresh so removed tickers don't linger as zombie rows.
             outputs_dir = _PROJECT_ROOT / "outputs"
+            partial = bool(req.sleeves) or bool(req.tickers)
+            rows_ui = [_tickerrow_to_ui(r) for r in all_rows]
+            if partial:
+                rows_ui = _merge_into_today(rows_ui, end_date)
+            csv_path_str = ""
             try:
-                csv_path = write_csv(all_rows, outputs_dir, end_date)
+                if partial:
+                    csv_path = _write_scan_csv_ui(rows_ui, outputs_dir, end_date)
+                else:
+                    csv_path = write_csv(all_rows, outputs_dir, end_date)
                 csv_path_str = str(csv_path).replace("\\", "/")
             except Exception:
                 logger.exception("Failed to write CSV")
-                csv_path_str = ""
             try:
-                _write_scan_json(all_rows, outputs_dir, end_date)
+                _write_scan_json_ui(rows_ui, outputs_dir, end_date)
             except Exception:
                 logger.exception("Failed to write JSON sidecar (CSV still written)")
 
             yield CompleteEvent(
                 data={
                     "date": end_date,
-                    "row_count": len(all_rows),
-                    "rows": [_tickerrow_to_ui(r) for r in all_rows],
+                    "row_count": len(rows_ui),
+                    "rows": rows_ui,
                     "csv_path": csv_path_str,
                 }
             ).to_sse()
