@@ -43,35 +43,6 @@ CASH_RESERVE_PCT: float = 10.0
 # The short-hand names "damodaran", "burry", "fundamentals" used in the
 # project spec are mapped to their canonical registry keys here.
 PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
-    "energy_transition": {
-        "allocation_pct": 50.0,
-        "agents": ["energy_transition", "aswath_damodaran", "michael_burry"],
-        "agent_weights": {
-            "energy_transition": 0.3333333333333333,
-            "aswath_damodaran": 0.3333333333333333,
-            "michael_burry": 0.33333333333333337,
-        },
-        "tickers": [
-            "FSLR",
-            "CSIQ",
-            "JKS",
-            "ARRY",
-            "SEDG",
-            "ENPH",
-            "CHPT",
-            "BLNK",
-            "EVGO",
-            "RUN",
-            "STEM",
-            "BE",
-            "PLPC",
-            "POWL",
-            "VST",
-            "CEG",
-            "NEE",
-            "AES",
-        ],
-    },
     "mega_tech": {
         "allocation_pct": 20.0,
         "agents": ["alpha_seeker", "aswath_damodaran", "fundamentals_analyst"],
