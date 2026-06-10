@@ -176,8 +176,21 @@ function WatchlistEditor({
   };
 
   const save = async () => {
+    // Flush any ticker still sitting in the add box — typing a symbol and
+    // clicking Save (without Enter/+) must not silently drop it.
+    let toSave = draft;
+    const pending = addInput.trim().toUpperCase();
+    if (pending) {
+      if (!TICKER_RE.test(pending)) { setAddError('Invalid ticker'); return; }
+      if (!draft.some((e) => e.ticker === pending)) {
+        toSave = [...draft, { ticker: pending, comment: '' }];
+        setDraft(toSave);
+      }
+      setAddInput('');
+    }
     setSaving(true);
-    try { await onSave(draft); }
+    try { await onSave(toSave); }
+    catch { /* surfaced as a toast by the context; keep the editor open */ }
     finally { setSaving(false); }
   };
 
@@ -468,10 +481,10 @@ export function LeftNav() {
                         <button
                           type="button"
                           onClick={() => { setEditingWatchlist(wl.name); setExpandedWatchlists((prev) => new Set([...prev, wl.name])); }}
-                          className="mr-2 opacity-0 group-hover/wl:opacity-100 text-muted-foreground hover:text-foreground transition-all"
-                          title="Edit tickers"
+                          className="mr-2 p-0.5 opacity-60 group-hover/wl:opacity-100 text-muted-foreground hover:text-primary transition-all"
+                          title="Add / edit tickers"
                         >
-                          <Pencil className="h-2.5 w-2.5" />
+                          <Pencil className="h-3 w-3" />
                         </button>
                       )}
                     </div>

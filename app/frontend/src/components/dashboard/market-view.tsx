@@ -170,6 +170,22 @@ function TickerEditor({
     setAddError('');
   };
 
+  /** Draft plus anything still typed in the add box — clicking Save without
+   *  pressing Enter/Add first must not silently drop the typed tickers. */
+  const draftWithPending = (): WatchlistEntry[] | null => {
+    const parts = addInput.trim().toUpperCase().split(/[\s,]+/).filter(Boolean);
+    if (parts.length === 0) return draft;
+    const bad = parts.filter((t) => !TICKER_RE.test(t));
+    if (bad.length) { setAddError(`Invalid: ${bad.join(', ')}`); return null; }
+    const extra = parts
+      .filter((t) => !draft.some((e) => e.ticker === t))
+      .map((t) => ({ ticker: t, comment: '' }));
+    const next = [...draft, ...extra];
+    setDraft(next);
+    setAddInput('');
+    return next;
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
@@ -202,7 +218,7 @@ function TickerEditor({
       <div className="flex gap-2 pt-1">
         <button
           type="button"
-          onClick={() => onSave(draft)}
+          onClick={() => { const next = draftWithPending(); if (next) onSave(next); }}
           disabled={saving}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/80 disabled:opacity-50 transition-colors"
         >
@@ -243,6 +259,7 @@ function WatchlistsPanel() {
     if (!name) return;
     setSaving(true);
     try { await createNamedWatchlist(name); setCreatingName(''); setCreating(false); }
+    catch { /* toast shown by context; keep the form open */ }
     finally { setSaving(false); }
   };
 
@@ -251,6 +268,7 @@ function WatchlistsPanel() {
     if (!newName || newName === oldName) { setRenamingWl(null); return; }
     setSaving(true);
     try { await renameNamedWatchlist(oldName, newName); setRenamingWl(null); }
+    catch { /* toast shown by context */ }
     finally { setSaving(false); }
   };
 
@@ -349,6 +367,7 @@ function WatchlistsPanel() {
                     onSave={async (next) => {
                       setSaving(true);
                       try { await updateNamedWatchlist(wl.name, next); setEditingTickers(null); }
+                      catch { /* toast shown by context; keep editor open */ }
                       finally { setSaving(false); }
                     }}
                     onCancel={() => setEditingTickers(null)}

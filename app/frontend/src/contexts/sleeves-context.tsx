@@ -190,8 +190,16 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveWatchlist = useCallback(async (entries: WatchlistEntry[]) => {
-    const { entries: persisted } = await sleevesApi.putWatchlist(entries);
-    setWatchlist(persisted);
+    try {
+      const { entries: persisted } = await sleevesApi.putWatchlist(entries);
+      setWatchlist(persisted);
+      toast.success('Watchlist saved');
+    } catch (err) {
+      // Surface loudly — silent save failures (e.g. backend down) read as
+      // "the app ate my edit", which is worse than an error.
+      toast.error(`Could not save the watchlist: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   }, []);
 
   const loadWatchlists = useCallback(async () => {
@@ -204,23 +212,47 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createNamedWatchlist = useCallback(async (name: string, tickers: WatchlistEntry[] = []) => {
-    const wl = await sleevesApi.createWatchlist(name, tickers);
-    setWatchlists((prev) => [...prev, wl]);
+    try {
+      const wl = await sleevesApi.createWatchlist(name, tickers);
+      setWatchlists((prev) => [...prev, wl]);
+      toast.success(`Watchlist "${name}" created`);
+    } catch (err) {
+      toast.error(`Could not create "${name}": ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   }, []);
 
   const updateNamedWatchlist = useCallback(async (name: string, tickers: WatchlistEntry[]) => {
-    const wl = await sleevesApi.updateWatchlist(name, tickers);
-    setWatchlists((prev) => prev.map((w) => w.name === name ? wl : w));
+    try {
+      const wl = await sleevesApi.updateWatchlist(name, tickers);
+      setWatchlists((prev) => prev.map((w) => w.name === name ? wl : w));
+      toast.success(`"${name}" saved (${tickers.length} ticker${tickers.length === 1 ? '' : 's'})`);
+    } catch (err) {
+      toast.error(`Could not save "${name}": ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   }, []);
 
   const renameNamedWatchlist = useCallback(async (oldName: string, newName: string) => {
-    await sleevesApi.renameWatchlist(oldName, newName);
-    setWatchlists((prev) => prev.map((w) => w.name === oldName ? { ...w, name: newName } : w));
+    try {
+      await sleevesApi.renameWatchlist(oldName, newName);
+      setWatchlists((prev) => prev.map((w) => w.name === oldName ? { ...w, name: newName } : w));
+      toast.success(`Renamed to "${newName}"`);
+    } catch (err) {
+      toast.error(`Rename failed: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   }, []);
 
   const deleteNamedWatchlist = useCallback(async (name: string) => {
-    await sleevesApi.deleteWatchlist(name);
-    setWatchlists((prev) => prev.filter((w) => w.name !== name));
+    try {
+      await sleevesApi.deleteWatchlist(name);
+      setWatchlists((prev) => prev.filter((w) => w.name !== name));
+      toast.success(`Deleted "${name}"`);
+    } catch (err) {
+      toast.error(`Delete failed: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   }, []);
 
   const loadPortfolioSettings = useCallback(async () => {
