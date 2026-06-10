@@ -1,6 +1,7 @@
 /**
- * BacktestTab — top-level container with sub-tab toggle for Sleeves vs
- * Options backtests.
+ * BacktestTabContent — backtest panel with a sub-tab toggle between the
+ * Strategy (options) and Sleeves (LLM agents) backtest engines. Rendered by
+ * the dashboard's main content area under the Screening section.
  *
  * Deliberately not using a Shadcn Tabs primitive — that would require
  * adding a new shared component for two pills. Inline button toggle is
@@ -13,12 +14,6 @@ import { OptionsBacktestPanel } from './options-backtest-panel';
 import { SleevesBacktestPanel } from './sleeves-backtest-panel';
 
 type SubTab = 'sleeves' | 'options';
-
-// Wraps in SleevesProvider so the sub-panels can read `config.sleeves` for
-// the sleeve picker. Tab-scoped — same pattern as SleevesTab + OptionsTab.
-export function BacktestTab() {
-  return <BacktestTabContent />;
-}
 
 export function BacktestTabContent() {
   const [sub, setSub] = useState<SubTab>('options');

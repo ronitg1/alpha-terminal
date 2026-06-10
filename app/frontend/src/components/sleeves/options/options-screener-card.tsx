@@ -14,6 +14,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { API_BASE_URL } from '@/lib/api-base';
 import { cn } from '@/lib/utils';
 import { ExpiryTier, ScreenerCandidate, ScreenerSignal } from '@/types/sleeves';
 import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
@@ -40,7 +41,7 @@ export function OptionsScreenerCard({ candidate, defaultOpen }: OptionsScreenerC
     if (reason) { setReason(null); return; }
     setReasonLoading(true);
     try {
-      const resp = await fetch('http://localhost:8000/sleeves/options/reason', {
+      const resp = await fetch(`${API_BASE_URL}/sleeves/options/reason`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

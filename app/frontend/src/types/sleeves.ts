@@ -429,7 +429,7 @@ export interface TranscriptAnalysis {
   watchNextQuarter: string[];
 }
 
-export type DashboardSection = 'market' | 'screening' | 'portfolio' | 'news' | 'transcripts';
+export type DashboardSection = 'market' | 'screening' | 'portfolio' | 'pnl' | 'news' | 'transcripts';
 export type ScreeningSubTab = 'patterns' | 'options' | 'backtest';
 
 export interface ChatMessage {

@@ -14,7 +14,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { sleevesApi } from '@/services/sleeves-api';
 import { DashboardSection, Quote, WatchlistEntry } from '@/types/sleeves';
-import { ChevronDown, ChevronRight, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -298,6 +298,7 @@ export function LeftNav() {
     { id: 'market', label: 'Market', icon: LayoutGrid },
     { id: 'screening', label: 'Screening', icon: Activity },
     { id: 'portfolio', label: 'Portfolio', icon: LineChart },
+    { id: 'pnl', label: 'P&L', icon: DollarSign },
     { id: 'news', label: 'News', icon: Newspaper },
     { id: 'transcripts', label: 'Calls', icon: FileText },
   ];

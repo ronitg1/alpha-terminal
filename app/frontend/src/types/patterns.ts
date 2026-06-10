@@ -3,6 +3,10 @@
  * Keep in sync with app/backend/routes/patterns.py Pydantic models.
  */
 
+/** Bar size for scans/charts. Daily bars carry YYYY-MM-DD dates; intraday
+ *  bars carry YYYY-MM-DDTHH:MM in US-Eastern wall-clock time. */
+export type PatternTimeframe = 'day' | '1h' | '15m';
+
 export interface CandleBar {
   date: string;
   open: number;

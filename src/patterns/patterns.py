@@ -26,6 +26,20 @@ def _to_df(candles: list[dict]) -> pd.DataFrame:
     return df
 
 
+def _bar_label(df: pd.DataFrame, i: int) -> str:
+    """Render a bar's timestamp for output.
+
+    Daily bars → ``YYYY-MM-DD``. Intraday bars (any nonzero time component)
+    → ``YYYY-MM-DDTHH:MM`` so multiple bars within one session stay distinct.
+    RTH-filtered equity bars never land exactly on midnight, so a zero time
+    component reliably means a daily bar.
+    """
+    t = df["date"].iloc[i]
+    if t.hour or t.minute:
+        return t.strftime("%Y-%m-%dT%H:%M")
+    return str(t)[:10]
+
+
 def _result(
     pattern: str,
     df: pd.DataFrame,
@@ -38,8 +52,8 @@ def _result(
 ) -> dict:
     return {
         "pattern": pattern,
-        "start_date": str(df["date"].iloc[start_i])[:10],
-        "end_date": str(df["date"].iloc[end_i])[:10],
+        "start_date": _bar_label(df, start_i),
+        "end_date": _bar_label(df, end_i),
         "confidence": round(float(np.clip(confidence, 0, 100)), 1),
         "description": description,
         "key_levels": key_levels or {},
@@ -85,8 +99,8 @@ def _local_extrema(values: np.ndarray, order: int = 3) -> tuple[np.ndarray, np.n
 def _seg(df: pd.DataFrame, i0: int, v0: float, i1: int, v1: float, label: str = "") -> dict:
     """Create a chart trendline segment: two time+price endpoints."""
     return {
-        "time_start": str(df["date"].iloc[i0])[:10],
-        "time_end": str(df["date"].iloc[i1])[:10],
+        "time_start": _bar_label(df, i0),
+        "time_end": _bar_label(df, i1),
         "value_start": round(float(v0), 4),
         "value_end": round(float(v1), 4),
         "label": label,

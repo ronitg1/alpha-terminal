@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -12,10 +13,44 @@ from app.backend.services.ollama_service import ollama_service
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# httpx/httpcore log every request URL at INFO. Any client that carries
+# credentials in a query param would leak them into the server log, so these
+# stay at WARNING regardless of the app's own log level.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup checks: required API keys, then Ollama availability."""
+    _check_required_keys()
+    try:
+        logger.info("Checking Ollama availability...")
+        status = await ollama_service.check_ollama_status()
+
+        if status["installed"]:
+            if status["running"]:
+                logger.info(f"Ollama is installed and running at {status['server_url']}")
+                if status["available_models"]:
+                    logger.info(f"Available models: {', '.join(status['available_models'])}")
+                else:
+                    logger.info("No Ollama models are currently downloaded")
+            else:
+                logger.info("Ollama is installed but not running (optional — start with 'ollama serve')")
+        else:
+            logger.info("Ollama is not installed (optional — needed only for local models)")
+
+    except Exception as e:
+        logger.warning(f"Could not check Ollama status: {e}")
+
+    yield
+
+
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.0.0",
+    version="1.1.0",
+    lifespan=_lifespan,
 )
 
 
@@ -62,29 +97,3 @@ app.add_middleware(
 
 # Include all routes
 app.include_router(api_router)
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup checks: required API keys, then Ollama availability."""
-    _check_required_keys()
-    try:
-        logger.info("Checking Ollama availability...")
-        status = await ollama_service.check_ollama_status()
-        
-        if status["installed"]:
-            if status["running"]:
-                logger.info(f"✓ Ollama is installed and running at {status['server_url']}")
-                if status["available_models"]:
-                    logger.info(f"✓ Available models: {', '.join(status['available_models'])}")
-                else:
-                    logger.info("ℹ No models are currently downloaded")
-            else:
-                logger.info("ℹ Ollama is installed but not running")
-                logger.info("ℹ You can start it from the Settings page or manually with 'ollama serve'")
-        else:
-            logger.info("ℹ Ollama is not installed. Install it to use local models.")
-            logger.info("ℹ Visit https://ollama.com to download and install Ollama")
-            
-    except Exception as e:
-        logger.warning(f"Could not check Ollama status: {e}")
-        logger.info("ℹ Ollama integration is available if you install it later")

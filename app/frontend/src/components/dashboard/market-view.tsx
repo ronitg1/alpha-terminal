@@ -13,6 +13,7 @@ import { FinnhubFinancials } from '@/components/dashboard/finnhub-financials';
 import { RecentNewsList } from '@/components/sleeves/recent-news-list';
 import { LineVolumeChart } from '@/components/sleeves/line-volume-chart';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, LineChart, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { WatchlistEntry } from '@/types/sleeves';
@@ -327,7 +328,12 @@ function WatchlistsPanel() {
                 </button>
               )}
               <button type="button"
-                onClick={() => { if (confirm(`Delete "${wl.name}"?`)) void deleteNamedWatchlist(wl.name); }}
+                onClick={() => {
+                  toast(`Delete "${wl.name}"?`, {
+                    action: { label: 'Delete', onClick: () => void deleteNamedWatchlist(wl.name) },
+                    cancel: { label: 'Cancel', onClick: () => {} },
+                  });
+                }}
                 className="text-muted-foreground hover:text-rose-500 transition-colors" title="Delete watchlist">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -478,19 +484,25 @@ function SleevesPanel() {
       setCreatingName('');
       setCreating(false);
     } catch (err) {
-      alert(`Failed to create sleeve: ${(err as Error).message}`);
+      toast.error(`Failed to create sleeve: ${(err as Error).message}`);
     } finally { setSaving(null); }
   };
 
-  const handleDelete = async (name: string) => {
-    if (!confirm(`Delete sleeve "${name}"? This cannot be undone.`)) return;
+  const doDeleteSleeve = async (name: string) => {
     setSaving(name);
     try {
       await import('@/services/sleeves-api').then(({ sleevesApi }) => sleevesApi.deleteSleeve(name));
       await refresh();
     } catch (err) {
-      alert(`Failed to delete: ${(err as Error).message}`);
+      toast.error(`Failed to delete: ${(err as Error).message}`);
     } finally { setSaving(null); }
+  };
+
+  const handleDelete = (name: string) => {
+    toast(`Delete sleeve "${name}"? This cannot be undone.`, {
+      action: { label: 'Delete', onClick: () => void doDeleteSleeve(name) },
+      cancel: { label: 'Cancel', onClick: () => {} },
+    });
   };
 
   const handleRename = async (oldName: string) => {
@@ -501,7 +513,7 @@ function SleevesPanel() {
       await renameSleeve(oldName, newName);
       setRenamingSl(null);
     } catch (err) {
-      alert(`Rename failed: ${(err as Error).message}`);
+      toast.error(`Rename failed: ${(err as Error).message}`);
     } finally { setSaving(null); }
   };
 

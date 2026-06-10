@@ -3,7 +3,7 @@
 # brand is "Alpha Terminal" (see README.md, LICENSE).
 [tool.poetry]
 name = "ai-hedge-fund"
-version = "1.0.0"
+version = "1.1.0"
 description = "Alpha Terminal — retail-investor research terminal. AI agent panels score your book, a realistic options backtester checks your strategies, and a market-news + earnings-call desk keeps you current."
 authors = ["Ronit Ganguly <ganguly.ronit@gmail.com>"]
 readme = "README.md"
@@ -36,6 +36,7 @@ fastapi = {extras = ["standard"], version = "^0.104.0"}
 fastapi-cli = "^0.0.7"
 pydantic = "^2.4.2"
 httpx = "^0.27.0"
+requests = "^2.31"
 sqlalchemy = "^2.0.22"
 alembic = "^1.12.0"
 langchain-gigachat = "^0.3.12"

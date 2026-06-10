@@ -10,6 +10,7 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { cn } from '@/lib/utils';
 import { MarketView } from './market-view';
 import { PortfolioSection } from './portfolio-section';
+import { PnlSection } from './pnl-section';
 import { NewsView } from '@/components/news/news-view';
 import { TranscriptsView } from '@/components/transcripts/transcripts-view';
 import { Component, ReactNode } from 'react';
@@ -104,6 +105,7 @@ export function MainContent() {
         {section === 'market' && <MarketView />}
         {section === 'screening' && <ScreeningSection />}
         {section === 'portfolio' && <PortfolioSection />}
+        {section === 'pnl' && <PnlSection />}
         {section === 'news' && <NewsView />}
         {section === 'transcripts' && <TranscriptsView />}
       </SectionErrorBoundary>

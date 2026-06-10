@@ -1,16 +1,19 @@
 /**
  * Thin fetch wrapper for all /patterns/* endpoints.
- * Uses the same base URL convention as the rest of the app (direct localhost:8000).
+ * Uses the same base URL convention as the rest of the app.
  */
 
 import type {
   ScanResult,
   ChartData,
+  PatternTimeframe,
   SignalAnalysisData,
   PatternsListResponse,
 } from '@/types/patterns';
 
-const BASE = 'http://localhost:8000/patterns';
+import { API_BASE_URL } from '@/lib/api-base';
+
+const BASE = `${API_BASE_URL}/patterns`;
 
 async function _get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(120_000) });
@@ -38,34 +41,42 @@ async function _post<T>(path: string, body: unknown): Promise<T> {
 export function scanTickers(
   tickers: string[],
   patterns: string[],
-  lookbackDays: number
+  lookbackDays: number,
+  timeframe: PatternTimeframe = 'day'
 ): Promise<ScanResult[]> {
   return _post<ScanResult[]>('/scan', {
     tickers,
     patterns,
     lookback_days: lookbackDays,
+    timeframe,
   });
 }
 
 export function scanWatchlist(
   patterns: string[],
-  lookbackDays: number
+  lookbackDays: number,
+  timeframe: PatternTimeframe = 'day'
 ): Promise<ScanResult[]> {
-  const params = new URLSearchParams({ lookback_days: String(lookbackDays) });
+  const params = new URLSearchParams({ lookback_days: String(lookbackDays), timeframe });
   if (patterns.length) params.set('patterns', patterns.join(','));
   return _get<ScanResult[]>(`/watchlist/scan?${params}`);
 }
 
-export function getChart(ticker: string, lookbackDays = 365): Promise<ChartData> {
-  return _get<ChartData>(`/chart/${ticker}?lookback_days=${lookbackDays}`);
+export function getChart(
+  ticker: string,
+  lookbackDays = 365,
+  timeframe: PatternTimeframe = 'day'
+): Promise<ChartData> {
+  return _get<ChartData>(`/chart/${ticker}?lookback_days=${lookbackDays}&timeframe=${timeframe}`);
 }
 
 export function getSignalAnalysis(
   ticker: string,
-  pattern: string
+  pattern: string,
+  timeframe: PatternTimeframe = 'day'
 ): Promise<SignalAnalysisData> {
   const encoded = pattern.replace(/ /g, '-');
-  return _get<SignalAnalysisData>(`/signal-analysis/${ticker}/${encoded}`);
+  return _get<SignalAnalysisData>(`/signal-analysis/${ticker}/${encoded}?timeframe=${timeframe}`);
 }
 
 export function listPatterns(): Promise<PatternsListResponse> {

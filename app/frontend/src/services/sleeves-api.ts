@@ -26,9 +26,7 @@ import {
   WatchlistEntry,
 } from '@/types/sleeves';
 
-// Same base URL convention as the other services. Override at build time via
-// VITE_API_URL if you ever expose the backend off-host.
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+import { API_BASE_URL } from '@/lib/api-base';
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`);

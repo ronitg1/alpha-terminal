@@ -12,9 +12,11 @@
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { pnlApi } from '@/services/pnl-api';
 import { OptionContract } from '@/types/sleeves';
-import { Copy, Star } from 'lucide-react';
+import { Copy, PlusCircle, Star } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 
 interface OptionLegRowProps {
   contract: OptionContract;
@@ -28,8 +30,12 @@ interface OptionLegRowProps {
 
 export function OptionLegRow({ contract, underlying, atm, highlight }: OptionLegRowProps) {
   const [copied, setCopied] = useState(false);
+  const [tracking, setTracking] = useState(false);
   const isLong = highlight === 'long';
   const isShort = highlight === 'short';
+
+  const entryPx = (): number | null =>
+    mid(contract.bid, contract.ask) ?? contract.last ?? contract.ask ?? contract.bid;
 
   const handleCopy = async () => {
     const code = contract.type === 'call' ? 'C' : 'P';
@@ -46,6 +52,41 @@ export function OptionLegRow({ contract, underlying, atm, highlight }: OptionLeg
       setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard API can fail under non-secure context; quiet failure is fine.
+    }
+  };
+
+  const handleTrack = async () => {
+    const px = entryPx();
+    if (px == null) {
+      toast.error('No quote on this contract to use as an entry price.');
+      return;
+    }
+    setTracking(true);
+    try {
+      await pnlApi.createPosition({
+        kind: 'option',
+        ticker: underlying,
+        side: isShort ? 'short' : 'long',
+        qty: 1,
+        option: {
+          type: contract.type,
+          strike: contract.strike,
+          expiration: contract.expiration,
+          contract_ticker: contract.ticker ?? null,
+        },
+        entry_price: Number(px.toFixed(2)),
+        entry_date: new Date().toISOString().slice(0, 10),
+        source: 'screener',
+        real: false,
+        notes: `Tracked from ${underlying} chain @ mid`,
+      });
+      toast.success(
+        `Tracking ${underlying} $${contract.strike}${contract.type === 'call' ? 'C' : 'P'} ${contract.expiration} @ $${px.toFixed(2)} — see the P&L tab`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTracking(false);
     }
   };
 
@@ -90,7 +131,21 @@ export function OptionLegRow({ contract, underlying, atm, highlight }: OptionLeg
       <td className="px-2 py-1 tabular-nums">{formatNum(contract.delta, 2)}</td>
       <td className="px-2 py-1 tabular-nums">{formatInt(contract.volume)}</td>
       <td className="px-2 py-1 tabular-nums">{formatInt(contract.open_interest)}</td>
-      <td className="px-1 py-1 text-right w-6">
+      <td className="px-1 py-1 text-right w-12 whitespace-nowrap">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5"
+          disabled={tracking}
+          onClick={(e) => {
+            e.stopPropagation();
+            void handleTrack();
+          }}
+          aria-label="Track this contract in the P&L tab"
+          title="Track in P&L (paper, 1 contract @ mid)"
+        >
+          <PlusCircle className="h-3 w-3" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"

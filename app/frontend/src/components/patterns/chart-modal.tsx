@@ -1,9 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CrosshairMode, LineStyle } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getChart } from '@/services/patterns-api';
 import { SignalAnalysis } from './signal-analysis';
-import type { ChartData } from '@/types/patterns';
+import type { ChartData, PatternTimeframe } from '@/types/patterns';
+
+/** Chart x-axis value for a backend bar label.
+ *
+ * Daily bars are `YYYY-MM-DD` strings (lightweight-charts business days).
+ * Intraday bars are `YYYY-MM-DDTHH:MM` in US-Eastern wall-clock; converting
+ * them as-if-UTC makes the chart's UTC clock display the ET wall time —
+ * exactly what a US-equity trader expects to read. */
+function toChartTime(date: string): Time {
+  if (date.includes('T')) {
+    return Math.floor(Date.parse(`${date}:00Z`) / 1000) as Time;
+  }
+  return date as Time;
+}
+
+/** Per-timeframe chart history window (server clamps further). */
+const CHART_LOOKBACK: Record<PatternTimeframe, number> = {
+  day: 365,
+  '1h': 90,
+  '15m': 30,
+};
 
 const BULLISH_PATTERNS = new Set([
   'Bullish Flag', 'Bull Pennant', 'Double Bottom', 'Inverse Head and Shoulders',
@@ -28,10 +48,11 @@ interface ChartModalProps {
   ticker: string;
   activePattern: string | null;
   activeEndDate: string | null;
+  timeframe?: PatternTimeframe;
   onClose: () => void;
 }
 
-export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: ChartModalProps) {
+export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = 'day', onClose }: ChartModalProps) {
   const priceRef = useRef<HTMLDivElement>(null);
   const volRef = useRef<HTMLDivElement>(null);
   const priceChartRef = useRef<IChartApi | null>(null);
@@ -59,9 +80,11 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
       setError(null);
 
       try {
-        const data = await getChart(ticker, 365);
+        const data = await getChart(ticker, CHART_LOOKBACK[timeframe], timeframe);
         if (destroyed) return;
         setChartData(data);
+
+        const intraday = timeframe !== 'day';
 
         // ── Price chart ──────────────────────────────────────────
         const priceChart = createChart(priceRef.current!, {
@@ -69,6 +92,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
           width: priceRef.current!.clientWidth,
           height: priceRef.current!.clientHeight,
           crosshair: { mode: CrosshairMode.Normal },
+          timeScale: { ...CHART_THEME.timeScale, timeVisible: intraday },
         });
         priceChartRef.current = priceChart;
 
@@ -82,7 +106,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
 
         candleSeries.setData(
           data.candles.map((c) => ({
-            time: c.date as string,
+            time: toChartTime(c.date),
             open: c.open,
             high: c.high,
             low: c.low,
@@ -92,7 +116,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
 
         // ── Pattern markers ──────────────────────────────────────
         const markers: Array<{
-          time: string;
+          time: Time;
           position: 'belowBar' | 'aboveBar';
           color: string;
           shape: 'arrowUp' | 'arrowDown' | 'circle';
@@ -108,7 +132,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
           const dimColor = bullish ? '#15803d' : '#991b1b';
 
           markers.push({
-            time: p.start_date,
+            time: toChartTime(p.start_date),
             position: bullish ? 'belowBar' : 'aboveBar',
             color: isActive ? color : dimColor,
             shape: bullish ? 'arrowUp' : 'arrowDown',
@@ -116,7 +140,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
             size: isActive ? 2 : 1,
           });
           markers.push({
-            time: p.end_date,
+            time: toChartTime(p.end_date),
             position: bullish ? 'aboveBar' : 'belowBar',
             color: isActive ? color : dimColor,
             shape: 'circle',
@@ -175,8 +199,8 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
               lastValueVisible: false,
             });
             ls.setData([
-              { time: tl.time_start as string, value: tl.value_start },
-              { time: tl.time_end as string, value: tl.value_end },
+              { time: toChartTime(tl.time_start), value: tl.value_start },
+              { time: toChartTime(tl.time_end), value: tl.value_end },
             ]);
           }
         }
@@ -211,7 +235,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
         volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0 } });
         volSeries.setData(
           data.candles.map((c) => ({
-            time: c.date as string,
+            time: toChartTime(c.date),
             value: c.volume || 0,
             color: c.close >= c.open ? '#22c55e55' : '#ef444455',
           }))
@@ -250,7 +274,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
       priceChartRef.current = null;
       volChartRef.current = null;
     };
-  }, [ticker, activePattern, activeEndDate]);
+  }, [ticker, activePattern, activeEndDate, timeframe]);
 
   // Handle window resize
   useEffect(() => {
@@ -358,7 +382,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, onClose }: Ch
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Signal Analysis</p>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto p-4">
-                <SignalAnalysis ticker={ticker} pattern={activePattern} />
+                <SignalAnalysis ticker={ticker} pattern={activePattern} timeframe={timeframe} />
               </div>
             </div>
           )}

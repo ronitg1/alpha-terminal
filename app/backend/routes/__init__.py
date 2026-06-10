@@ -12,6 +12,7 @@ from app.backend.routes.sleeves import router as sleeves_router
 from app.backend.routes.patterns import router as patterns_router
 from app.backend.routes.news import router as news_router
 from app.backend.routes.transcripts import router as transcripts_router
+from app.backend.routes.pnl import router as pnl_router
 
 # Main API router
 api_router = APIRouter()
@@ -29,3 +30,4 @@ api_router.include_router(sleeves_router, tags=["sleeves"])
 api_router.include_router(patterns_router, tags=["patterns"])
 api_router.include_router(news_router, tags=["news"])
 api_router.include_router(transcripts_router, tags=["transcripts"])
+api_router.include_router(pnl_router)

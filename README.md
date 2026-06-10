@@ -4,17 +4,17 @@
 
 **A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
-[![Version: 1.0](https://img.shields.io/badge/version-1.0-blue.svg)](CHANGELOG.md)
+[![Version: 1.1](https://img.shields.io/badge/version-1.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-156%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-172%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.0 — stable.** The five tabs (Market, Screening, Portfolio, News, Calls), the options screener + realistic backtester, the Pattern Scanner, and the Finnhub fundamentals integration are feature-complete and tested (156 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.1 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester, the intraday-capable Pattern Scanner, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (172 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -90,19 +90,20 @@ cd app/frontend && npm run dev
 # 7. Open http://localhost:5173
 ```
 
-The dashboard opens on the **Market** tab. The left rail lists your sleeves, watchlists, and sector ETFs with live quotes; the top tabs switch between **Market · Screening · Portfolio · News · Calls**. Run a morning scan (`poetry run python -m src.run_morning_scan`) to populate Portfolio Pulse with agent verdicts.
+The dashboard opens on the **Market** tab. The left rail lists your sleeves, watchlists, and sector ETFs with live quotes; the top tabs switch between **Market · Screening · Portfolio · P&L · News · Calls**. Run a morning scan (`poetry run python -m src.run_morning_scan`) to populate Portfolio Pulse with agent verdicts.
 
 ---
 
 ## The dashboard at a glance
 
-A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs with live quotes + sparklines + company names), a **main pane** that switches across five tabs, and a context-aware **AI chat** drawer.
+A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs with live quotes + sparklines + company names), a **main pane** that switches across six tabs, and a context-aware **AI chat** drawer.
 
 | Tab | What it's for |
 | --- | --- |
 | **Market** | Per-ticker chart (price + volume), company overview, key financials, and a Finnhub fundamentals panel (growth/turnover, analyst consensus, earnings beat/miss, peers, insider flow). |
-| **Screening** | Pattern Scanner · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
+| **Screening** | Pattern Scanner (daily / 1h / 15m) · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
 | **Portfolio** | Portfolio Pulse — conviction rollup, high-conviction names, whole-portfolio + per-sleeve + per-name LLM thesis, and per-name agent deep dives. |
+| **P&L** | Track contracts you take or like — manual entry, one-click Track from any chain row, or Fidelity CSV import. Live mark-to-market, realized + unrealized totals, win rate, equity curve. |
 | **News** | Three-column market-news desk (your book · ticker search · auto-categorized macro) with per-article AI summaries. |
 | **Calls** | Earnings-call analysis — paste text / URL / PDF → a 9-section structured breakdown. |
 
@@ -158,7 +159,7 @@ Your book is organized into themed **sleeves** ("Energy Transition 50% / Mega Te
 
 ### 🔎 Pattern Scanner
 
-Detects **12 classic chart patterns** on daily OHLCV, ranks every hit by a transparent confidence score, then — for any signal you click — shows how that pattern has historically resolved on that name and which options structures fit it.
+Detects **12 classic chart patterns** on **three timeframes — daily, 1-hour, and 15-minute bars** — ranks every hit by a transparent confidence score, then — for any signal you click — shows how that pattern has historically resolved on that name and which options structures fit it.
 
 **Patterns detected** (▲ bullish / ▼ bearish):
 
@@ -168,13 +169,13 @@ Detects **12 classic chart patterns** on daily OHLCV, ranks every hit by a trans
 
 **Confidence (0–100)** is a weighted, inspectable blend — `0.4 × breakout strength + 0.3 × volume confirmation + 0.3 × trendline-touch / symmetry` — so a clean breakout on heavy volume with several trendline touches scores high, and a marginal one scores low. Overlapping detections of the same pattern are de-duplicated (highest confidence kept).
 
-**Run a scan.** Pick the universe from three tabs — **Watchlist** (all or one named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — tick which of the 12 patterns to look for, choose a lookback (30d / 60d / 90d / 180d / 1yr), and scan. Results come back as a confidence-sorted table next to a **Quick Stats** card: total signals, average confidence, bullish-vs-bearish split, and the top tickers by signal count.
+**Run a scan.** Pick the universe from three tabs — **Watchlist** (all or one named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — tick which of the 12 patterns to look for, pick a **timeframe** (Daily for swing/position setups, 1h for multi-day swings, 15m for day-trade setups) and a lookback sized to it (up to 1yr daily, 90d hourly, 30d on 15m), and scan. Intraday bars are **regular-trading-hours only** (premarket noise is filtered) and timestamps read in **US-Eastern exchange time**. Results come back as a confidence-sorted table next to a **Quick Stats** card: total signals, average confidence, bullish-vs-bearish split, and the top tickers by signal count.
 
-**Drill into any signal.** Click a row to open a full-screen chart — candlesticks plus a synced volume histogram, every detected pattern flagged with an entry arrow and a confidence marker, and the selected pattern's **trendlines drawn directly on the chart** (pole, channel, neckline, cup walls, wedge lines) with dashed **key-level** price lines (resistance / support / neckline) labelled on the axis.
+**Drill into any signal.** Click a row to open a full-screen chart — candlesticks plus a synced volume histogram on the scan's timeframe, every detected pattern flagged with an entry arrow and a confidence marker, and the selected pattern's **trendlines drawn directly on the chart** (pole, channel, neckline, cup walls, wedge lines) with dashed **key-level** price lines (resistance / support / neckline) labelled on the axis.
 
 **Signal Analysis side panel** answers "is this pattern worth trading on this name?":
 
-- **Historical win rate** — a 730-day backtest of that exact ticker + pattern. A signal counts as a *win* if price posts a **≥ 3% favourable move within 20 trading days** of the breakout; recent signals that don't yet have 20 forward bars are excluded so the rate isn't inflated. Shows win rate (as a gauge), total signals, the W/L split, and average win / loss size.
+- **Historical win rate** — a backtest of that exact ticker + pattern *on the scan's timeframe* (730 days of daily bars, 180 days of hourly, 60 days of 15m). A signal counts as a *win* if price posts a favourable move within 20 bars that clears the timeframe's threshold — **3%** on daily, **1.5%** on 1h, **0.75%** on 15m — so "win" stays meaningful as bars shrink. Recent signals that don't yet have 20 forward bars are excluded so the rate isn't inflated. Shows win rate (as a gauge), total signals, the W/L split, and average win / loss size.
 - **Options plays** — three graded structures matched to the pattern's direction (**Long Call / Bull Call Spread / Cash-Secured Put** for bullish; **Long Put / Bear Put Spread / Covered Call** for bearish), each with a concrete strike (rounded to listed increments off the current price), a suggested DTE, the rationale, risk/reward, and the IV-rank regime it works best in.
 
 ### 📈 Options screener (11 strategies)
@@ -205,6 +206,17 @@ Each strategy ships a **strike + expiry recommendation** that **adapts to your p
 **Realistic exit model** — every trade is checked each day and closes on the first trigger: **profit target** (default +50%), **stop-loss** (default −50%), **DTE roll-out** (default 21 DTE, to step out before the gamma/theta cliff), or the **hold-days backstop**. A **slippage** model (default 5% round-trip spread) crosses half the bid/ask on each side, so frictionless win rates don't mislead. The conviction gate is **percentage-based** (magnitude-weighted, not a 0–3 count), the trades table shows the **exact entered contract** (strike + expiry) with entry/exit dates, and the summary breaks trades down by how they closed (target / stop / DTE / expiry / time). A "reality check" banner flags when BSM or frictionless settings are inflating results.
 
 **Sleeves mode** — wraps the LLM agent panel into a backtest. Each trading day, the full agent panel votes; portfolio positions follow the consensus. Equity curve with amber-entry / blue-exit trade markers, closed-trades table with per-agent attribution.
+
+### 💰 P&L Tracker
+
+Track the contracts you actually take — and the ones you find attractive — in one ledger, marked to market from live data.
+
+**Three ways in:**
+- **One-click Track** — every contract row in the option-chain viewer has a ➕ button: tracks 1 contract at the current mid as a *paper* idea, tagged with its source.
+- **Manual entry** — an inline form for any stock or option position (long/short, qty, entry, strike/expiry), paper or real.
+- **Fidelity CSV import** — drop in either Fidelity export (Positions, or Activity/transactions). Option symbols like `-NVDA260717C200` are decoded, opening fills create positions, closing fills FIFO-match them (partial closes split correctly), and re-imports are idempotent. Rows land tagged **REAL**; nothing from the CSV is stored except the parsed positions (in the gitignored `app/data/`). See [docs/FIDELITY_INTEGRATION.md](docs/FIDELITY_INTEGRATION.md) for the auto-sync (SnapTrade/Akoya) upgrade path — and why credential-scraping is deliberately not supported.
+
+**What you see:** summary cards (realized / unrealized / total P&L, win rate, open-vs-closed counts), a **realized equity curve**, and open + closed position tables. Open options are marked from the **live chain snapshot** (bid/ask mid → last trade → day close, with a per-contract aggregate fallback after hours); stocks mark at the latest close. Unrealized P&L shows in dollars and percent against cost basis; the **Close** button prefills the current mark. Paper and real positions live side by side with REAL/PAPER tags, so you can compare what you did against what you only watched.
 
 ### 📊 Market tab
 
@@ -385,7 +397,7 @@ alpha-terminal/
 │           ├── contexts/                sleeves + dashboard state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 156 tests, pytest
+├── tests/                   ← 172 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
@@ -530,17 +542,17 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Recently shipped**
 
-- [x] **1.0** — per-name conviction score + recommendation in Portfolio Pulse; structured-reasoning rendering for the Fundamentals/Valuation analysts; backend scoring-engine extraction; consolidated runtime data dir; accurate Pattern Scanner docs (see [changelog](CHANGELOG.md))
+- [x] **1.1** — **P&L Tracker tab** (one-click Track from chain rows, manual entry, Fidelity CSV import, live mark-to-market, equity curve); **intraday Pattern Scanner** (1h + 15m timeframes, RTH-filtered, ET timestamps, per-timeframe win-rate thresholds); production hardening from a full audit — API-key log-leak fix, SSE stall watchdog, ~46 dead frontend files removed, toasts replace alert() (see [changelog](CHANGELOG.md))
+- [x] **1.0** — per-name conviction score + recommendation in Portfolio Pulse; structured-reasoning rendering for the Fundamentals/Valuation analysts; backend scoring-engine extraction; consolidated runtime data dir; accurate Pattern Scanner docs
 - [x] Market News tab (Finnhub-backed, macro auto-categorization, AI summaries)
 - [x] Earnings-call analysis tab (paste/URL/PDF → 9-section breakdown)
 - [x] Finnhub free-tier integration — insider + growth/turnover backfill, fundamentals enrichment, shared rate limiter
 - [x] Realistic options backtester — profit-target / stop / DTE exits + slippage model
 - [x] Per-name, per-sleeve, and whole-portfolio LLM thesis in Portfolio Pulse
-- [x] Removed the legacy IDE-shell components inherited from the upstream fork
 
 **Up next**
 
-- [ ] 📈 **P&L tracker** — log entries/exits per idea, mark-to-market against live quotes, realized + unrealized P&L per sleeve, and a portfolio equity curve
+- [ ] 🔗 **Fidelity auto-sync** — SnapTrade (Akoya OAuth) read-only positions/fills feed into the P&L tab; plan in [docs/FIDELITY_INTEGRATION.md](docs/FIDELITY_INTEGRATION.md)
 - [ ] 🗓️ **Earnings calendar** — upcoming report dates across your book (Finnhub `/calendar/earnings`), with pre/post-earnings flags on each ticker
 - [ ] 🔔 **Price + signal alerts** — threshold + conviction-change notifications
 - [ ] 📊 **Sector heatmap** — relative-strength grid across sleeves and the SPDR sectors
@@ -553,7 +565,7 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 ## Credits
 
-Built on the shoulders of [`virattt/ai-hedge-fund`](https://github.com/virattt/ai-hedge-fund) (MIT). The 19 upstream investor-persona agents (Warren Buffett, Aswath Damodaran, Stanley Druckenmiller, Ben Graham, Charlie Munger, Michael Burry, Phil Fisher, etc.) come from there essentially unchanged. The custom analysts, the five-tab dashboard, the options screener, the realistic options backtester, the Market News + earnings-call desks, the Finnhub integration, and the per-type data routing are new in this project.
+Built on the shoulders of [`virattt/ai-hedge-fund`](https://github.com/virattt/ai-hedge-fund) (MIT). The 19 upstream investor-persona agents (Warren Buffett, Aswath Damodaran, Stanley Druckenmiller, Ben Graham, Charlie Munger, Michael Burry, Phil Fisher, etc.) come from there essentially unchanged. The custom analysts, the six-tab dashboard, the options screener, the realistic options backtester, the P&L tracker + Fidelity import, the Market News + earnings-call desks, the Finnhub integration, and the per-type data routing are new in this project.
 
 See [ATTRIBUTION.md](ATTRIBUTION.md) for the full diff.
 

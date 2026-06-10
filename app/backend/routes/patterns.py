@@ -23,6 +23,51 @@ router = APIRouter(prefix="/patterns", tags=["patterns"])
 
 _executor = ThreadPoolExecutor(max_workers=6)
 
+# Timeframe registry. Each entry sets the Polygon aggregate params plus the
+# guardrails that keep intraday sane: a lookback clamp (dense bars + the
+# O(n²)-ish detectors), the signal-analysis history window, and the win
+# threshold for the historical backtest (3% in 20 daily bars is a different
+# beast from 3% in 20 fifteen-minute bars — thresholds scale down with the
+# bar size so "win" stays meaningful).
+_TIMEFRAMES: dict[str, dict] = {
+    "day": {
+        "multiplier": 1,
+        "timespan": "day",
+        "max_lookback_days": 730,
+        "history_days": 730,
+        "win_threshold": 0.03,
+    },
+    "1h": {
+        "multiplier": 1,
+        "timespan": "hour",
+        "max_lookback_days": 90,
+        "history_days": 180,
+        "win_threshold": 0.015,
+    },
+    "15m": {
+        "multiplier": 15,
+        "timespan": "minute",
+        "max_lookback_days": 30,
+        "history_days": 60,
+        "win_threshold": 0.0075,
+    },
+}
+
+# Hard cap on bars fed to the detectors — bounds scan latency on dense
+# intraday series (a 90-day hourly window is ~580 RTH bars; 30 days of 15m
+# is ~780; the cap only bites if someone widens the clamps).
+_MAX_BARS = 1500
+
+
+def _timeframe_cfg(timeframe: str) -> dict:
+    cfg = _TIMEFRAMES.get(timeframe)
+    if cfg is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown timeframe '{timeframe}'. Valid: {sorted(_TIMEFRAMES)}",
+        )
+    return cfg
+
 DEFAULT_WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "MU", "INTC", "AVGO", "QCOM", "META",
     "GOOGL", "AMZN", "JPM", "BAC", "GS", "MS", "WFC", "C", "V", "MA",
@@ -38,6 +83,7 @@ class ScanRequest(BaseModel):
     tickers: list[str]
     patterns: list[str] = []
     lookback_days: int = 365
+    timeframe: str = "day"
 
 
 class ScanResult(BaseModel):
@@ -74,12 +120,17 @@ async def _scan_ticker(
     from_date: str,
     to_date: str,
     pattern_names: list[str],
+    timespan: str = "day",
+    multiplier: int = 1,
 ) -> list[dict]:
     """Fetch candles then run all selected detectors concurrently in the thread pool."""
     try:
-        candles = await fetch_candles(ticker, from_date, to_date)
+        candles = await fetch_candles(
+            ticker, from_date, to_date, timespan=timespan, multiplier=multiplier
+        )
         if not candles:
             return []
+        candles = candles[-_MAX_BARS:]
         loop = asyncio.get_running_loop()
         tasks = [
             loop.run_in_executor(
@@ -114,10 +165,19 @@ async def scan(req: ScanRequest) -> list[dict]:
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown patterns: {unknown}")
 
-    from_date, to_date = _date_range(req.lookback_days)
+    cfg = _timeframe_cfg(req.timeframe)
+    lookback = min(req.lookback_days, cfg["max_lookback_days"])
+    from_date, to_date = _date_range(lookback)
 
     tasks = [
-        _scan_ticker(ticker.upper().strip(), from_date, to_date, pattern_names)
+        _scan_ticker(
+            ticker.upper().strip(),
+            from_date,
+            to_date,
+            pattern_names,
+            timespan=cfg["timespan"],
+            multiplier=cfg["multiplier"],
+        )
         for ticker in req.tickers
     ]
     nested = await asyncio.gather(*tasks)
@@ -130,6 +190,7 @@ async def scan(req: ScanRequest) -> list[dict]:
 async def watchlist_scan(
     patterns: Optional[str] = Query(None, description="Comma-separated pattern names"),
     lookback_days: int = Query(180, ge=30, le=365),
+    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
 ) -> list[dict]:
     """Scan the built-in 50-ticker large-cap watchlist."""
     pattern_names = (
@@ -137,10 +198,18 @@ async def watchlist_scan(
         if patterns
         else list(PATTERN_DETECTORS.keys())
     )
-    from_date, to_date = _date_range(lookback_days)
+    cfg = _timeframe_cfg(timeframe)
+    from_date, to_date = _date_range(min(lookback_days, cfg["max_lookback_days"]))
 
     tasks = [
-        _scan_ticker(ticker, from_date, to_date, pattern_names)
+        _scan_ticker(
+            ticker,
+            from_date,
+            to_date,
+            pattern_names,
+            timespan=cfg["timespan"],
+            multiplier=cfg["multiplier"],
+        )
         for ticker in DEFAULT_WATCHLIST
     ]
     nested = await asyncio.gather(*tasks)
@@ -152,15 +221,20 @@ async def watchlist_scan(
 @router.get("/chart/{ticker}")
 async def chart(
     ticker: str,
-    lookback_days: int = Query(365, ge=30, le=730),
+    lookback_days: int = Query(365, ge=1, le=730),
+    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
 ) -> dict:
     """Return all OHLCV bars + all detected patterns (with trendlines) for one ticker."""
-    from_date, to_date = _date_range(lookback_days)
+    cfg = _timeframe_cfg(timeframe)
+    from_date, to_date = _date_range(min(lookback_days, cfg["max_lookback_days"]))
     ticker = ticker.upper()
 
-    candles = await fetch_candles(ticker, from_date, to_date)
+    candles = await fetch_candles(
+        ticker, from_date, to_date, timespan=cfg["timespan"], multiplier=cfg["multiplier"]
+    )
     if not candles:
         raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+    candles = candles[-_MAX_BARS:]
 
     loop = asyncio.get_running_loop()
     pattern_names = list(PATTERN_DETECTORS.keys())
@@ -183,13 +257,19 @@ async def chart(
 
 
 @router.get("/signal-analysis/{ticker}/{pattern_name}")
-async def signal_analysis(ticker: str, pattern_name: str) -> dict:
+async def signal_analysis(
+    ticker: str,
+    pattern_name: str,
+    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+) -> dict:
     """
-    Run 730-day historical backtest for one ticker+pattern pair.
+    Run a historical backtest for one ticker+pattern pair on the given timeframe.
 
-    Win = max favourable excursion >= 3% over the next 20 bars.
-    Recent signals where 20 future bars don't yet exist are excluded from
-    the denominator so win-rate is not artificially deflated.
+    Win = max favourable excursion >= the timeframe's threshold (3% daily,
+    1.5% hourly, 0.75% on 15m) over the next 20 bars. Recent signals where
+    20 future bars don't yet exist are excluded from the denominator so
+    win-rate is not artificially deflated. History window also scales with
+    the timeframe (730d / 180d / 60d).
     """
     ticker = ticker.upper()
     pattern_name_decoded = pattern_name.replace("-", " ")
@@ -200,9 +280,12 @@ async def signal_analysis(ticker: str, pattern_name: str) -> dict:
         )
 
     bullish = pattern_name_decoded in BULLISH_PATTERNS
-    from_date, to_date = _date_range(730)
+    cfg = _timeframe_cfg(timeframe)
+    from_date, to_date = _date_range(cfg["history_days"])
 
-    candles = await fetch_candles(ticker, from_date, to_date)
+    candles = await fetch_candles(
+        ticker, from_date, to_date, timespan=cfg["timespan"], multiplier=cfg["multiplier"]
+    )
     if not candles:
         raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
 
@@ -214,7 +297,7 @@ async def signal_analysis(ticker: str, pattern_name: str) -> dict:
     )
 
     current_price = candles[-1]["close"]
-    WIN_THRESHOLD = 0.03
+    WIN_THRESHOLD = cfg["win_threshold"]
     OUTCOME_BARS = 20
 
     wins, losses = 0, 0

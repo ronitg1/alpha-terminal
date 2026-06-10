@@ -6,9 +6,8 @@
  *   • latestScan       — parsed rows from most recent scan
  *   • scanStatus       — 'idle' | 'loading' | 'running' | 'error'
  *   • liveActivity     — ring buffer of SSE progress events during a run
- *   • selectedTicker   — drives the drill drawer (Phase 3)
- *
- * Phase 3 will add watchlist + saveWatchlist.
+ *   • selectedTicker   — drives the per-ticker detail views
+ *   • watchlist(s), portfolio settings, scan history, analyst metadata
  */
 
 import { sleevesApi } from '@/services/sleeves-api';
@@ -31,8 +30,39 @@ import {
   useRef,
   useState,
 } from 'react';
+import { toast } from 'sonner';
+import { API_BASE_URL } from '@/lib/api-base';
 
 type ScanStatus = 'idle' | 'loading' | 'running' | 'error';
+
+// ─── SSE scan-event payloads (discriminated by the SSE `event:` field) ──────
+
+interface ScanProgressEvent {
+  agent?: string;
+  ticker?: string | null;
+  status?: string;
+}
+
+interface ScanSleeveCompleteEvent {
+  date?: string;
+  rows: TickerRow[];
+}
+
+interface ScanCompletePayload {
+  date?: string;
+  csv_path?: string;
+  row_count?: number;
+  rows?: TickerRow[];
+}
+
+/** CompleteEvent serializes its payload under a nested `data` key. */
+interface ScanCompleteEvent extends ScanCompletePayload {
+  data?: ScanCompletePayload;
+}
+
+interface ScanErrorEvent {
+  message?: string;
+}
 
 export interface ActivityEvent {
   /** Monotonic counter so React keys are stable. */
@@ -107,7 +137,6 @@ export function useSleevesContext(): SleevesContextType {
 // Cap the activity buffer so a long-running scan with hundreds of progress
 // events doesn't bloat memory or murder the rendering pass.
 const MAX_ACTIVITY_EVENTS = 500;
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 export function SleevesProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<SleevesConfig | null>(null);
@@ -147,7 +176,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const msg = err instanceof Error ? err.message : String(err);
       setScanError(msg);
       setScanStatus('error');
-      console.error('SleevesProvider refresh failed:', err);
+      console.warn('SleevesProvider refresh failed:', err);
     }
   }, []);
 
@@ -156,7 +185,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const { entries } = await sleevesApi.getWatchlist();
       setWatchlist(entries);
     } catch (err) {
-      console.error('loadWatchlist failed:', err);
+      console.warn('loadWatchlist failed:', err);
     }
   }, []);
 
@@ -170,7 +199,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const { watchlists: wls } = await sleevesApi.getWatchlists();
       setWatchlists(wls);
     } catch (err) {
-      console.error('loadWatchlists failed:', err);
+      console.warn('loadWatchlists failed:', err);
     }
   }, []);
 
@@ -199,7 +228,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const { settings } = await sleevesApi.getPortfolioSettings();
       setPortfolioSettings(settings);
     } catch (err) {
-      console.error('loadPortfolioSettings failed:', err);
+      console.warn('loadPortfolioSettings failed:', err);
     }
   }, []);
 
@@ -225,7 +254,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const { scans } = await sleevesApi.listScans(30);
       setScanHistory(scans);
     } catch (err) {
-      console.error('loadScanHistory failed:', err);
+      console.warn('loadScanHistory failed:', err);
     }
   }, []);
 
@@ -234,7 +263,8 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       const scan = await sleevesApi.getScanByDate(date);
       setLatestScan(scan);
     } catch (err) {
-      console.error(`loadScanByDate(${date}) failed:`, err);
+      // User-initiated (history dropdown) — surface it, don't fail silently.
+      toast.error(`Could not load the ${date} scan: ${err instanceof Error ? err.message : err}`);
     }
   }, []);
 
@@ -248,7 +278,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       setAnalystMeta(byKey);
     } catch (err) {
       // Non-fatal — UI degrades to plain badges without tooltips.
-      console.error('loadAnalystMeta failed:', err);
+      console.warn('loadAnalystMeta failed:', err);
     }
   }, []);
 
@@ -299,7 +329,28 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
       setScanError(null);
       clearActivity();
 
+      // The `complete`/`error` SSE event marks a finished scan. Tracked in a
+      // local rather than reading `scanStatus` after the loop — the state
+      // value captured by this closure is the PRE-scan one (stale-closure
+      // hazard), so it can never be observed as 'running' here.
+      let sawTerminal = false;
+
+      // Inactivity watchdog: a stalled backend or silent network drop would
+      // otherwise leave reader.read() pending forever and the UI stuck on
+      // "running". Scans emit progress events continuously, so a long gap
+      // means the stream is dead.
+      const INACTIVITY_MS = 300_000;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const armWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(
+          () => ctrl.abort(new DOMException('Scan stream stalled — no events for 5 minutes.', 'TimeoutError')),
+          INACTIVITY_MS,
+        );
+      };
+
       try {
+        armWatchdog();
         const response = await fetch(`${API_BASE_URL}/sleeves/scan/run`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -327,6 +378,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          armWatchdog();
           buf += decoder.decode(value, { stream: true });
 
           // SSE frames are separated by blank lines. Split, keep last partial
@@ -340,51 +392,60 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // No more bytes — scanStatus should already be 'idle' from a
-        // complete event. If we never received one, mark error.
-        if (scanStatus === 'running') {
-          setScanStatus('idle');
+        if (!sawTerminal) {
+          // Stream closed without a complete/error event — the backend died
+          // mid-scan. Don't pretend it finished.
+          setScanError('Scan stream ended unexpectedly — check that the backend is still running.');
+          setScanStatus('error');
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
+          // User-initiated stop (or unmount) — quiet, intentional.
           setScanStatus('idle');
           return;
         }
         const msg = err instanceof Error ? err.message : String(err);
         setScanError(msg);
         setScanStatus('error');
-        console.error('runScan failed:', err);
+        toast.error(`Scan failed: ${msg}`);
       } finally {
+        clearTimeout(watchdog);
         if (abortRef.current === ctrl) {
           abortRef.current = null;
         }
       }
 
-      function handleEvent(eventType: string, data: any, partialRows: TickerRow[]) {
+      function handleEvent(eventType: string, data: unknown, partialRows: TickerRow[]) {
         switch (eventType) {
           case 'start':
             // No-op — scanStatus already set to 'running'.
             return;
-          case 'progress':
-            pushActivity(data.agent ?? 'system', data.ticker ?? null, data.status ?? '');
+          case 'progress': {
+            const ev = data as ScanProgressEvent;
+            pushActivity(ev.agent ?? 'system', ev.ticker ?? null, ev.status ?? '');
             return;
-          case 'sleeve_complete':
+          }
+          case 'sleeve_complete': {
+            const ev = data as ScanSleeveCompleteEvent;
             // Merge in-place; replace any rows already in partialRows for the
             // same ticker (defensive — sleeves shouldn't overlap).
-            for (const row of data.rows as TickerRow[]) {
+            for (const row of ev.rows ?? []) {
               const idx = partialRows.findIndex((r) => r.ticker === row.ticker);
               if (idx >= 0) partialRows[idx] = row;
               else partialRows.push(row);
             }
             setLatestScan((prev) => ({
-              date: data.date ?? prev?.date ?? '',
+              date: ev.date ?? prev?.date ?? '',
               path: prev?.path ?? '',
               row_count: partialRows.length,
               rows: [...partialRows],
             }));
             return;
+          }
           case 'complete': {
-            const payload = data?.data ?? data; // event_payload nested under 'data'
+            const ev = data as ScanCompleteEvent;
+            const payload = ev.data ?? ev; // event payload nested under 'data'
+            sawTerminal = true;
             setLatestScan({
               date: payload.date ?? '',
               path: payload.csv_path ?? '',
@@ -398,17 +459,20 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
             void loadScanHistory();
             return;
           }
-          case 'error':
-            setScanError(data.message ?? 'Scan error');
+          case 'error': {
+            const ev = data as ScanErrorEvent;
+            sawTerminal = true;
+            setScanError(ev.message ?? 'Scan error');
             setScanStatus('error');
             return;
+          }
           default:
             // Unknown event type; ignore silently.
             return;
         }
       }
     },
-    [clearActivity, loadScanHistory, pushActivity, scanStatus]
+    [clearActivity, loadScanHistory, pushActivity]
   );
 
   // Abort any in-flight scan when the provider unmounts.

@@ -8,6 +8,8 @@ installs keep their watchlists; the next write lands in the new location.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -28,9 +30,22 @@ def _load() -> dict[str, Any]:
 
 
 def _save(data: dict[str, Any]) -> None:
+    """Atomic write (temp file + os.replace) so a crash mid-write can't
+    corrupt the store — matches the pattern in portfolio_settings_service."""
     _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_STORE_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    fd, tmp = tempfile.mkstemp(
+        prefix=".watchlists.", suffix=".tmp", dir=str(_STORE_PATH.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, _STORE_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def get_all() -> list[dict]:

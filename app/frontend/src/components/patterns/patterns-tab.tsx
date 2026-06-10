@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getSignalAnalysis } from '@/services/patterns-api';
-import type { ScanResult, HistoricalStats } from '@/types/patterns';
+import type { HistoricalStats, PatternTimeframe, ScanResult } from '@/types/patterns';
 import { ScannerPanel } from './scanner-panel';
 import { ResultsTable } from './results-table';
 import { ChartModal } from './chart-modal';
@@ -72,9 +72,15 @@ function QuickStats({
 
 export function PatternsTab() {
   const [results, setResults] = useState<ScanResult[]>([]);
+  const [timeframe, setTimeframe] = useState<PatternTimeframe>('day');
   const [isScanning, setIsScanning] = useState(false);
   const [chart, setChart] = useState<ChartTarget | null>(null);
   const [winRates, setWinRates] = useState<Map<string, HistoricalStats>>(new Map());
+
+  const handleResults = (rows: ScanResult[], tf: PatternTimeframe) => {
+    setTimeframe(tf);
+    setResults(rows);
+  };
 
   // Background-fetch win rates for all unique ticker+pattern pairs after a scan
   useEffect(() => {
@@ -96,7 +102,7 @@ export function PatternsTab() {
         await Promise.all(
           pairs.slice(i, i + BATCH).map(async ({ ticker, pattern, key }) => {
             try {
-              const data = await getSignalAnalysis(ticker, pattern);
+              const data = await getSignalAnalysis(ticker, pattern, timeframe);
               if (!cancelled)
                 setWinRates((prev) => new Map(prev).set(key, data.historical));
             } catch {
@@ -109,6 +115,9 @@ export function PatternsTab() {
 
     fetchAll();
     return () => { cancelled = true; };
+    // timeframe is set atomically with results in handleResults, so results
+    // is the only trigger that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results]);
 
   return (
@@ -117,7 +126,7 @@ export function PatternsTab() {
         {/* Left: scanner + stats */}
         <div className="overflow-y-auto space-y-4 pr-1">
           <ScannerPanel
-            onResults={setResults}
+            onResults={handleResults}
             isScanning={isScanning}
             setIsScanning={setIsScanning}
           />
@@ -145,6 +154,7 @@ export function PatternsTab() {
           ticker={chart.ticker}
           activePattern={chart.pattern}
           activeEndDate={chart.endDate}
+          timeframe={timeframe}
           onClose={() => setChart(null)}
         />
       )}

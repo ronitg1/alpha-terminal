@@ -31,7 +31,9 @@ import csv
 import datetime
 import json
 import logging
+import os
 import re
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -56,8 +58,6 @@ from app.backend.services.watchlist_service import (
 from app.backend.services import watchlists_service
 from app.backend.services import portfolio_settings_service
 import src.config.portfolio_config as _portfolio_config_module
-from src.config.portfolio_config import CASH_RESERVE_PCT  # noqa: F401  (re-read fresh below)
-from src.patterns.patterns import BULLISH_PATTERNS, PATTERN_DETECTORS
 
 
 def _live_sleeves() -> dict:
@@ -74,11 +74,6 @@ def _live_cash_reserve() -> float:
     return _portfolio_config_module.CASH_RESERVE_PCT
 
 
-# Backwards-compatible alias so legacy ``PORTFOLIO_SLEEVES`` references resolve.
-# Each access goes through ``_live_sleeves()`` via __getattr__-style indirection,
-# but Python module-level names can't lazy-load. So we keep this as a plain
-# alias and rely on _live_sleeves() at every call site that needs freshness.
-PORTFOLIO_SLEEVES = _portfolio_config_module.PORTFOLIO_SLEEVES
 from src.config.watchlist import get_watchlist
 from src.tools.api import get_financial_metrics
 from src.tools.massive import (
@@ -90,7 +85,6 @@ from src.tools.massive import (
 from src.tools.massive.options import split_calls_puts
 from src.run_morning_scan import (
     TickerRow,
-    aggregate_verdicts,
     run_sleeve,
     write_csv,
 )
@@ -447,8 +441,14 @@ async def get_latest_scan() -> dict[str, Any]:
                 "`poetry run python -m src.run_morning_scan` from the CLI."
             ),
         )
-    path = files[0]
-    return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
+    # Walk newest → oldest so one corrupt sidecar doesn't blind the dashboard.
+    last_error: HTTPException | None = None
+    for path in files:
+        try:
+            return _read_scan_file(path)
+        except HTTPException as exc:
+            last_error = exc
+    raise last_error if last_error else HTTPException(status_code=404, detail="No readable scans.")
 
 
 @router.get("/scans/{scan_date}")
@@ -461,9 +461,9 @@ async def get_scan_by_date(scan_date: str) -> dict[str, Any]:
     json_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.json"
     csv_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv"
     if json_path.exists():
-        return _read_scan_json(json_path)
+        return _read_scan_file(json_path)
     if csv_path.exists():
-        return _read_scan_csv(csv_path)
+        return _read_scan_file(csv_path)
     raise HTTPException(status_code=404, detail=f"No scan for {scan_date}")
 
 
@@ -527,6 +527,23 @@ def _read_scan_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def _read_scan_file(path: Path) -> dict[str, Any]:
+    """Parse one scan file (JSON sidecar or CSV) with corruption handling.
+
+    A truncated/garbled file raises HTTPException(422) instead of bubbling a
+    raw JSONDecodeError/csv.Error into a 500 — and callers that have multiple
+    candidates (``/scans/latest``) can catch and try the next file.
+    """
+    try:
+        return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
+    except (json.JSONDecodeError, csv.Error, OSError, KeyError, ValueError) as exc:
+        logger.warning("Corrupt or unreadable scan file %s: %s", path.name, exc)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Scan file {path.name} is corrupt or unreadable: {exc}",
+        )
+
+
 def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -> Path:
     """Companion to write_csv — persist the full UI shape (with agent raw)."""
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -538,7 +555,7 @@ def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -
         "rows": [_tickerrow_to_ui(r) for r in rows],
     }
     # Atomic write: temp file in same dir + os.replace.
-    fd, tmp = __import__("tempfile").mkstemp(prefix=".scan.", suffix=".tmp", dir=str(outputs_dir))
+    fd, tmp = tempfile.mkstemp(prefix=".scan.", suffix=".tmp", dir=str(outputs_dir))
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             json.dump(payload, f, indent=2, default=str)
@@ -1231,8 +1248,6 @@ async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
     Costs ~$0.002 per call (one chain fetch + LLM). Cached per
     (ticker, strategy, today) for the full trading day so repeat clicks are free.
     """
-    import hashlib
-
     today_str = datetime.date.today().isoformat()
     strategy_key = req.strategy or "unknown"
     cache_key = f"{req.ticker}:{strategy_key}:{today_str}"
@@ -1453,13 +1468,13 @@ async def _warm_company_names(symbols: list[str]) -> None:
             try:
                 prof = await asyncio.to_thread(client.company_profile, sym)
                 _name_cache[sym] = (prof.get("name") or "").strip()
-            except Exception:  # noqa: BLE001 — best-effort; uncached names retry later
-                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort; uncached names retry later
+                logger.debug("Company-name lookup failed for %s: %s", sym, exc)
 
     try:
         await asyncio.wait_for(asyncio.gather(*[one(s) for s in missing]), timeout=6.0)
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-        pass  # partial names are fine; the price response is unaffected
+    except Exception as exc:  # noqa: BLE001 — partial names are fine; prices unaffected
+        logger.debug("Company-name warmup truncated: %s", exc)
 
 
 @router.get("/quotes")
@@ -1596,8 +1611,14 @@ def _build_chat_context_text(ctx: _ChatContext) -> str:
         cands = ctx.screenerSnapshot.get("candidates") or []
         if cands:
             top = cands[:8]
-            lines = [f"  - {c.get('ticker')} {c.get('conviction_pct', '?'):.0f}% conviction, {c.get('recommendation', {}).get('direction', '?')}"
-                     for c in top if isinstance(c, dict)]
+            lines = []
+            for c in top:
+                if not isinstance(c, dict):
+                    continue
+                pct = c.get("conviction_pct")
+                pct_text = f"{pct:.0f}%" if isinstance(pct, (int, float)) else "?"
+                direction = (c.get("recommendation") or {}).get("direction", "?")
+                lines.append(f"  - {c.get('ticker')} {pct_text} conviction, {direction}")
             strategy = ctx.screenerSnapshot.get("strategy", "")
             parts.append(f"Options screener ({strategy}, {len(cands)} candidates — top 8):\n" + "\n".join(lines))
 
@@ -1858,9 +1879,7 @@ from src.backtesting.options_historical import (  # noqa: E402
 )
 from src.backtesting.options_proxy import (  # noqa: E402  (sits with the related code)
     RISK_FREE_RATE,
-    bsm_price,
     realized_vol,
-    straddle_price,
 )
 from src.backtesting.sleeve_attribution import (  # noqa: E402
     Trade,
@@ -2588,7 +2607,6 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
 
 # ─── /sleeves/backtest/run (sleeves backtest SSE) ───────────────────────────
 
-import os  # noqa: E402  (used for env-driven api_keys construction below)
 import uuid  # noqa: E402
 
 from app.backend.models.schemas import GraphEdge, GraphNode  # noqa: E402
@@ -2717,14 +2735,21 @@ async def backtest_sleeves(req: SleevesBacktestRequest, request: Request):
         pf_client = MassiveClient()
         pf_start = (datetime.date.fromisoformat(req.start_date) - datetime.timedelta(days=10)).isoformat()
         pf_end = req.end_date
-        missing: list[str] = []
-        for ticker in tickers:
-            try:
-                aggs = pf_client.get_daily_aggregates(ticker, pf_start, pf_end)
-                if not (aggs.get("results") or []):
-                    missing.append(ticker)
-            except MassiveError:
-                missing.append(ticker)
+
+        def _probe_all(tickers_to_probe: list[str]) -> list[str]:
+            """Synchronous provider probes — runs in a worker thread so the
+            event loop (and every other endpoint) stays responsive."""
+            missing_: list[str] = []
+            for ticker in tickers_to_probe:
+                try:
+                    aggs = pf_client.get_daily_aggregates(ticker, pf_start, pf_end)
+                    if not (aggs.get("results") or []):
+                        missing_.append(ticker)
+                except MassiveError:
+                    missing_.append(ticker)
+            return missing_
+
+        missing = await asyncio.to_thread(_probe_all, tickers)
         if missing and len(missing) == len(tickers):
             raise HTTPException(
                 status_code=400,
@@ -3018,6 +3043,40 @@ async def put_watchlist_endpoint(payload: WatchlistPayload) -> dict[str, Any]:
 
 # ─── Multi-watchlist endpoints ────────────────────────────────────────────────
 
+# Same shape the single-watchlist service enforces — uppercase ticker, short.
+_WATCHLIST_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+
+
+def _validate_watchlist_entries(tickers: list[WatchlistEntry]) -> list[dict[str, str]]:
+    """Normalize + validate [{ticker, comment}] rows; 400 on a bad symbol."""
+    out: list[dict[str, str]] = []
+    for e in tickers:
+        symbol = e.ticker.strip().upper()
+        if not _WATCHLIST_TICKER_RE.match(symbol):
+            raise HTTPException(status_code=400, detail=f"Invalid ticker: {e.ticker!r}")
+        out.append({"ticker": symbol, "comment": e.comment.strip()})
+    return out
+
+
+class NamedWatchlistPayload(BaseModel):
+    """Body for POST /watchlists."""
+
+    name: str = Field(min_length=1, max_length=60)
+    tickers: list[WatchlistEntry] = Field(default_factory=list)
+
+
+class WatchlistTickersPayload(BaseModel):
+    """Body for PUT /watchlists/{name}."""
+
+    tickers: list[WatchlistEntry] = Field(default_factory=list)
+
+
+class RenamePayload(BaseModel):
+    """Body for PATCH /watchlists/{name}/rename."""
+
+    new_name: str = Field(min_length=1, max_length=60)
+
+
 @router.get("/watchlists")
 async def get_watchlists() -> dict[str, Any]:
     """Return all named watchlists."""
@@ -3025,28 +3084,24 @@ async def get_watchlists() -> dict[str, Any]:
 
 
 @router.post("/watchlists")
-async def create_watchlist(body: dict[str, Any]) -> dict[str, Any]:
+async def create_watchlist(body: NamedWatchlistPayload) -> dict[str, Any]:
     """Create a new watchlist. Body: {name: str, tickers?: [{ticker, comment}]}"""
-    name = body.get("name", "").strip()
+    name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    tickers = body.get("tickers", [])
-    result = watchlists_service.upsert(name, tickers)
-    return result
+    return watchlists_service.upsert(name, _validate_watchlist_entries(body.tickers))
 
 
 @router.put("/watchlists/{name}")
-async def update_watchlist(name: str, body: dict[str, Any]) -> dict[str, Any]:
+async def update_watchlist(name: str, body: WatchlistTickersPayload) -> dict[str, Any]:
     """Replace the tickers in a watchlist. Body: {tickers: [{ticker, comment}]}"""
-    tickers = body.get("tickers", [])
-    result = watchlists_service.upsert(name, tickers)
-    return result
+    return watchlists_service.upsert(name, _validate_watchlist_entries(body.tickers))
 
 
 @router.patch("/watchlists/{name}/rename")
-async def rename_watchlist(name: str, body: dict[str, Any]) -> dict[str, Any]:
+async def rename_watchlist(name: str, body: RenamePayload) -> dict[str, Any]:
     """Rename a watchlist. Body: {new_name: str}"""
-    new_name = body.get("new_name", "").strip()
+    new_name = body.new_name.strip()
     if not new_name:
         raise HTTPException(status_code=400, detail="new_name is required")
     ok = watchlists_service.rename(name, new_name)
@@ -3189,12 +3244,13 @@ def _portfolio_thesis_inputs() -> tuple[str, dict, list, list] | None:
 
 def _latest_scan_summary() -> dict[str, Any] | None:
     """Helper: parse the latest scan into a dict matching the GET
-    /scans/latest response shape. Returns None if no scans on disk."""
-    files = _list_scan_files()
-    if not files:
-        return None
-    path = files[0]
-    return _read_scan_json(path) if path.suffix == ".json" else _read_scan_csv(path)
+    /scans/latest response shape. Returns None if no scans are readable."""
+    for path in _list_scan_files():
+        try:
+            return _read_scan_file(path)
+        except HTTPException:
+            continue
+    return None
 
 
 # ─── Per-ticker thesis (Portfolio Pulse "Run analysis") ─────────────────────

@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
+import logging
 import pandas as pd
 import numpy as np
 from typing import Callable, Dict, List, Optional, Any
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 from src.tools.api import (
     get_company_news,
@@ -342,13 +345,18 @@ class BacktestService:
                             break
                         current_prices[ticker] = price_data.iloc[-1]["close"]
                     except Exception as e:
+                        logger.warning(
+                            "Backtest skipping %s: price fetch for %s failed: %s",
+                            current_date_str, ticker, e,
+                        )
                         missing_data = True
                         break
 
                 if missing_data:
                     continue
 
-            except Exception:
+            except Exception as e:
+                logger.warning("Backtest skipping %s: %s", current_date_str, e)
                 continue
 
             # Create portfolio for this iteration
@@ -384,7 +392,7 @@ class BacktestService:
                     analyst_signals = {}
                     
             except Exception as e:
-                print(f"Error running graph for {current_date_str}: {e}")
+                logger.warning("Error running graph for %s: %s", current_date_str, e)
                 decisions = {}
                 analyst_signals = {}
 

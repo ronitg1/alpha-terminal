@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getSignalAnalysis } from '@/services/patterns-api';
-import type { SignalAnalysisData, OptionsStrategy } from '@/types/patterns';
+import type { OptionsStrategy, PatternTimeframe, SignalAnalysisData } from '@/types/patterns';
 
 function WinRateGauge({ rate }: { rate: number | null }) {
   const r = 36;
@@ -61,9 +61,10 @@ function StrategyCard({ s }: { s: OptionsStrategy }) {
 interface SignalAnalysisProps {
   ticker: string;
   pattern: string | null;
+  timeframe?: PatternTimeframe;
 }
 
-export function SignalAnalysis({ ticker, pattern }: SignalAnalysisProps) {
+export function SignalAnalysis({ ticker, pattern, timeframe = 'day' }: SignalAnalysisProps) {
   const [data, setData] = useState<SignalAnalysisData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +76,13 @@ export function SignalAnalysis({ ticker, pattern }: SignalAnalysisProps) {
     setError(null);
     setData(null);
 
-    getSignalAnalysis(ticker, pattern)
+    getSignalAnalysis(ticker, pattern, timeframe)
       .then((res) => { if (!cancelled) setData(res); })
       .catch((err: Error) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [ticker, pattern]);
+  }, [ticker, pattern, timeframe]);
 
   if (!pattern) {
     return (

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { scanTickers } from '@/services/patterns-api';
 import { useSleevesContext } from '@/contexts/sleeves-context';
-import type { ScanResult } from '@/types/patterns';
+import type { PatternTimeframe, ScanResult } from '@/types/patterns';
 
 const ALL_PATTERNS = [
   'Bullish Flag', 'Bull Pennant', 'Double Bottom', 'Inverse Head and Shoulders',
@@ -22,10 +23,45 @@ const LOOKBACK_OPTIONS: { label: string; value: number }[] = [
   { label: '1yr', value: 365 },
 ];
 
+// Per-timeframe lookback menus — intraday scans are clamped server-side
+// (1h: 90d max, 15m: 30d max), so only offer choices that fit.
+const TIMEFRAME_OPTIONS: {
+  value: PatternTimeframe;
+  label: string;
+  lookbacks: { label: string; value: number }[];
+  defaultLookback: number;
+}[] = [
+  { value: 'day', label: 'Daily', lookbacks: LOOKBACK_OPTIONS, defaultLookback: 180 },
+  {
+    value: '1h',
+    label: '1h',
+    lookbacks: [
+      { label: '5d', value: 5 },
+      { label: '10d', value: 10 },
+      { label: '30d', value: 30 },
+      { label: '60d', value: 60 },
+      { label: '90d', value: 90 },
+    ],
+    defaultLookback: 30,
+  },
+  {
+    value: '15m',
+    label: '15m',
+    lookbacks: [
+      { label: '2d', value: 2 },
+      { label: '5d', value: 5 },
+      { label: '10d', value: 10 },
+      { label: '20d', value: 20 },
+      { label: '30d', value: 30 },
+    ],
+    defaultLookback: 10,
+  },
+];
+
 type TabId = 'watchlist' | 'sleeves' | 'custom';
 
 interface ScannerPanelProps {
-  onResults: (results: ScanResult[]) => void;
+  onResults: (results: ScanResult[], timeframe: PatternTimeframe) => void;
   isScanning: boolean;
   setIsScanning: (v: boolean) => void;
 }
@@ -46,8 +82,19 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
   const [selectedSleeve, setSelectedSleeve] = useState<string>('all');
   const [customText, setCustomText] = useState<string>('');
   const [selectedPatterns, setSelectedPatterns] = useState<string[]>([...ALL_PATTERNS]);
+  const [timeframe, setTimeframe] = useState<PatternTimeframe>('day');
   const [lookback, setLookback] = useState<number>(180);
   const [patternOpen, setPatternOpen] = useState(false);
+
+  const tfConfig = TIMEFRAME_OPTIONS.find((t) => t.value === timeframe) ?? TIMEFRAME_OPTIONS[0];
+
+  const selectTimeframe = (tf: PatternTimeframe) => {
+    setTimeframe(tf);
+    const cfg = TIMEFRAME_OPTIONS.find((t) => t.value === tf);
+    // Reset lookback to the timeframe's default — the previous value is
+    // usually out of range for the new bar size.
+    if (cfg) setLookback(cfg.defaultLookback);
+  };
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -94,20 +141,20 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
   const handleScan = async () => {
     const tickers = resolvedTickers();
     if (tickers.length === 0) {
-      alert('No tickers selected. Add tickers to a watchlist, sleeve, or enter them manually.');
+      toast.error('No tickers selected. Add tickers to a watchlist, sleeve, or enter them manually.');
       return;
     }
     if (selectedPatterns.length === 0) {
-      alert('Select at least one pattern.');
+      toast.error('Select at least one pattern.');
       return;
     }
     setIsScanning(true);
     try {
-      const results = await scanTickers(tickers, selectedPatterns, lookback);
-      onResults(results);
+      const results = await scanTickers(tickers, selectedPatterns, lookback, timeframe);
+      onResults(results, timeframe);
     } catch (err) {
-      console.error('Scan failed:', err);
-      alert('Scan failed. Check backend connection.');
+      console.warn('Scan failed:', err);
+      toast.error('Scan failed. Check backend connection.');
     } finally {
       setIsScanning(false);
     }
@@ -265,11 +312,40 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
           </div>
         </div>
 
+        {/* ── Timeframe (bar size) ── */}
+        <div>
+          <label className="text-xs text-gray-400 block mb-1.5">Timeframe</label>
+          <div className="flex gap-1.5">
+            {TIMEFRAME_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => selectTimeframe(opt.value)}
+                title={
+                  opt.value === 'day'
+                    ? 'Daily bars — swing / position setups'
+                    : opt.value === '1h'
+                      ? 'Hourly bars — multi-day swing setups'
+                      : '15-minute bars — day-trade setups'
+                }
+                className={
+                  'flex-1 py-1 text-xs rounded-md font-medium transition-colors ' +
+                  (timeframe === opt.value
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200')
+                }
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* ── Lookback ── */}
         <div>
           <label className="text-xs text-gray-400 block mb-1.5">Lookback Period</label>
           <div className="flex gap-1.5">
-            {LOOKBACK_OPTIONS.map((opt) => (
+            {tfConfig.lookbacks.map((opt) => (
               <button
                 key={opt.value}
                 type="button"

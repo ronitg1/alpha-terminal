@@ -420,7 +420,7 @@ def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
                 wc_previous = current_assets_previous - current_liab_previous
                 working_capital_change = wc_current - wc_previous
                 details.append(f"Working capital change: ${working_capital_change:,.0f}")
-        except:
+        except (TypeError, AttributeError, IndexError):
             pass  # Skip working capital adjustment if data unavailable
 
     # Calculate owner earnings

@@ -92,7 +92,7 @@ PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
             "aswath_damodaran": 0.2,
             "ben_graham": 0.19999999999999996,
         },
-        "tickers": ["NBIS", "ASTS", "DELL", "MU"],
+        "tickers": ["NBIS", "ASTS", "DELL", "MU", "NOW"],
     },
     "emerging_tech": {
         "allocation_pct": 20.0,

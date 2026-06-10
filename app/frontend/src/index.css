@@ -52,18 +52,6 @@
     --ramp-grey-900: #1e1e1e;
     --ramp-grey-1000: #111111;
 
-    /* Tab Colors - Light Theme */
-    --tab-active-text: #1a1a1a;
-    --tab-inactive-text: #666666;
-    --tab-hover-text: #1a1a1a;
-    --tab-background: #ffffff;
-    --tab-hover-background: #f0f0f0;
-    --tab-border: #e0e0e0;
-    --tab-accent: #007acc;
-    --tab-icon-active: #007acc;
-    --tab-icon-inactive: #666666;
-    --tab-close-hover: #e0e0e0;
-
     font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
     line-height: 1.5;
     font-weight: 400;
@@ -116,18 +104,6 @@
     /* Active/selected colors for dark theme */
     --active-background: rgb(55 65 81 / 0.8); /* gray-700/80 */
     --active-foreground: 0 0% 98%;
-
-    /* Tab Colors - Dark Theme */
-    --tab-active-text: #cccccc;
-    --tab-inactive-text: #969696;
-    --tab-hover-text: #cccccc;
-    --tab-background: #1e1e1e;
-    --tab-hover-background: #1e1e1e;
-    --tab-border: #333333;
-    --tab-accent: #007acc;
-    --tab-icon-active: #007acc;
-    --tab-icon-inactive: #858585;
-    --tab-close-hover: #464647;
 
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
@@ -344,13 +320,4 @@
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
-}
-
-/* Remove white lines between ReactFlow Controls buttons */
-.react-flow__controls .react-flow__controls-button {
-  border-right: none !important;
-}
-
-.react-flow__controls .react-flow__controls-button + .react-flow__controls-button {
-  border-left: none !important;
 }
