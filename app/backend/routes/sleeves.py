@@ -57,6 +57,7 @@ from app.backend.services.watchlist_service import (
 )
 from app.backend.services import watchlists_service
 from app.backend.services import portfolio_settings_service
+from app.backend.services import thesis_store
 import src.config.portfolio_config as _portfolio_config_module
 
 
@@ -959,8 +960,9 @@ async def run_ticker_scan(ticker: str, request: Request):
     This is the "run the morning scan for one name" action: it runs that
     ticker's sleeve agents and streams per-agent progress, then a ``complete``
     event carrying the freshly-scored row (with each agent's signal,
-    confidence, and reasoning). It is *ephemeral* — nothing is written to the
-    scan files, so re-scoring one name never clobbers the day's full scan.
+    confidence, and reasoning). The row is MERGED into today's saved scan
+    (same mechanism as filtered sleeve runs) so the analysis survives a
+    refresh — only this ticker's row is touched, never the rest of the book.
 
     Events: ``start`` → ``progress`` (per agent) → ``complete`` {row} | ``error``.
     """
@@ -1037,6 +1039,19 @@ async def run_ticker_scan(ticker: str, request: Request):
                 return
 
             row = _tickerrow_to_ui(rows[0]) if rows else None
+
+            # Persist: merge this one row into today's scan so the analysis
+            # survives refresh/restart. Best-effort — a write failure still
+            # delivers the live result to the UI.
+            if row is not None:
+                try:
+                    merged = _merge_into_today([row], end_date)
+                    outputs_dir = _PROJECT_ROOT / "outputs"
+                    _write_scan_csv_ui(merged, outputs_dir, end_date)
+                    _write_scan_json_ui(merged, outputs_dir, end_date)
+                except Exception:
+                    logger.exception("Failed to persist single-ticker scan for %s", symbol)
+
             yield CompleteEvent(data={"ticker": symbol, "sleeve": sleeve_name, "row": row}).to_sse()
         except asyncio.CancelledError:
             return
@@ -3441,7 +3456,24 @@ async def post_ticker_thesis(ticker: str, depth: str = "quick") -> dict[str, Any
     context = await asyncio.to_thread(_gather)
     result = await asyncio.to_thread(_generate_ticker_thesis, symbol, context, deep)
     _ticker_thesis_cache[cache_key] = (now, result)
+    _save_thesis(f"ticker:{symbol}:{depth}", result)
     return result
+
+
+def _save_thesis(key: str, thesis: dict[str, Any]) -> None:
+    """Persist a generated thesis (best-effort — never blocks the response)."""
+    try:
+        thesis_store.save(key, thesis)
+    except Exception:
+        logger.exception("Failed to persist thesis %s", key)
+
+
+@router.get("/thesis/saved")
+async def get_saved_theses() -> dict[str, Any]:
+    """All persisted theses, keyed by scope ('portfolio', 'sleeve:<name>',
+    'ticker:<SYMBOL>:<depth>'). The UI hydrates from this on mount so an
+    analysis you paid for is still on screen after a refresh or restart."""
+    return {"theses": thesis_store.get_all()}
 
 
 @router.post("/thesis/portfolio")
@@ -3459,13 +3491,15 @@ async def post_portfolio_thesis() -> dict[str, Any]:
             detail="No scan available to synthesize a thesis against.",
         )
     scan_date, rollup, per_sleeve, high_conviction = inputs
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         synthesize_portfolio_thesis,
         scan_date=scan_date,
         portfolio_rollup=rollup,
         per_sleeve=per_sleeve,
         high_conviction=high_conviction,
     )
+    _save_thesis("portfolio", result)
+    return result
 
 
 @router.post("/thesis/sleeve/{name}")
@@ -3500,10 +3534,12 @@ async def post_sleeve_thesis(name: str) -> dict[str, Any]:
         "tickers": list(meta.get("tickers", [])),
     }
 
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         synthesize_sleeve_thesis,
         sleeve_name=name,
         scan_date=scan["date"],
         sleeve_meta=sleeve_meta,
         rows=sleeve_rows,
     )
+    _save_thesis(f"sleeve:{name}", result)
+    return result

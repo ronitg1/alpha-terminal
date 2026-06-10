@@ -27,7 +27,13 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+
+// ─── Saved theses (hydration) ────────────────────────────────────────────────
+// Loaded once by PortfolioSection from GET /sleeves/thesis/saved. Keys:
+// 'portfolio' | 'sleeve:<name>' | 'ticker:<SYMBOL>:<quick|deep>'. Components
+// seed their state from here so a refresh doesn't lose paid-for analyses.
+const SavedThesesContext = createContext<Record<string, Thesis | TickerThesis>>({});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -473,9 +479,16 @@ function HighConvictionSection({
 // ─── LLM Portfolio Memo ───────────────────────────────────────────────────────
 
 function PortfolioMemo() {
+  const saved = useContext(SavedThesesContext);
   const [thesis, setThesis] = useState<Thesis | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Hydrate the last saved portfolio memo (unless the user already re-ran).
+  useEffect(() => {
+    const persisted = saved['portfolio'] as Thesis | undefined;
+    if (persisted) setThesis((cur) => cur ?? persisted);
+  }, [saved]);
 
   const generate = async () => {
     if (loading) return;
@@ -681,9 +694,18 @@ function MarkdownLite({ text }: { text: string }) {
 }
 
 function RunAnalysis({ ticker }: { ticker: string }) {
+  const saved = useContext(SavedThesesContext);
   const [result, setResult] = useState<TickerThesis | null>(null);
   const [loading, setLoading] = useState<'quick' | 'deep' | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Hydrate the last saved analysis for this name — deep beats quick.
+  useEffect(() => {
+    const persisted = (saved[`ticker:${ticker}:deep`] ?? saved[`ticker:${ticker}:quick`]) as
+      | TickerThesis
+      | undefined;
+    if (persisted) setResult((cur) => cur ?? persisted);
+  }, [saved, ticker]);
 
   const run = useCallback(
     async (depth: 'quick' | 'deep') => {
@@ -855,9 +877,16 @@ function SleeveGroup({
   portfolioSettings: Record<string, { allocation_pct: number }>;
 }) {
   const [open, setOpen] = useState(true);
+  const saved = useContext(SavedThesesContext);
   const [thesis, setThesis] = useState<Thesis | null>(null);
   const [thesisLoading, setThesisLoading] = useState(false);
   const [thesisErr, setThesisErr] = useState<string | null>(null);
+
+  // Hydrate the last saved sleeve thesis (unless the user already re-ran).
+  useEffect(() => {
+    const persisted = saved[`sleeve:${sleeveName}`] as Thesis | undefined;
+    if (persisted) setThesis((cur) => cur ?? persisted);
+  }, [saved, sleeveName]);
 
   // Sleeve-wide agent run — a filtered live scan over just this sleeve.
   // Results stream in via the shared SSE handler (sleeve_complete merges
@@ -1046,6 +1075,7 @@ function SleeveGroup({
 export function PortfolioSection() {
   const { config, latestScan, portfolioSettings } = useSleevesContext();
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [savedTheses, setSavedTheses] = useState<Record<string, Thesis | TickerThesis>>({});
 
   const allTickers = config?.sleeves.flatMap((s) => s.tickers) ?? [];
 
@@ -1063,9 +1093,21 @@ export function PortfolioSection() {
     void fetchQuotes();
   }, [fetchQuotes]);
 
+  // Hydrate previously-run analyses (portfolio/sleeve/ticker theses) so a
+  // refresh doesn't blank out work the user already paid LLM credits for.
+  useEffect(() => {
+    let cancelled = false;
+    sleevesApi
+      .getSavedTheses()
+      .then(({ theses }) => { if (!cancelled) setSavedTheses(theses); })
+      .catch(() => { /* non-fatal — components just start empty */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const rows = latestScan?.rows ?? [];
 
   return (
+    <SavedThesesContext.Provider value={savedTheses}>
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto px-6 py-6 space-y-8">
         {/* Header */}
@@ -1120,5 +1162,6 @@ export function PortfolioSection() {
         ))}
       </div>
     </div>
+    </SavedThesesContext.Provider>
   );
 }

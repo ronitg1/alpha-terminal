@@ -122,6 +122,10 @@ export const sleevesApi = {
   getPortfolioThesis: () => postJSON<Thesis>('/sleeves/thesis/portfolio', {}),
   getSleeveThesis: (name: string) =>
     postJSON<Thesis>(`/sleeves/thesis/sleeve/${encodeURIComponent(name)}`, {}),
+  /** Persisted theses keyed 'portfolio' | 'sleeve:<name>' | 'ticker:<SYM>:<depth>' —
+   *  the UI hydrates from this so paid-for analyses survive refresh/restart. */
+  getSavedTheses: () =>
+    getJSON<{ theses: Record<string, Thesis | TickerThesis> }>('/sleeves/thesis/saved'),
   getOptionsStrategies: () =>
     getJSON<{ strategies: OptionsStrategyMeta[] }>('/sleeves/options/strategies'),
   getOptionsScreener: (sleeve = 'mega_tech', strategy = 'weakness') =>
