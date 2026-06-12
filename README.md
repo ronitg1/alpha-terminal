@@ -4,17 +4,17 @@
 
 **A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
-[![Version: 1.1](https://img.shields.io/badge/version-1.1-blue.svg)](CHANGELOG.md)
+[![Version: 1.2](https://img.shields.io/badge/version-1.2-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-172%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.1 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester, the intraday-capable Pattern Scanner, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (172 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.2 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester, the intraday-capable Pattern Scanner, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (195 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -397,7 +397,7 @@ alpha-terminal/
 │           ├── contexts/                sleeves + dashboard state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 172 tests, pytest
+├── tests/                   ← 195 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
@@ -541,6 +541,8 @@ Fixed in the current version. If you see it on an older build, the cause was a s
 Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Recently shipped**
+
+- [x] **1.2** — risk-sized **trade plans on the options play** (buy/cut/take-profit premiums, ATR×tolerance stops, theta viability guard, contract sizer); Pattern Scanner **"Today's plays"** sort + filter chips; **per-sleeve Run agents**; analysis persistence; quote last-known-good + intraday chart pagination fixes (see [changelog](CHANGELOG.md))
 
 - [x] **1.1** — **P&L Tracker tab** (one-click Track from chain rows, manual entry, Fidelity CSV import, live mark-to-market, equity curve); **intraday Pattern Scanner** (1h + 15m timeframes, RTH-filtered, ET timestamps, per-timeframe win-rate thresholds); production hardening from a full audit — API-key log-leak fix, SSE stall watchdog, ~46 dead frontend files removed, toasts replace alert() (see [changelog](CHANGELOG.md))
 - [x] **1.0** — per-name conviction score + recommendation in Portfolio Pulse; structured-reasoning rendering for the Fundamentals/Valuation analysts; backend scoring-engine extraction; consolidated runtime data dir; accurate Pattern Scanner docs
