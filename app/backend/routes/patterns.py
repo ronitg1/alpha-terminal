@@ -17,6 +17,13 @@ from pydantic import BaseModel
 
 from app.backend.routes.pattern_data import fetch_candles
 from src.patterns.patterns import BULLISH_PATTERNS, PATTERN_DETECTORS
+from src.patterns.trade_plan import (
+    annualized_vol,
+    build_option_plan,
+    build_trade_plan,
+    compute_atr,
+)
+from src.tools.massive import MassiveClient, MassiveError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/patterns", tags=["patterns"])
@@ -349,6 +356,179 @@ async def signal_analysis(
             "win_threshold_pct": WIN_THRESHOLD * 100,
         },
         "options": _options_recommendations(pattern_name_decoded, bullish, current_price),
+    }
+
+
+# Preferred contract DTE per scan timeframe: day-trade patterns resolve in
+# hours-to-days, swing patterns in weeks — the option should outlive the move.
+_PLAN_DTE: dict[str, int] = {"day": 30, "1h": 14, "15m": 7}
+
+# Expected hold (calendar days) for the theta haircut on the target premium.
+# Derived from the 20-bar outcome window each timeframe's win-rate uses:
+# 20 daily bars ≈ weeks; 20 hourly bars ≈ 3 trading days; 20×15m ≈ a day.
+_PLAN_HOLD_DAYS: dict[str, float] = {"day": 10.0, "1h": 3.0, "15m": 1.0}
+
+
+def _pick_plan_contract(
+    ticker: str, entry: float, bullish: bool, preferred_dte: int
+) -> dict | None:
+    """Snapshot the chain and pick the play's contract: ATM **at the entry
+    level** (not spot — the trade triggers at the breakout), expiry nearest
+    the preferred DTE. Returns the fields build_option_plan needs, or None
+    when the chain is empty/unavailable (the premium plan is then omitted)."""
+    import datetime as _dt
+
+    today = _dt.date.today()
+    try:
+        client = MassiveClient()
+        raw = client.get_options_chain(
+            ticker,
+            contract_type="call" if bullish else "put",
+            expiration_date_gte=(today + _dt.timedelta(days=max(3, preferred_dte - 10))).isoformat(),
+            expiration_date_lte=(today + _dt.timedelta(days=preferred_dte + 17)).isoformat(),
+            strike_price_gte=entry * 0.92,
+            strike_price_lte=entry * 1.08,
+            limit=250,
+        )
+    except MassiveError as exc:
+        logger.warning("Chain fetch failed for %s trade plan: %s", ticker, exc)
+        return None
+
+    best: dict | None = None
+    best_score = float("inf")
+    for row in raw.get("results") or []:
+        details = row.get("details") or {}
+        strike = details.get("strike_price")
+        exp = details.get("expiration_date")
+        if not strike or not exp:
+            continue
+        try:
+            dte = (_dt.date.fromisoformat(exp) - today).days
+        except ValueError:
+            continue
+        if dte <= 0:
+            continue
+        quote = row.get("last_quote") or {}
+        bid, ask = quote.get("bid"), quote.get("ask")
+        trade = row.get("last_trade") or {}
+        day = row.get("day") or {}
+        mid = (
+            (bid + ask) / 2.0 if (bid and ask and ask > 0)
+            else trade.get("price") or day.get("close")
+        )
+        if not mid or mid <= 0:
+            continue
+        # Score: strike distance from ENTRY (normalized) + expiry distance
+        # from preferred DTE. Strike proximity dominates.
+        score = abs(strike - entry) / max(entry, 1) * 100 + abs(dte - preferred_dte) * 0.2
+        if score < best_score:
+            best_score = score
+            greeks = row.get("greeks") or {}
+            best = {
+                "ticker": details.get("ticker"),
+                "type": details.get("contract_type"),
+                "strike": float(strike),
+                "expiration": exp,
+                "dte": dte,
+                "mid": float(mid),
+                "iv": row.get("implied_volatility") or greeks.get("iv"),
+                "delta": greeks.get("delta"),
+            }
+    return best
+
+
+@router.get("/trade-plan/{ticker}/{pattern_name}")
+async def trade_plan(
+    ticker: str,
+    pattern_name: str,
+    risk: str = Query("moderate", description="conservative | moderate | aggressive"),
+    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+) -> dict:
+    """Entry / stop-loss / target for the most recent occurrence of a pattern.
+
+    Underlying levels: stop sized to ``risk`` tolerance × ATR, target = the
+    pattern's measured move. Those levels are then translated into premium
+    space for the play's contract (ATM call/put at the breakout, expiry
+    suited to the timeframe) — see the ``option`` block in the response.
+    """
+    ticker = ticker.upper()
+    pattern = pattern_name.replace("-", " ")
+    if pattern not in PATTERN_DETECTORS:
+        raise HTTPException(status_code=400, detail=f"Unknown pattern: {pattern}")
+
+    bullish = pattern in BULLISH_PATTERNS
+    cfg = _timeframe_cfg(timeframe)
+    # ~180 calendar days of daily bars gives a stable ATR plus a recent signal.
+    from_date, to_date = _date_range(min(180, cfg["max_lookback_days"]))
+    candles = await fetch_candles(
+        ticker, from_date, to_date, timespan=cfg["timespan"], multiplier=cfg["multiplier"]
+    )
+    if not candles:
+        raise HTTPException(status_code=404, detail=f"No data found for {ticker}")
+    candles = candles[-_MAX_BARS:]
+
+    loop = asyncio.get_running_loop()
+    detections: list[dict] = await loop.run_in_executor(
+        _executor, _run_one_detector, (pattern, PATTERN_DETECTORS[pattern], candles)
+    )
+
+    current_price = candles[-1]["close"]
+    atr = compute_atr(candles)
+    vol = annualized_vol(candles)
+    base = {
+        "ticker": ticker,
+        "pattern": pattern,
+        "bullish": bullish,
+        "current_price": round(current_price, 2),
+        "atr": round(atr, 2) if atr else None,
+        "atr_pct": round(atr / current_price * 100, 2) if atr and current_price else None,
+        "hist_vol_annual_pct": round(vol, 1) if vol else None,
+        "timeframe": timeframe,
+    }
+    if not detections:
+        return {**base, "signal_date": None, "plan": None, "option": None}
+
+    latest = max(detections, key=lambda d: d["end_date"])
+    plan = build_trade_plan(
+        pattern=pattern,
+        key_levels=latest.get("key_levels") or {},
+        current_price=current_price,
+        atr=atr,
+        bullish=bullish,
+        risk=risk,
+    )
+
+    # Premium-space plan for the play's contract. Chain snapshot is a sync
+    # provider call — keep the event loop free.
+    preferred_dte = _PLAN_DTE.get(timeframe, 30)
+    hold_days = _PLAN_HOLD_DAYS.get(timeframe, 10.0)
+
+    async def _plan_for_dte(dte: int) -> dict | None:
+        contract = await asyncio.to_thread(
+            _pick_plan_contract, ticker, plan["entry"], bullish, dte
+        )
+        if not contract:
+            return None
+        return build_option_plan(
+            underlying_plan=plan, spot=current_price, contract=contract, hold_days=hold_days
+        )
+
+    option = await _plan_for_dte(preferred_dte)
+    # Theta-negative on the preferred expiry (the measured move doesn't outrun
+    # decay)? A longer-dated contract decays slower per day held — try ~2x DTE
+    # and keep whichever is viable / better.
+    if option is not None and not option["viable"]:
+        longer = await _plan_for_dte(preferred_dte * 2 + 7)
+        if longer is not None and longer["viable"]:
+            longer["pricing_basis"] += "; expiry extended beyond the preferred window so the move outruns theta"
+            option = longer
+
+    return {
+        **base,
+        "signal_date": latest["end_date"],
+        "confidence": latest.get("confidence"),
+        "plan": plan,
+        "option": option,
     }
 
 

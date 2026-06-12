@@ -7,8 +7,10 @@ import type {
   ScanResult,
   ChartData,
   PatternTimeframe,
+  RiskTolerance,
   SignalAnalysisData,
   PatternsListResponse,
+  TradePlanResponse,
 } from '@/types/patterns';
 
 import { API_BASE_URL } from '@/lib/api-base';
@@ -77,6 +79,16 @@ export function getSignalAnalysis(
 ): Promise<SignalAnalysisData> {
   const encoded = pattern.replace(/ /g, '-');
   return _get<SignalAnalysisData>(`/signal-analysis/${ticker}/${encoded}?timeframe=${timeframe}`);
+}
+
+export function getTradePlan(
+  ticker: string,
+  pattern: string,
+  risk: RiskTolerance = 'moderate',
+  timeframe: PatternTimeframe = 'day'
+): Promise<TradePlanResponse> {
+  const encoded = pattern.replace(/ /g, '-');
+  return _get<TradePlanResponse>(`/trade-plan/${ticker}/${encoded}?risk=${risk}&timeframe=${timeframe}`);
 }
 
 export function listPatterns(): Promise<PatternsListResponse> {

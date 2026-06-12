@@ -4,6 +4,45 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Pattern Scanner trade plans — on the options play.** Click any pattern
+  and the Signal Analysis panel shows a concrete plan for the play's
+  **contract** (ATM call/put at the breakout, expiry suited to the scan
+  timeframe): **buy / cut / take-profit premiums**, max loss per contract,
+  premium-space risk/reward, and a **position sizer in contracts** (account $
+  + risk % → number of contracts). A risk-tolerance toggle (Conservative /
+  Moderate / Aggressive) sets the underlying stop at **1.0× / 1.5× / 2.5×
+  ATR** — so the same tolerance gives wider stops on volatile names — and
+  those underlying levels are translated to premiums by **Black-Scholes
+  repricing at the contract's IV, anchored to the live market mid**, with the
+  expected hold's theta priced into the target (hold scales with the scan
+  timeframe). A **theta viability guard** flags plays where decay outruns the
+  measured move — it first retries a longer-dated expiry automatically, and
+  if no contract clears theta the card warns "not viable as a long option"
+  instead of showing a take-profit below entry. Falls back to underlying
+  share levels when the chain is unavailable. Backed by `GET
+  /patterns/trade-plan/{ticker}/{pattern}` and a tested pure engine
+  (`src/patterns/trade_plan.py`, 16 unit tests).
+- **Pattern Scanner "Today's plays" sort.** Results default to freshest
+  breakouts first, grouped by day (Today / Yesterday / …) and ranked by
+  confidence within each day, with new filter chips for recency, minimum
+  confidence, and bias.
+- **Per-sleeve "Run agents"** in Portfolio Pulse — scan one sleeve's names
+  on demand; results merge into the day's saved scan instead of replacing it.
+
+### Changed
+- Forced **dark theme** (the terminal's design language) instead of following
+  the OS setting, which rendered white on light-mode machines.
+- Reworked the left-nav into a **3×2 pill grid** so six sections (incl. the
+  new P&L tab) no longer squish into one cramped row.
+- Saved analyses (per-ticker scans, theses) now **persist across refresh and
+  restart**.
+
+### Fixed
+- Watchlist saves no longer fail silently; Save flushes the typed ticker.
+
 ## [1.1.0] - 2026-06-10
 
 A new P&L tab, intraday pattern scanning, and a production-hardening pass

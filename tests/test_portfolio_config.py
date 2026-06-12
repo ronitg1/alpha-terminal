@@ -103,7 +103,7 @@ def test_validate_catches_agent_weight_key_skew() -> None:
 def test_sleeve_for_ticker_finds_known_name() -> None:
     assert sleeve_for_ticker("NVDA") == "mega_tech"
     assert sleeve_for_ticker("nvda") == "mega_tech"  # case-insensitive
-    assert sleeve_for_ticker("FSLR") == "energy_transition"
+    assert sleeve_for_ticker("NBIS") == "opportunistic"
     assert sleeve_for_ticker("IONQ") == "emerging_tech"
 
 
