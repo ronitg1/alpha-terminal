@@ -8,6 +8,7 @@ from src.patterns.trade_plan import (
     annualized_vol,
     build_option_plan,
     build_trade_plan,
+    classify_signal,
     compute_atr,
     normalize_risk,
 )
@@ -203,3 +204,49 @@ def test_option_plan_healthy_play_is_viable():
     plan = _bull_plan()  # entry 100 -> target 118: a real move
     opt = build_option_plan(underlying_plan=plan, spot=99.0, contract=_call_contract())
     assert opt["viable"] is True
+
+
+# ─── Signal actionability ────────────────────────────────────────────────────
+
+_GEOM = dict(bullish=True, entry=100.0, stop=95.0, target=115.0, atr=2.0)
+
+
+def test_classify_target_reached_is_stale():
+    status, reason = classify_signal(**_GEOM, spot=116.0, age_bars=2)
+    assert status == "stale" and "played out" in reason
+
+
+def test_classify_stop_breached_is_stale():
+    # The META/AVGO case: price collapsed far below the bullish setup's stop.
+    status, reason = classify_signal(**_GEOM, spot=88.0, age_bars=2)
+    assert status == "stale" and "invalidated" in reason
+
+
+def test_classify_bearish_mirror():
+    bear = dict(bullish=False, entry=100.0, stop=105.0, target=85.0, atr=2.0)
+    assert classify_signal(**bear, spot=84.0, age_bars=1)[0] == "stale"   # target hit
+    assert classify_signal(**bear, spot=106.0, age_bars=1)[0] == "stale"  # invalidated
+    assert classify_signal(**bear, spot=99.0, age_bars=1)[0] == "live"    # triggered, in progress
+
+
+def test_classify_triggered_in_progress_is_live():
+    status, reason = classify_signal(**_GEOM, spot=105.0, age_bars=3)
+    assert status == "live" and "33%" in reason  # 5 of 15 points to target
+
+
+def test_classify_far_untriggered_is_watch():
+    # Above the stop (still valid) but outside the 2-ATR striking distance
+    # of the entry: a setup to watch, not to price premiums on.
+    status, reason = classify_signal(**_GEOM, spot=95.5, age_bars=2)
+    assert status == "watch"
+    assert "not actionable" in reason
+
+
+def test_classify_old_untriggered_is_stale():
+    status, _ = classify_signal(**_GEOM, spot=99.0, age_bars=30)
+    assert status == "stale"
+
+
+def test_classify_near_trigger_is_live():
+    status, _ = classify_signal(**_GEOM, spot=99.0, age_bars=2)
+    assert status == "live"

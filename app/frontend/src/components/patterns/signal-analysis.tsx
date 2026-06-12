@@ -31,6 +31,20 @@ function signedMoney(v: number): string {
   return `${v < 0 ? '−' : '+'}$${Math.abs(v).toFixed(0)}`;
 }
 
+const STATUS_STYLES: Record<string, { label: string; cls: string }> = {
+  live: { label: 'LIVE', cls: 'bg-emerald-900/40 text-emerald-400 border-emerald-700' },
+  watch: { label: 'WATCH', cls: 'bg-amber-900/40 text-amber-400 border-amber-700' },
+  stale: { label: 'STALE', cls: 'bg-gray-800 text-gray-500 border-gray-700' },
+};
+
+function StatusPill({ status }: { status?: string }) {
+  const s = STATUS_STYLES[status ?? ''];
+  if (!s) return null;
+  return (
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${s.cls}`}>{s.label}</span>
+  );
+}
+
 function TradePlanCard({
   ticker, pattern, timeframe,
 }: {
@@ -78,7 +92,10 @@ function TradePlanCard({
   return (
     <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Trade Plan</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Trade Plan</p>
+          <StatusPill status={plan?.status} />
+        </div>
         <div className="flex gap-1">
           {RISK_OPTIONS.map((o) => (
             <button
@@ -108,9 +125,22 @@ function TradePlanCard({
         </p>
       ) : (
         <div className="space-y-3">
-          {/* The contract */}
-          {opt ? (
+          {plan.status === 'stale' ? (
+            /* Dead signal — say so instead of pricing a plan on a corpse. */
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400 leading-relaxed">{plan.status_reason}</p>
+              <p className="text-[11px] text-gray-600 leading-relaxed">
+                For reference, the original geometry was: entry {money(plan.entry)} · stop {money(plan.stop)} · target {money(plan.target)}.
+                Run a fresh scan for setups that are still in play.
+              </p>
+            </div>
+          ) : opt ? (
             <>
+              {plan.status === 'watch' && (
+                <p className="text-[11px] text-amber-500/90 leading-relaxed">
+                  ⏳ {plan.status_reason}. Premiums below are estimates <em>at the trigger</em> — refresh when price approaches the level.
+                </p>
+              )}
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${opt.type === 'call' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>
                   {ticker} ${opt.strike}{opt.type === 'call' ? 'C' : 'P'} {expLabel(opt.expiration)}

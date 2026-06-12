@@ -84,6 +84,11 @@ export interface PatternsListResponse {
 export type RiskTolerance = 'conservative' | 'moderate' | 'aggressive';
 
 export interface TradePlan {
+  /** Actionability of the latest detection: 'live' = tradeable now,
+   *  'watch' = valid setup but the trigger is far from price,
+   *  'stale' = played out / invalidated / too old — rescan. */
+  status?: 'live' | 'watch' | 'stale';
+  status_reason?: string;
   direction: 'long' | 'short';
   risk: RiskTolerance;
   atr_multiple: number;

@@ -285,7 +285,16 @@ export function LeftNav() {
     setQuotesLoading(true);
     try {
       const data = await sleevesApi.getQuotes(uniqueTickers);
-      setQuotes(data.quotes);
+      // Merge, never clobber: a degraded provider returns null placeholders
+      // for tickers that missed the fetch window — keep the price already on
+      // screen rather than blanking it until the next refresh.
+      setQuotes((prev) => {
+        const next: Record<string, Quote> = { ...prev };
+        for (const [sym, q] of Object.entries(data.quotes)) {
+          if (q.last != null || next[sym]?.last == null) next[sym] = q;
+        }
+        return next;
+      });
     } catch { /* non-fatal */ }
     finally { setQuotesLoading(false); }
   }, [uniqueTickers.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Intraday charts no longer stop days in the past on heavily-traded
+  names.** Polygon paginates long intraday aggregate requests once its
+  internal scan budget is hit — on 90-day hourly windows, NVDA truncated at
+  ~52 trading days and AMD shortly after, so their Pattern Scanner charts
+  froze mid-history while quieter names were complete. The data client now
+  follows the `next_url` cursor (up to 10 pages) and returns the full
+  window. Two related hardenings: hourly RTH filtering now keeps the 09:00
+  bar (it contains the 09:30 market open — previously the session's first
+  and most important hour was dropped), and truncated provider responses
+  are served but never cached, so a degraded reply can't pin a stale chart
+  for the cache TTL.
+- **Left-rail quotes no longer blank out when the data provider is slow.**
+  A failed price fetch used to be cached as a null for a full minute —
+  one Polygon timeout blanked the ticker and clobbered its previously-good
+  quote. Quotes now use last-known-good semantics: only successes enter the
+  cache, failures serve the most recent real price (slightly stale beats a
+  dash), and the sidebar merges refreshes without overwriting loaded prices.
+- **Trade plans are no longer priced on dead signals.** The Trade Plan card
+  now classifies the latest detection as **LIVE / WATCH / STALE** against
+  where price actually is: target already reached or stop breached → stale
+  (no option plan; "rescan" notice with the original geometry for
+  reference); valid setup but trigger far from price → watch (premiums
+  labeled as estimates at the trigger); triggered-and-in-progress or
+  near-trigger → live. Previously a months-old Cup & Handle could present a
+  full premium plan on a setup trading 11% below its stop.
+
 ### Added
 - **Pattern Scanner trade plans — on the options play.** Click any pattern
   and the Signal Analysis panel shows a concrete plan for the play's

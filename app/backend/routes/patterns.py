@@ -21,6 +21,7 @@ from src.patterns.trade_plan import (
     annualized_vol,
     build_option_plan,
     build_trade_plan,
+    classify_signal,
     compute_atr,
 )
 from src.tools.massive import MassiveClient, MassiveError
@@ -497,6 +498,35 @@ async def trade_plan(
         bullish=bullish,
         risk=risk,
     )
+
+    # Actionability: is this latest detection still a trade, or history?
+    # Signal age in BARS (approx): calendar days × the timeframe's bar density
+    # (5/7 converts calendar → trading days).
+    import datetime as _dt
+
+    bars_per_trading_day = {"day": 1.0, "1h": 6.5, "15m": 26.0}.get(timeframe, 1.0)
+    try:
+        signal_day = _dt.date.fromisoformat(latest["end_date"][:10])
+        age_bars = max(0.0, (_dt.date.today() - signal_day).days * 5 / 7) * bars_per_trading_day
+    except ValueError:
+        age_bars = 0.0
+    status, status_reason = classify_signal(
+        bullish=bullish,
+        entry=plan["entry"], stop=plan["stop"], target=plan["target"],
+        spot=current_price, atr=atr, age_bars=age_bars,
+    )
+    plan["status"] = status
+    plan["status_reason"] = status_reason
+
+    if status == "stale":
+        # Don't price option plans on dead setups (also saves a chain call).
+        return {
+            **base,
+            "signal_date": latest["end_date"],
+            "confidence": latest.get("confidence"),
+            "plan": plan,
+            "option": None,
+        }
 
     # Premium-space plan for the play's contract. Chain snapshot is a sync
     # provider call — keep the event loop free.

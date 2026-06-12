@@ -1597,6 +1597,12 @@ async def get_quotes(tickers: str = "") -> dict[str, Any]:
     # (and starve other endpoints). Cached tickers skip the semaphore entirely.
     sem = asyncio.Semaphore(12)
 
+    def _lkg(symbol: str) -> dict | None:
+        """Last-known-good quote, regardless of TTL — a slightly stale price
+        beats a blank dash while the provider is degraded."""
+        cached = _quote_cache.get(symbol)
+        return cached[1] if cached else None
+
     async def fetch_one(symbol: str) -> tuple[str, dict]:
         now = time.monotonic()
         cached = _quote_cache.get(symbol)
@@ -1609,26 +1615,34 @@ async def get_quotes(tickers: str = "") -> dict[str, Any]:
         # Price only — reliable. Name is read from cache (never fetched here).
         # Short client timeout so a degraded provider fails fast instead of
         # holding a thread for the default 30s per attempt.
-        def _compute() -> dict:
+        def _compute() -> dict | None:
             client = MassiveClient(timeout=6)
             closes = _fetch_closes(client, symbol, start, today.isoformat())
-            name = _name_cache.get(symbol, "")
             if not closes:
-                return {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": name}
+                return None
             spark = closes[-20:]
             last = spark[-1]
             prev = spark[-2] if len(spark) >= 2 else None
             pct = round((last - prev) / prev * 100, 2) if prev else None
-            return {"last": round(last, 2), "prev_close": round(prev, 2) if prev else None, "pct_change": pct, "spark": [round(c, 2) for c in spark], "name": name}
+            return {"last": round(last, 2), "prev_close": round(prev, 2) if prev else None, "pct_change": pct, "spark": [round(c, 2) for c in spark], "name": _name_cache.get(symbol, "")}
 
         async with sem:
             try:
                 result = await asyncio.to_thread(_compute)
             except Exception:
-                result = {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(symbol, "")}
+                result = None
 
-        _quote_cache[symbol] = (time.monotonic(), result)
-        return symbol, result
+        if result is not None:
+            # Only SUCCESSES enter the cache. Caching a failure used to pin a
+            # null placeholder for the full TTL — one provider timeout blanked
+            # the ticker for a minute and clobbered its previously-good quote.
+            _quote_cache[symbol] = (time.monotonic(), result)
+            return symbol, result
+
+        stale = _lkg(symbol)
+        if stale is not None:
+            return symbol, stale
+        return symbol, {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(symbol, "")}
 
     # Time-box the whole batch: return within the budget with whatever resolved
     # so the sidebar loads fast even when the data provider is slow/down. Any
@@ -1646,12 +1660,13 @@ async def get_quotes(tickers: str = "") -> dict[str, Any]:
             quotes[sym] = res
         except Exception:  # noqa: BLE001
             pass
-    # Fill any ticker that timed out / errored with a null placeholder.
+    # Fill any ticker that missed the time-box: last-known-good first, null
+    # placeholder only for symbols that have never resolved.
     for s in symbols:
-        quotes.setdefault(
-            s,
-            {"last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(s, "")},
-        )
+        if s not in quotes:
+            quotes[s] = _lkg(s) or {
+                "last": None, "prev_close": None, "pct_change": None, "spark": [], "name": _name_cache.get(s, ""),
+            }
     return {"quotes": quotes}
 
 

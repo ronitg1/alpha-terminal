@@ -209,6 +209,57 @@ def build_trade_plan(
     }
 
 
+# ─── Signal actionability ────────────────────────────────────────────────────
+
+
+def classify_signal(
+    *,
+    bullish: bool,
+    entry: float,
+    stop: float,
+    target: float,
+    spot: float,
+    atr: float | None,
+    age_bars: float,
+    max_age_bars: float = 20.0,
+) -> tuple[str, str]:
+    """Is this signal still a trade, or history? → (status, reason).
+
+    The scanner reports the latest detection in the lookback window, which can
+    be weeks old — pricing a plan on a played-out or invalidated pattern is
+    misleading. Statuses:
+
+    * ``stale`` — the move already reached its target, price breached the stop
+      side (setup invalidated), or the signal is older than the outcome window
+      without triggering. Don't trade it; rescan.
+    * ``watch`` — not yet triggered and the breakout level is far from price
+      (> max(2×ATR, 2%)). Valid setup, but premiums are hypothetical until the
+      level is near.
+    * ``live`` — triggered and still between entry and target, or untriggered
+      with price within striking distance of the level.
+    """
+    # Move already played out?
+    if (bullish and spot >= target) or (not bullish and spot <= target):
+        return "stale", "price already reached the target — this move has played out"
+    # Setup invalidated? (price through the stop side of entry)
+    if (bullish and spot <= stop) or (not bullish and spot >= stop):
+        return "stale", "price has breached the stop level — the setup is invalidated"
+
+    triggered = spot >= entry if bullish else spot <= entry
+    if triggered:
+        progress = abs(spot - entry) / abs(target - entry) * 100 if target != entry else 0.0
+        return "live", f"breakout triggered — move {progress:.0f}% of the way to target"
+
+    if age_bars > max_age_bars:
+        return "stale", "signal is older than its outcome window and never triggered — rescan for fresh setups"
+
+    dist = abs(entry - spot)
+    near_limit = max(2.0 * (atr if atr and atr > 0 else spot * 0.02), 0.02 * spot)
+    if dist > near_limit:
+        return "watch", f"breakout level is {dist / spot * 100:.1f}% from price — not actionable until the level is near"
+    return "live", "price is within striking distance of the trigger — actionable on a confirmed break"
+
+
 # ─── Option-premium translation ──────────────────────────────────────────────
 
 
