@@ -1,6 +1,238 @@
 import { useEffect, useState } from 'react';
-import { getSignalAnalysis } from '@/services/patterns-api';
-import type { OptionsStrategy, PatternTimeframe, SignalAnalysisData } from '@/types/patterns';
+import { getSignalAnalysis, getTradePlan } from '@/services/patterns-api';
+import type {
+  OptionsStrategy,
+  PatternTimeframe,
+  RiskTolerance,
+  SignalAnalysisData,
+  TradePlanResponse,
+} from '@/types/patterns';
+
+// ─── Trade plan: entry / stop / target sized to risk tolerance + ATR ─────────
+
+const RISK_OPTIONS: { key: RiskTolerance; label: string }[] = [
+  { key: 'conservative', label: 'Cons' },
+  { key: 'moderate', label: 'Mod' },
+  { key: 'aggressive', label: 'Aggr' },
+];
+
+function money(v: number | null | undefined): string {
+  return v == null ? '—' : `$${v.toFixed(2)}`;
+}
+
+function expLabel(exp: string | null): string {
+  if (!exp) return '';
+  const [y, m, d] = exp.split('-');
+  return `${Number(m)}/${Number(d)}/${y.slice(2)}`;
+}
+
+/** "+$611" / "−$611" — avoids the "+$-611" double-sign artifact. */
+function signedMoney(v: number): string {
+  return `${v < 0 ? '−' : '+'}$${Math.abs(v).toFixed(0)}`;
+}
+
+function TradePlanCard({
+  ticker, pattern, timeframe,
+}: {
+  ticker: string;
+  pattern: string;
+  timeframe: PatternTimeframe;
+}) {
+  const [risk, setRisk] = useState<RiskTolerance>('moderate');
+  const [data, setData] = useState<TradePlanResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Position sizer inputs (persist across risk changes within a session).
+  const [account, setAccount] = useState('25000');
+  const [riskPct, setRiskPct] = useState('1');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getTradePlan(ticker, pattern, risk, timeframe)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((err: Error) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [ticker, pattern, risk, timeframe]);
+
+  const plan = data?.plan ?? null;
+  const opt = data?.option ?? null;
+
+  // Position sizing in CONTRACTS: lose ≈ account × risk% if the premium stop hits.
+  let contracts: number | null = null;
+  let dollarsAtRisk: number | null = null;
+  if (opt && opt.risk_per_contract > 0) {
+    const acct = parseFloat(account);
+    const pct = parseFloat(riskPct);
+    if (Number.isFinite(acct) && Number.isFinite(pct) && acct > 0 && pct > 0) {
+      dollarsAtRisk = acct * (pct / 100);
+      contracts = Math.floor(dollarsAtRisk / opt.risk_per_contract);
+    }
+  }
+
+  const rrColor = (rr: number | null | undefined) =>
+    (rr ?? 0) >= 2 ? 'text-emerald-400' : (rr ?? 0) >= 1 ? 'text-amber-400' : 'text-red-400';
+
+  return (
+    <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Trade Plan</p>
+        <div className="flex gap-1">
+          {RISK_OPTIONS.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => setRisk(o.key)}
+              title={`${o.key} stop = ${o.key === 'conservative' ? '1.0' : o.key === 'moderate' ? '1.5' : '2.5'}× ATR on the underlying`}
+              className={`px-2 py-0.5 text-[11px] rounded-md border transition-colors ${
+                risk === o.key
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-gray-500 py-2">Sizing the play…</p>
+      ) : error ? (
+        <p className="text-xs text-red-400 py-2">{error}</p>
+      ) : !plan ? (
+        <p className="text-xs text-gray-600 py-2">
+          No actionable signal in the recent window — the trade plan reflects the latest breakout, and none is fresh enough on this timeframe.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {/* The contract */}
+          {opt ? (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${opt.type === 'call' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>
+                  {ticker} ${opt.strike}{opt.type === 'call' ? 'C' : 'P'} {expLabel(opt.expiration)}
+                </span>
+                <span className="text-[11px] text-gray-500">{opt.dte}d{opt.iv_pct != null && ` · IV ${opt.iv_pct}%`}{opt.delta != null && ` · Δ ${opt.delta}`}</span>
+                <span className="text-[11px] text-gray-600">mid {money(opt.current_mid)}</span>
+              </div>
+
+              {/* Premium entry / stop / target */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                  <div className="text-sm font-bold font-mono text-white">{money(opt.entry_premium)}</div>
+                  <div className="text-[10px] text-gray-600">Buy at {plan.already_triggered ? '(triggered)' : 'breakout'}</div>
+                </div>
+                <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                  <div className="text-sm font-bold font-mono text-red-400">{money(opt.stop_premium)}</div>
+                  <div className="text-[10px] text-gray-600">Cut ({signedMoney(-opt.risk_per_contract)}/ct)</div>
+                </div>
+                <div className={`rounded-lg px-2 py-1.5 ${opt.viable ? 'bg-gray-900/60' : 'bg-red-950/40 border border-red-900/50'}`}>
+                  <div className={`text-sm font-bold font-mono ${opt.viable ? 'text-emerald-400' : 'text-red-400'}`}>{money(opt.target_premium)}</div>
+                  <div className="text-[10px] text-gray-600">At target ({signedMoney(opt.reward_per_contract)}/ct)</div>
+                </div>
+              </div>
+
+              {/* Theta-negative: even a winning pattern loses on this contract. */}
+              {!opt.viable && (
+                <p className="text-[11px] text-red-400/90 leading-relaxed">
+                  ⚠ Not viable as a long option: over the expected hold, theta decay outruns the pattern&apos;s
+                  measured move — even if the underlying reaches the target, this contract is worth less than
+                  entry (no longer-dated expiry cleared theta either). Consider trading the underlying or a spread.
+                </p>
+              )}
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <span className="text-gray-500">
+                  R/R <span className={`font-mono font-bold ${rrColor(opt.risk_reward)}`}>
+                    {opt.risk_reward != null ? `${opt.risk_reward}:1` : '—'}
+                  </span>
+                </span>
+                <span className="text-gray-500">max loss <span className="font-mono text-gray-300">${opt.max_loss_per_contract.toFixed(0)}/ct</span></span>
+                {data?.atr != null && (
+                  <span className="text-gray-500">ATR <span className="font-mono text-gray-300">${data.atr}{data.atr_pct != null ? ` (${data.atr_pct}%)` : ''}</span></span>
+                )}
+                {data?.hist_vol_annual_pct != null && (
+                  <span className="text-gray-500">vol <span className="font-mono text-gray-300">{data.hist_vol_annual_pct}%</span></span>
+                )}
+              </div>
+
+              {/* Underlying levels driving the premium plan */}
+              <div className="text-[11px] text-gray-600 space-y-0.5 leading-relaxed">
+                <p>
+                  Underlying: enter {money(plan.entry)} · stop {money(plan.stop)} ({plan.stop_basis}) · target {money(plan.target)}.
+                  {plan.structural_invalidation != null && ` Pattern invalidates near ${money(plan.structural_invalidation)}.`}
+                </p>
+                <p>Premiums: {opt.pricing_basis}.</p>
+              </div>
+
+              {/* Position sizer — contracts (suppressed when theta-negative) */}
+              {opt.viable && (
+              <div className="bg-gray-900/40 rounded-lg p-2.5">
+                <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-500">
+                  <span>Account $</span>
+                  <input
+                    value={account}
+                    onChange={(e) => setAccount(e.target.value)}
+                    className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 w-20 text-gray-200 font-mono outline-none focus:border-indigo-500"
+                  />
+                  <span>risk %</span>
+                  <input
+                    value={riskPct}
+                    onChange={(e) => setRiskPct(e.target.value)}
+                    className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 w-12 text-gray-200 font-mono outline-none focus:border-indigo-500"
+                  />
+                </div>
+                {contracts != null && dollarsAtRisk != null && (
+                  <p className="text-xs text-gray-300 mt-1.5">
+                    ≈ <span className="font-mono font-bold text-white">{contracts.toLocaleString()} contract{contracts === 1 ? '' : 's'}</span>
+                    <span className="text-gray-600">
+                      {' '}· ~${(contracts * opt.entry_premium * 100).toLocaleString(undefined, { maximumFractionDigits: 0 })} premium
+                      · risks ~${(contracts * opt.risk_per_contract).toFixed(0)} at the cut
+                      · ${(contracts * opt.max_loss_per_contract).toLocaleString(undefined, { maximumFractionDigits: 0 })} max if it expires worthless
+                    </span>
+                  </p>
+                )}
+                {contracts === 0 && (
+                  <p className="text-[11px] text-amber-500/90 mt-1.5">
+                    One contract risks more than your budget — raise risk % or skip the play.
+                  </p>
+                )}
+              </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Chain unavailable — show the underlying levels so the plan is still usable. */}
+              <p className="text-[11px] text-amber-500/90">
+                Option chain unavailable for this name right now — showing underlying levels.
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                  <div className="text-sm font-bold font-mono text-white">{money(plan.entry)}</div>
+                  <div className="text-[10px] text-gray-600">Entry {plan.already_triggered && '· triggered'}</div>
+                </div>
+                <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                  <div className="text-sm font-bold font-mono text-red-400">{money(plan.stop)}</div>
+                  <div className="text-[10px] text-gray-600">Stop {plan.stop_pct > 0 ? '+' : ''}{plan.stop_pct}%</div>
+                </div>
+                <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
+                  <div className="text-sm font-bold font-mono text-emerald-400">{money(plan.target)}</div>
+                  <div className="text-[10px] text-gray-600">Target {plan.target_pct > 0 ? '+' : ''}{plan.target_pct}%</div>
+                </div>
+              </div>
+              <div className="text-[11px] text-gray-600 leading-relaxed">
+                <p>Stop: {plan.stop_basis}. Target: {plan.target_basis}.</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function WinRateGauge({ rate }: { rate: number | null }) {
   const r = 36;
@@ -152,6 +384,9 @@ export function SignalAnalysis({ ticker, pattern, timeframe = 'day' }: SignalAna
           </div>
         </div>
       </div>
+
+      {/* Trade plan — entry / stop / target sized to risk + volatility */}
+      {pattern && <TradePlanCard ticker={ticker} pattern={pattern} timeframe={timeframe} />}
 
       {/* Options plays */}
       <div>
