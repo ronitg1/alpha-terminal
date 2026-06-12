@@ -27,6 +27,40 @@ function SortIcon({ active, asc }: { active: boolean; asc: boolean }) {
   );
 }
 
+// ─── Freshness helpers ───────────────────────────────────────────────────────
+// end_date is the breakout bar: "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH:MM"
+// (intraday). "Today's plays" are the freshest breakouts — we surface those
+// first and bucket the rest by recency.
+
+/** Calendar days between the signal's breakout date and today (0 = today). */
+function daysAgo(endDate: string): number {
+  const d = new Date(`${endDate.slice(0, 10)}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((today.getTime() - d.getTime()) / 86_400_000);
+}
+
+type Bucket = { key: string; label: string };
+
+function bucketOf(days: number): Bucket {
+  if (days <= 0) return { key: 'today', label: 'Today' };
+  if (days === 1) return { key: 'yesterday', label: 'Yesterday' };
+  if (days <= 4) return { key: 'days', label: 'Last few days' };
+  if (days <= 10) return { key: 'week', label: 'This week' };
+  if (days <= 31) return { key: 'month', label: 'This month' };
+  return { key: 'earlier', label: 'Earlier' };
+}
+
+const RECENCY_OPTIONS: { key: string; label: string; maxDays: number }[] = [
+  { key: 'all', label: 'All', maxDays: Infinity },
+  { key: 'today', label: 'Today', maxDays: 0 },
+  { key: '3d', label: '3d', maxDays: 4 },
+  { key: '1w', label: '1w', maxDays: 10 },
+  { key: '1m', label: '1mo', maxDays: 31 },
+];
+
+const MIN_CONF_OPTIONS = [0, 50, 70, 90];
+
 function WinRateBadge({ stats }: { stats: HistoricalStats | undefined }) {
   if (!stats) return <span className="text-gray-700 text-xs font-mono">—</span>;
   if (stats.total_signals === 0 || stats.win_rate == null)
@@ -43,6 +77,42 @@ function WinRateBadge({ stats }: { stats: HistoricalStats | undefined }) {
         <div className={`h-full ${barColor} rounded-full`} style={{ width: `${rate}%` }} />
       </div>
       <span className="text-gray-600 text-xs">{stats.wins}W/{stats.losses}L</span>
+    </div>
+  );
+}
+
+// ─── Filter chips ────────────────────────────────────────────────────────────
+
+function Chip({
+  active, onClick, children, tone,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  tone?: 'bull' | 'bear';
+}) {
+  const activeCls =
+    tone === 'bull' ? 'bg-emerald-600 text-white border-emerald-500'
+    : tone === 'bear' ? 'bg-red-600 text-white border-red-500'
+    : 'bg-indigo-600 text-white border-indigo-500';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2 py-0.5 text-[11px] rounded-md border transition-colors ${
+        active ? activeCls : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200 hover:border-gray-600'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ChipGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-0.5">{label}</span>
+      {children}
     </div>
   );
 }
@@ -90,14 +160,16 @@ function ContractPanel({
   );
 }
 
-type SortKey = 'ticker' | 'pattern' | 'end_date' | 'confidence';
+type SortKey = 'ticker' | 'pattern' | 'end_date' | 'confidence' | 'win_rate';
+/** 'fresh' = today's plays first, highest confidence within each day. */
+type SortMode = SortKey | 'fresh';
 
-const COLS: { key: SortKey | 'win_rate' | 'description' | 'contract'; label: string; noSort?: boolean }[] = [
+const COLS: { key: SortKey | 'description' | 'contract'; label: string; noSort?: boolean }[] = [
   { key: 'ticker', label: 'Ticker' },
   { key: 'pattern', label: 'Pattern' },
   { key: 'end_date', label: 'Signal Date' },
   { key: 'confidence', label: 'Confidence' },
-  { key: 'win_rate', label: 'Win Rate', noSort: true },
+  { key: 'win_rate', label: 'Win Rate' },
   { key: 'description', label: 'Description', noSort: true },
   { key: 'contract', label: 'Contract', noSort: true },
 ];
@@ -109,39 +181,77 @@ interface ResultsTableProps {
 }
 
 export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>('confidence');
+  // Default: today's plays first, highest confidence within each day.
+  const [sortMode, setSortMode] = useState<SortMode>('fresh');
   const [sortAsc, setSortAsc] = useState(false);
+  const [recency, setRecency] = useState('all');
+  const [minConf, setMinConf] = useState(0);
+  const [direction, setDirection] = useState<'all' | 'bull' | 'bear'>('all');
   const [filterPattern, setFilterPattern] = useState('');
   const [filterTicker, setFilterTicker] = useState('');
   const [contractRow, setContractRow] = useState<string | null>(null); // "ticker:pattern:idx"
 
   const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortAsc(!sortAsc);
-    else { setSortKey(key); setSortAsc(key !== 'confidence'); }
+    if (sortMode === key) setSortAsc(!sortAsc);
+    // Date + numeric columns default to descending (newest / highest first).
+    else { setSortMode(key); setSortAsc(key === 'ticker' || key === 'pattern'); }
   };
 
-  const filtered = results
-    .filter((r) => {
-      const pat = filterPattern.toLowerCase();
-      const tick = filterTicker.toUpperCase();
-      return (
-        (!pat || r.pattern.toLowerCase().includes(pat)) &&
-        (!tick || r.ticker.includes(tick))
-      );
-    })
-    .sort((a, b) => {
-      const av = a[sortKey as SortKey];
-      const bv = b[sortKey as SortKey];
-      if (typeof av === 'string' && typeof bv === 'string')
-        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-      return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
-    });
+  const recencyMax = RECENCY_OPTIONS.find((o) => o.key === recency)?.maxDays ?? Infinity;
+
+  const filtered = results.filter((r) => {
+    const pat = filterPattern.toLowerCase();
+    const tick = filterTicker.toUpperCase();
+    if (pat && !r.pattern.toLowerCase().includes(pat)) return false;
+    if (tick && !r.ticker.includes(tick)) return false;
+    if (r.confidence < minConf) return false;
+    if (recencyMax !== Infinity && daysAgo(r.end_date) > recencyMax) return false;
+    if (direction === 'bull' && !BULLISH_PATTERNS.has(r.pattern)) return false;
+    if (direction === 'bear' && !BEARISH_PATTERNS.has(r.pattern)) return false;
+    return true;
+  });
+
+  const winRate = (r: ScanResult): number => winRates.get(`${r.ticker}:${r.pattern}`)?.win_rate ?? -1;
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortMode === 'fresh') {
+      // Today first; ties broken by highest confidence.
+      const da = daysAgo(a.end_date), db = daysAgo(b.end_date);
+      if (da !== db) return da - db;
+      return b.confidence - a.confidence;
+    }
+    if (sortMode === 'win_rate') {
+      const diff = winRate(a) - winRate(b);
+      return sortAsc ? diff : -diff;
+    }
+    const av = a[sortMode];
+    const bv = b[sortMode];
+    if (typeof av === 'string' && typeof bv === 'string')
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  // Per-bucket counts for the group headers (only shown in 'fresh' mode).
+  const bucketCounts: Record<string, number> = {};
+  if (sortMode === 'fresh') {
+    for (const r of sorted) {
+      const k = bucketOf(daysAgo(r.end_date)).key;
+      bucketCounts[k] = (bucketCounts[k] ?? 0) + 1;
+    }
+  }
 
   const totalUniquePairs = new Set(results.map((r) => `${r.ticker}:${r.pattern}`)).size;
+  const sortLabel =
+    sortMode === 'fresh' ? "Today's plays first, highest confidence each day"
+    : sortMode === 'confidence' ? 'Highest confidence'
+    : sortMode === 'win_rate' ? 'Highest win rate'
+    : `${sortMode}`;
+
+  let lastBucket = '';
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl flex flex-col overflow-hidden">
-      {/* Header + filters */}
+      {/* Header + text filters */}
       <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-bold text-white">Results</h2>
@@ -165,6 +275,30 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
         </div>
       </div>
 
+      {/* Sort + filter chips */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 border-b border-gray-800 bg-gray-900/60">
+        <ChipGroup label="Sort">
+          <Chip active={sortMode === 'fresh'} onClick={() => setSortMode('fresh')}>Today&apos;s plays</Chip>
+          <Chip active={sortMode === 'confidence'} onClick={() => { setSortMode('confidence'); setSortAsc(false); }}>Confidence</Chip>
+          <Chip active={sortMode === 'win_rate'} onClick={() => { setSortMode('win_rate'); setSortAsc(false); }}>Win rate</Chip>
+        </ChipGroup>
+        <ChipGroup label="When">
+          {RECENCY_OPTIONS.map((o) => (
+            <Chip key={o.key} active={recency === o.key} onClick={() => setRecency(o.key)}>{o.label}</Chip>
+          ))}
+        </ChipGroup>
+        <ChipGroup label="Min conf">
+          {MIN_CONF_OPTIONS.map((c) => (
+            <Chip key={c} active={minConf === c} onClick={() => setMinConf(c)}>{c === 0 ? 'Any' : `${c}+`}</Chip>
+          ))}
+        </ChipGroup>
+        <ChipGroup label="Bias">
+          <Chip active={direction === 'all'} onClick={() => setDirection('all')}>All</Chip>
+          <Chip active={direction === 'bull'} onClick={() => setDirection('bull')} tone="bull">▲</Chip>
+          <Chip active={direction === 'bear'} onClick={() => setDirection('bear')} tone="bear">▼</Chip>
+        </ChipGroup>
+      </div>
+
       {/* Table */}
       <div className="overflow-auto flex-1">
         {results.length === 0 ? (
@@ -174,7 +308,7 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
             </svg>
             <p className="text-sm">No results yet — run a scan to find patterns</p>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="py-12 text-center text-gray-500 text-sm">No matches for current filters</div>
         ) : (
           <table className="w-full text-sm border-collapse">
@@ -187,21 +321,41 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
                     className={`text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 select-none border-b border-gray-800 whitespace-nowrap ${col.noSort ? 'cursor-default' : 'cursor-pointer hover:text-gray-300'}`}
                   >
                     {col.label}
-                    {!col.noSort && <SortIcon active={sortKey === col.key} asc={sortAsc} />}
+                    {!col.noSort && <SortIcon active={sortMode === col.key} asc={sortAsc} />}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, idx) => {
+              {sorted.map((r, idx) => {
                 const accent = rowAccent(r.pattern);
                 const bullish = BULLISH_PATTERNS.has(r.pattern);
                 const rowKey = `${r.ticker}:${r.pattern}:${idx}`;
                 const stats = winRates.get(`${r.ticker}:${r.pattern}`);
                 const horizonDays = stats ? stats.outcome_bars * 1.5 : 30;
                 const contractOpen = contractRow === rowKey;
+                const days = daysAgo(r.end_date);
+
+                // Day-group separator (only when sorted by freshness).
+                let header: React.ReactNode = null;
+                if (sortMode === 'fresh') {
+                  const b = bucketOf(days);
+                  if (b.key !== lastBucket) {
+                    lastBucket = b.key;
+                    header = (
+                      <tr className="bg-gray-800/40">
+                        <td colSpan={COLS.length} className="px-4 py-1.5 border-y border-gray-800">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400/90">{b.label}</span>
+                          <span className="text-[10px] text-gray-600 ml-2">· {bucketCounts[b.key]} signal{bucketCounts[b.key] === 1 ? '' : 's'}</span>
+                        </td>
+                      </tr>
+                    );
+                  }
+                }
+
                 return (
                   <React.Fragment key={rowKey}>
+                    {header}
                     <tr
                       onClick={() => onRowClick(r)}
                       className={`border-l-2 cursor-pointer transition-colors ${accent} border-b border-gray-800/50`}
@@ -212,7 +366,14 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
                           {bullish ? '▲' : '▼'} {r.pattern}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">{r.end_date}</td>
+                      <td className="px-4 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">
+                        {r.end_date.replace('T', ' ')}
+                        {days <= 1 && (
+                          <span className="ml-1.5 text-[9px] font-sans font-bold uppercase text-indigo-400">
+                            {days <= 0 ? 'new' : '1d'}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <ConfidenceBadge confidence={r.confidence} />
                       </td>
@@ -261,7 +422,7 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
       {results.length > 0 && (
         <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
           <span className="text-xs text-gray-600">
-            Sorted by confidence · Click row for chart · Contract for options rec
+            {sortLabel} · Click row for chart · Contract for options rec
             {winRates.size < totalUniquePairs && (
               <span className="ml-2 text-indigo-600 animate-pulse">· Loading win rates…</span>
             )}
