@@ -405,13 +405,19 @@ _PLAN_DTE: dict[str, int] = {"week": 90, "day": 30, "1h": 14, "15m": 7}
 _PLAN_HOLD_DAYS: dict[str, float] = {"week": 45.0, "day": 10.0, "1h": 3.0, "15m": 1.0}
 
 
-def _pick_plan_contract(
-    ticker: str, entry: float, bullish: bool, preferred_dte: int
-) -> dict | None:
-    """Snapshot the chain and pick the play's contract: ATM **at the entry
-    level** (not spot — the trade triggers at the breakout), expiry nearest
-    the preferred DTE. Returns the fields build_option_plan needs, or None
-    when the chain is empty/unavailable (the premium plan is then omitted)."""
+# Contract-recommendation band: among 0.40–0.50 delta (magnitude) options
+# expiring in 25–30 days, recommend the one with the best payoff-per-dollar if
+# the pattern reaches its measured-move target. The delta floor avoids cheap
+# far-OTM lottery tickets; the cap avoids paying up for deep-ITM stock proxies;
+# the DTE window keeps theta manageable while giving the move room.
+_REC_DELTA_LO, _REC_DELTA_HI = 0.40, 0.50
+_REC_DTE_LO, _REC_DTE_HI = 25, 30
+
+
+def _collect_chain_candidates(ticker: str, bullish: bool) -> list[dict]:
+    """Snapshot the chain and return priced candidate contracts (the fields
+    build_option_plan needs, plus dte/delta for filtering). Empty on failure —
+    the caller then omits the premium plan."""
     import datetime as _dt
 
     today = _dt.date.today()
@@ -420,18 +426,17 @@ def _pick_plan_contract(
         raw = client.get_options_chain(
             ticker,
             contract_type="call" if bullish else "put",
-            expiration_date_gte=(today + _dt.timedelta(days=max(3, preferred_dte - 10))).isoformat(),
-            expiration_date_lte=(today + _dt.timedelta(days=preferred_dte + 17)).isoformat(),
-            strike_price_gte=entry * 0.92,
-            strike_price_lte=entry * 1.08,
+            # Pull a slightly wider expiry window than 25–30 so we have a
+            # graceful fallback when no listed expiry lands exactly in-band.
+            expiration_date_gte=(today + _dt.timedelta(days=_REC_DTE_LO - 7)).isoformat(),
+            expiration_date_lte=(today + _dt.timedelta(days=_REC_DTE_HI + 10)).isoformat(),
             limit=250,
         )
     except MassiveError as exc:
         logger.warning("Chain fetch failed for %s trade plan: %s", ticker, exc)
-        return None
+        return []
 
-    best: dict | None = None
-    best_score = float("inf")
+    candidates: list[dict] = []
     for row in raw.get("results") or []:
         details = row.get("details") or {}
         strike = details.get("strike_price")
@@ -454,23 +459,95 @@ def _pick_plan_contract(
         )
         if not mid or mid <= 0:
             continue
-        # Score: strike distance from ENTRY (normalized) + expiry distance
-        # from preferred DTE. Strike proximity dominates.
-        score = abs(strike - entry) / max(entry, 1) * 100 + abs(dte - preferred_dte) * 0.2
-        if score < best_score:
-            best_score = score
-            greeks = row.get("greeks") or {}
-            best = {
-                "ticker": details.get("ticker"),
-                "type": details.get("contract_type"),
-                "strike": float(strike),
-                "expiration": exp,
-                "dte": dte,
-                "mid": float(mid),
-                "iv": row.get("implied_volatility") or greeks.get("iv"),
-                "delta": greeks.get("delta"),
-            }
-    return best
+        greeks = row.get("greeks") or {}
+        candidates.append({
+            "ticker": details.get("ticker"),
+            "type": details.get("contract_type"),
+            "strike": float(strike),
+            "expiration": exp,
+            "dte": dte,
+            "mid": float(mid),
+            "iv": row.get("implied_volatility") or greeks.get("iv"),
+            "delta": greeks.get("delta"),
+        })
+    return candidates
+
+
+def _choose_best_contract(
+    candidates: list[dict],
+    *,
+    underlying_plan: dict,
+    spot: float,
+    hold_days: float,
+) -> dict | None:
+    """Pick the recommended contract from chain candidates (pure, testable).
+
+    Preference order:
+      1. In-band: |delta| in [0.40, 0.50] AND DTE in [25, 30]. Among these,
+         pick the highest payoff-per-dollar if the pattern reaches target —
+         i.e. max (target_premium − entry_premium) / entry_premium from the
+         repriced option plan. Ties / non-viable contracts still rank by that
+         ratio (least-bad wins), so we always recommend the best available.
+      2. Fallback (nothing in-band, e.g. a name with sparse strikes/expiries):
+         the candidate closest to 0.45 delta at the DTE nearest 27, priced.
+
+    Returns the option-plan dict (from build_option_plan, which carries the
+    contract's strike/expiry/delta + premium-space entry/stop/target), or None
+    when no candidate can be priced.
+    """
+    mid_delta = (_REC_DELTA_LO + _REC_DELTA_HI) / 2.0
+    mid_dte = (_REC_DTE_LO + _REC_DTE_HI) / 2.0
+
+    def in_band(c: dict) -> bool:
+        d = c.get("delta")
+        return (
+            d is not None
+            and _REC_DELTA_LO <= abs(d) <= _REC_DELTA_HI
+            and _REC_DTE_LO <= c["dte"] <= _REC_DTE_HI
+        )
+
+    def payoff_ratio(plan: dict | None) -> float:
+        if not plan:
+            return float("-inf")
+        entry = plan.get("entry_premium") or 0.0
+        if entry <= 0:
+            return float("-inf")
+        return (plan.get("target_premium", 0.0) - entry) / entry
+
+    in_band_cands = [c for c in candidates if in_band(c)]
+    if in_band_cands:
+        best_plan, best_score = None, float("-inf")
+        for c in in_band_cands:
+            plan = build_option_plan(
+                underlying_plan=underlying_plan, spot=spot, contract=c, hold_days=hold_days
+            )
+            score = payoff_ratio(plan)
+            if score > best_score:
+                best_score, best_plan = score, plan
+        if best_plan is not None:
+            best_plan["recommendation_basis"] = (
+                f"best payoff-per-dollar in the {_REC_DELTA_LO:.2f}-{_REC_DELTA_HI:.2f}Δ, "
+                f"{_REC_DTE_LO}-{_REC_DTE_HI} DTE band if the pattern reaches its target"
+            )
+            return best_plan
+
+    # Fallback: no contract in-band — get as close to the band as the chain
+    # allows (nearest 0.45 delta at the DTE nearest 27), then price it.
+    priceable = [c for c in candidates if c.get("delta") is not None]
+    if not priceable:
+        return None
+    priceable.sort(key=lambda c: (abs(c["dte"] - mid_dte), abs(abs(c["delta"]) - mid_delta)))
+    for c in priceable:
+        plan = build_option_plan(
+            underlying_plan=underlying_plan, spot=spot, contract=c, hold_days=hold_days
+        )
+        if plan is not None:
+            plan["recommendation_basis"] = (
+                f"closest available to the {_REC_DELTA_LO:.2f}-{_REC_DELTA_HI:.2f}Δ / "
+                f"{_REC_DTE_LO}-{_REC_DTE_HI} DTE band (none listed exactly in-band)"
+            )
+            return plan
+    return None
 
 
 @router.get("/trade-plan/{ticker}/{pattern_name}")
@@ -553,46 +630,52 @@ async def trade_plan(
     plan["status"] = status
     plan["status_reason"] = status_reason
 
+    # The contract recommendation is ALWAYS shown. When the setup is stale (the
+    # historical breakout already hit its target or stop), we don't price the
+    # play off the dead breakout level — instead we re-anchor to a fresh entry
+    # at the CURRENT price and project the pattern's target from there, so the
+    # user still gets an actionable contract with sensible TP/SL. The status
+    # badge + note make clear the original signal already played out.
+    option_plan = plan
     if status == "stale":
-        # Don't price option plans on dead setups (also saves a chain call).
-        return {
-            **base,
-            "signal_date": latest["end_date"],
-            "confidence": latest.get("confidence"),
-            "plan": plan,
-            "option": None,
+        sign = 1.0 if bullish else -1.0
+        atr_used = atr if atr and atr > 0 else max(current_price * 0.02, 0.01)
+        stop_now = round(current_price - sign * plan["atr_multiple"] * atr_used, 2)
+        target_now = plan["target"]
+        # If the measured-move target is already behind price, project a fresh
+        # 2R continuation target from the current entry.
+        if (bullish and target_now <= current_price) or (not bullish and target_now >= current_price):
+            target_now = round(current_price + sign * 2.0 * abs(current_price - stop_now), 2)
+
+        def _pct(level: float) -> float:
+            return round((level - current_price) / current_price * 100, 2) if current_price else 0.0
+
+        option_plan = {
+            **plan,
+            "entry": round(current_price, 2),
+            "entry_basis": "current price — the original breakout already played out",
+            "stop": stop_now,
+            "stop_pct": _pct(stop_now),
+            "target": target_now,
+            "target_pct": _pct(target_now),
+            "reanchored": True,
         }
 
-    # Premium-space plan for the play's contract. Chain snapshot is a sync
-    # provider call — keep the event loop free.
-    preferred_dte = _PLAN_DTE.get(timeframe, 30)
+    # Premium-space plan for the play's contract: recommend the best
+    # payoff-per-dollar option in the 0.40–0.50 delta, 25–30 DTE band (see
+    # _choose_best_contract). Chain snapshot is a sync provider call — keep the
+    # event loop free.
     hold_days = _PLAN_HOLD_DAYS.get(timeframe, 10.0)
-
-    async def _plan_for_dte(dte: int) -> dict | None:
-        contract = await asyncio.to_thread(
-            _pick_plan_contract, ticker, plan["entry"], bullish, dte
-        )
-        if not contract:
-            return None
-        return build_option_plan(
-            underlying_plan=plan, spot=current_price, contract=contract, hold_days=hold_days
-        )
-
-    option = await _plan_for_dte(preferred_dte)
-    # Theta-negative on the preferred expiry (the measured move doesn't outrun
-    # decay)? A longer-dated contract decays slower per day held — try ~2x DTE
-    # and keep whichever is viable / better.
-    if option is not None and not option["viable"]:
-        longer = await _plan_for_dte(preferred_dte * 2 + 7)
-        if longer is not None and longer["viable"]:
-            longer["pricing_basis"] += "; expiry extended beyond the preferred window so the move outruns theta"
-            option = longer
+    candidates = await asyncio.to_thread(_collect_chain_candidates, ticker, bullish)
+    option = _choose_best_contract(
+        candidates, underlying_plan=option_plan, spot=current_price, hold_days=hold_days
+    )
 
     return {
         **base,
         "signal_date": latest["end_date"],
         "confidence": latest.get("confidence"),
-        "plan": plan,
+        "plan": option_plan,
         "option": option,
     }
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ConfidenceBadge } from './confidence-badge';
-import type { ScanResult, HistoricalStats } from '@/types/patterns';
+import { TradePlanCard } from './signal-analysis';
+import type { PatternTimeframe, ScanResult, HistoricalStats, TradePlanResponse } from '@/types/patterns';
 import type { ScreenerRecommendation } from '@/types/sleeves';
 import { OptionChainViewer } from '@/components/sleeves/options/option-chain-viewer';
 
@@ -118,43 +119,55 @@ function ChipGroup({ label, children }: { label: string; children: React.ReactNo
 }
 
 /**
- * ContractPanel — full option chain for a pattern hit, with the expiry
- * selector and recommended-contract highlight from the shared
- * OptionChainViewer. Bullish patterns lean calls, bearish lean puts; the
- * preferred DTE is the pattern's historical average hold so the default
- * expiry lands near the window the move is expected to play out in.
+ * ContractPanel — the recommended play for a pattern hit. Shows the trade plan
+ * (what the pattern implies for the move + take-profit / stop-loss on the
+ * contract) via the shared TradePlanCard, then the full chain with that exact
+ * recommended contract highlighted — so the inline panel matches the chart
+ * modal's recommendation. Both derive from the same /trade-plan call, which
+ * picks the best payoff-per-dollar option in the 0.40-0.50 delta / 25-30 DTE
+ * band.
  */
 function ContractPanel({
   ticker,
+  pattern,
+  timeframe,
   bullish,
-  horizonDays,
   onClose,
 }: {
   ticker: string;
+  pattern: string;
+  timeframe: PatternTimeframe;
   bullish: boolean;
-  horizonDays: number;
   onClose: () => void;
 }) {
-  const direction: 'call' | 'put' = bullish ? 'call' : 'put';
-  const dte = Math.max(14, Math.round(horizonDays));
-  const expiryLean: ScreenerRecommendation['expiry_lean'] =
-    dte <= 14 ? 'near' : dte <= 28 ? 'mid' : 'far';
-
+  const [plan, setPlan] = useState<TradePlanResponse | null>(null);
+  const opt = plan?.option ?? null;
+  const direction: 'call' | 'put' = opt ? opt.type : bullish ? 'call' : 'put';
+  // Pin the chain to the recommended contract when we have one; otherwise fall
+  // back to an ATM lean at the band's mid-DTE so the chain still renders.
+  const dte = opt ? opt.dte : 27;
+  const lean: ScreenerRecommendation['expiry_lean'] = dte <= 14 ? 'near' : dte <= 28 ? 'mid' : 'far';
   const recommendation: ScreenerRecommendation = {
     direction,
-    strike_offset_pct: 0, // ATM — clearest expression of a directional pattern bet
-    expiry_lean: expiryLean,
-    reasoning: `${bullish ? 'Bullish' : 'Bearish'} pattern — an ATM ${direction} expresses the directional bet. This pattern historically resolves over ~${Math.round(horizonDays)} trading days, so an expiry near ${dte}d gives the move room to play out before theta bites.`,
+    strike_offset_pct: 0,
+    strike_abs: opt ? opt.strike : undefined,
+    expiry_lean: lean,
+    reasoning: opt
+      ? `Recommended: $${opt.strike}${direction === 'call' ? 'C' : 'P'} · ${opt.dte}d${opt.delta != null ? ` · Δ ${opt.delta}` : ''} — best payoff-per-dollar in the 0.40–0.50Δ / 25–30 DTE band if the pattern reaches target.`
+      : `${bullish ? 'Bullish' : 'Bearish'} pattern — an ATM ${direction} expresses the directional bet.`,
   };
 
   return (
-    <div className="mx-4 mb-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-800/40 text-xs">
-      <div className="flex items-center justify-between mb-1">
+    <div className="mx-4 mb-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-800/40 text-xs space-y-3">
+      <div className="flex items-center justify-between">
         <span className="font-semibold text-indigo-300">
           Recommended {direction.toUpperCase()} · {ticker}
         </span>
         <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>
       </div>
+      {/* Implied move + contract take-profit / stop-loss */}
+      <TradePlanCard ticker={ticker} pattern={pattern} timeframe={timeframe} onPlan={setPlan} />
+      {/* Full chain, recommended contract highlighted */}
       <OptionChainViewer ticker={ticker} recommendation={recommendation} preferredDte={dte} />
     </div>
   );
@@ -178,9 +191,10 @@ interface ResultsTableProps {
   results: ScanResult[];
   onRowClick: (row: ScanResult) => void;
   winRates: Map<string, HistoricalStats>;
+  timeframe: PatternTimeframe;
 }
 
-export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProps) {
+export function ResultsTable({ results, onRowClick, winRates, timeframe }: ResultsTableProps) {
   // Default: today's plays first, highest confidence within each day.
   const [sortMode, setSortMode] = useState<SortMode>('fresh');
   const [sortAsc, setSortAsc] = useState(false);
@@ -332,7 +346,6 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
                 const bullish = BULLISH_PATTERNS.has(r.pattern);
                 const rowKey = `${r.ticker}:${r.pattern}:${idx}`;
                 const stats = winRates.get(`${r.ticker}:${r.pattern}`);
-                const horizonDays = stats ? stats.outcome_bars * 1.5 : 30;
                 const contractOpen = contractRow === rowKey;
                 const days = daysAgo(r.end_date);
 
@@ -403,8 +416,9 @@ export function ResultsTable({ results, onRowClick, winRates }: ResultsTableProp
                         <td colSpan={COLS.length} className="p-0">
                           <ContractPanel
                             ticker={r.ticker}
+                            pattern={r.pattern}
+                            timeframe={timeframe}
                             bullish={bullish}
-                            horizonDays={horizonDays}
                             onClose={() => setContractRow(null)}
                           />
                         </td>

@@ -45,12 +45,15 @@ function StatusPill({ status }: { status?: string }) {
   );
 }
 
-function TradePlanCard({
-  ticker, pattern, timeframe,
+export function TradePlanCard({
+  ticker, pattern, timeframe, onPlan,
 }: {
   ticker: string;
   pattern: string;
   timeframe: PatternTimeframe;
+  /** Fires when the plan loads — lets a parent (e.g. the inline Contract
+   *  panel) reuse the same recommended contract without a second fetch. */
+  onPlan?: (data: TradePlanResponse) => void;
 }) {
   const [risk, setRisk] = useState<RiskTolerance>('moderate');
   const [data, setData] = useState<TradePlanResponse | null>(null);
@@ -65,11 +68,11 @@ function TradePlanCard({
     setLoading(true);
     setError(null);
     getTradePlan(ticker, pattern, risk, timeframe)
-      .then((res) => { if (!cancelled) setData(res); })
+      .then((res) => { if (!cancelled) { setData(res); onPlan?.(res); } })
       .catch((err: Error) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [ticker, pattern, risk, timeframe]);
+  }, [ticker, pattern, risk, timeframe, onPlan]);
 
   const plan = data?.plan ?? null;
   const opt = data?.option ?? null;
@@ -125,17 +128,13 @@ function TradePlanCard({
         </p>
       ) : (
         <div className="space-y-3">
-          {plan.status === 'stale' ? (
-            /* Dead signal — say so instead of pricing a plan on a corpse. */
-            <div className="space-y-2">
-              <p className="text-xs text-gray-400 leading-relaxed">{plan.status_reason}</p>
-              <p className="text-[11px] text-gray-600 leading-relaxed">
-                For reference, the original geometry was: entry {money(plan.entry)} · stop {money(plan.stop)} · target {money(plan.target)}.
-                Run a fresh scan for setups that are still in play.
-              </p>
-            </div>
-          ) : opt ? (
+          {opt ? (
             <>
+              {plan.reanchored && (
+                <p className="text-[11px] text-amber-500/90 leading-relaxed">
+                  ↻ The original breakout already played out — this sizes a <em>fresh entry at the current price</em> toward the pattern&apos;s projected target.
+                </p>
+              )}
               {plan.status === 'watch' && (
                 <p className="text-[11px] text-amber-500/90 leading-relaxed">
                   ⏳ {plan.status_reason}. Premiums below are estimates <em>at the trigger</em> — refresh when price approaches the level.
@@ -153,7 +152,7 @@ function TradePlanCard({
               <div className="grid grid-cols-3 gap-2">
                 <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
                   <div className="text-sm font-bold font-mono text-white">{money(opt.entry_premium)}</div>
-                  <div className="text-[10px] text-gray-600">Buy at {plan.already_triggered ? '(triggered)' : 'breakout'}</div>
+                  <div className="text-[10px] text-gray-600">Buy at {plan.reanchored ? 'current' : plan.already_triggered ? '(triggered)' : 'breakout'}</div>
                 </div>
                 <div className="bg-gray-900/60 rounded-lg px-2 py-1.5">
                   <div className="text-sm font-bold font-mono text-red-400">{money(opt.stop_premium)}</div>
@@ -233,6 +232,14 @@ function TradePlanCard({
               </div>
               )}
             </>
+          ) : plan.status === 'stale' ? (
+            /* Played out AND no chain to re-anchor against — say so plainly. */
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400 leading-relaxed">{plan.status_reason}</p>
+              <p className="text-[11px] text-gray-600 leading-relaxed">
+                No option chain available to re-anchor a fresh entry. Run a fresh scan for setups that are still in play.
+              </p>
+            </div>
           ) : (
             <>
               {/* Chain unavailable — show the underlying levels so the plan is still usable. */}

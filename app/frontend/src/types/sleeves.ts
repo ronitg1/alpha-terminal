@@ -241,6 +241,9 @@ export interface ScreenerRecommendation {
   direction: 'call' | 'put';
   /** 0 = ATM, positive = OTM call strike, negative = OTM put strike. */
   strike_offset_pct: number;
+  /** Absolute strike to highlight directly. When set, it overrides the
+   *  offset/time-scaling so the chain pins the exact recommended contract. */
+  strike_abs?: number;
   /** Hint to the user about which expiry tier to look at. */
   expiry_lean: 'near' | 'mid' | 'far';
   /** Plain-English explanation of why this contract is the pick. */

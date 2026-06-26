@@ -170,6 +170,7 @@ export function PatternsTab() {
             setChart({ ticker: row.ticker, pattern: row.pattern, endDate: row.end_date })
           }
           winRates={winRates}
+          timeframe={timeframe}
         />
       </div>
       )}

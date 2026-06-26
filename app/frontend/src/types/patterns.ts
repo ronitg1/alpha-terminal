@@ -89,6 +89,9 @@ export interface TradePlan {
    *  'stale' = played out / invalidated / too old — rescan. */
   status?: 'live' | 'watch' | 'stale';
   status_reason?: string;
+  /** True when a stale setup was re-anchored to a fresh entry at the current
+   *  price so the contract recommendation is still actionable. */
+  reanchored?: boolean;
   direction: 'long' | 'short';
   risk: RiskTolerance;
   atr_multiple: number;

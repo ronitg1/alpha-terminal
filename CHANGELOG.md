@@ -4,6 +4,23 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-06-26
+
+### Changed
+- **Pattern Scanner contract recommendation, reworked.** Replaced the old
+  "ATM-at-breakout, nearest-default-DTE" pick. For each pattern the scanner now
+  recommends the single best **payoff-per-dollar** contract within a
+  **0.40–0.50 delta, 25–30 DTE** band — the option that gains the most relative
+  to its cost if the pattern reaches its measured-move target (falls back to the
+  closest listed contract, and says so, when nothing is exactly in-band).
+- **The recommendation is consistent everywhere and always actionable.** The
+  inline "Contract" panel and the click-in chart modal now derive from the same
+  recommendation and highlight the same contract in the chain. The panel shows
+  what the pattern implies for the move (entry → target) plus that contract's
+  take-profit / stop-loss. A played-out ("stale") setup no longer dead-ends with
+  "moved out of position" — it re-anchors to a fresh entry at the current price
+  toward the pattern's projected target, clearly flagged.
+
 ## [1.3.0] — 2026-06-26
 
 ### Changed

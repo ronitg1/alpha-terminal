@@ -156,6 +156,9 @@ export function OptionChainViewer({
 
   const recTargetStrike = useMemo(() => {
     if (!recommendation || !spot) return null;
+    // An absolute strike (e.g. the pattern scanner's recommended contract)
+    // pins the highlight exactly; otherwise use the time-scaled offset.
+    if (recommendation.strike_abs != null) return recommendation.strike_abs;
     return spot * (1 + scaledOffsetPct / 100);
   }, [recommendation, spot, scaledOffsetPct]);
   const recStrike = useMemo(() => {
