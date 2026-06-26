@@ -30,12 +30,12 @@ export function SleeveAttributionTable({ attribution }: SleeveAttributionTablePr
     <div className="space-y-4">
       <section>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-          Per-sleeve performance
+          Per-portfolio performance
         </div>
         <table className="w-full text-[11px] font-mono">
           <thead>
             <tr className="text-muted-foreground border-b border-border">
-              <th className="text-left px-2 py-1">Sleeve</th>
+              <th className="text-left px-2 py-1">Portfolio</th>
               <th className="text-right px-2 py-1">Trades</th>
               <th className="text-right px-2 py-1">Win%</th>
               <th className="text-right px-2 py-1">Hold</th>

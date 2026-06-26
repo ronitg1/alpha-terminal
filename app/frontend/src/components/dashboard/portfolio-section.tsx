@@ -514,8 +514,8 @@ function PortfolioMemo() {
     <div className="rounded-lg border border-border/60 bg-card">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
         <div>
-          <h2 className="text-sm font-semibold">Portfolio Thesis</h2>
-          <p className="text-[10px] text-muted-foreground">Full LLM analysis across every sleeve</p>
+          <h2 className="text-sm font-semibold">Overall Thesis</h2>
+          <p className="text-[10px] text-muted-foreground">Full LLM analysis across every portfolio</p>
         </div>
         <button
           type="button"
@@ -537,7 +537,7 @@ function PortfolioMemo() {
       )}
       {!thesis && !err && (
         <div className="px-4 py-3 text-xs text-muted-foreground italic">
-          Run a whole-portfolio thesis — an LLM synthesis of the book across all sleeves, with bias, top long/short, and the reasoning behind it.
+          Run an overall thesis — an LLM synthesis of the book across all portfolios, with bias, top long/short, and the reasoning behind it.
         </div>
       )}
       {thesis && (
@@ -626,7 +626,7 @@ function TickerDetail({ row, ticker }: { row: TickerRow; ticker: string }) {
             type="button"
             onClick={() => void runScan()}
             disabled={scanning}
-            title="Run this name's sleeve agents now (does not overwrite the saved morning scan)"
+            title="Run this name's portfolio agents now (does not overwrite the saved morning scan)"
             className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50"
           >
             <Sparkles className="h-3 w-3" />
@@ -924,7 +924,7 @@ function SleeveGroup({
       const msg = e instanceof Error ? e.message : String(e);
       setThesisErr(
         /404/.test(msg)
-          ? 'No scan data for this sleeve yet — run a morning scan first.'
+          ? 'No scan data for this portfolio yet — run a morning scan first.'
           : msg,
       );
     } finally {
@@ -975,7 +975,7 @@ function SleeveGroup({
           type="button"
           onClick={() => void runAgents()}
           disabled={scanningSleeve || scanStatus === 'running'}
-          title={`Run the agent panel on all ${tickers.length} names in this sleeve (updates today's saved scan)`}
+          title={`Run the agent panel on all ${tickers.length} names in this portfolio (updates today's saved scan)`}
           className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50 flex-shrink-0"
         >
           <Zap className="h-3 w-3" />
@@ -985,7 +985,7 @@ function SleeveGroup({
           type="button"
           onClick={() => void runThesis()}
           disabled={thesisLoading}
-          title="Synthesize an LLM thesis across this sleeve's scanned names"
+          title="Synthesize an LLM thesis across this portfolio's scanned names"
           className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary transition-colors disabled:opacity-50 flex-shrink-0"
         >
           <Sparkles className="h-3 w-3" />
@@ -1012,7 +1012,7 @@ function SleeveGroup({
             <span className={cn('text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border', BIAS_CLS[thesis.bias] ?? BIAS_CLS.neutral)}>
               {thesis.bias}
             </span>
-            <span className="text-[10px] text-muted-foreground">Sleeve thesis · scan {thesis.scan_date}</span>
+            <span className="text-[10px] text-muted-foreground">Portfolio thesis · scan {thesis.scan_date}</span>
             {thesis.top_long && <span className="text-[10px] text-emerald-500">▲ {thesis.top_long}</span>}
             {thesis.top_short && <span className="text-[10px] text-rose-500">▼ {thesis.top_short}</span>}
           </div>
@@ -1062,7 +1062,7 @@ function SleeveGroup({
             />
           ))}
           {tickers.length === 0 && (
-            <p className="text-xs text-muted-foreground italic">No tickers in this sleeve.</p>
+            <p className="text-xs text-muted-foreground italic">No tickers in this portfolio.</p>
           )}
         </div>
       )}
@@ -1135,7 +1135,7 @@ export function PortfolioSection() {
         {(!config || config.sleeves.length === 0) && (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <p className="text-sm text-muted-foreground italic">
-              No sleeves configured. Add sleeves in the Market → Sleeves management panel.
+              No portfolios configured. Add portfolios in the Market → Portfolios management panel.
             </p>
           </div>
         )}
@@ -1144,7 +1144,7 @@ export function PortfolioSection() {
         {config && config.sleeves.length > 0 && rows.length > 0 && (
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border/60" />
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">By Sleeve</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">By Portfolio</span>
             <div className="flex-1 h-px bg-border/60" />
           </div>
         )}

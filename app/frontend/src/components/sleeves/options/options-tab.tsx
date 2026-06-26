@@ -35,8 +35,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { OptionsScreenerCard } from './options-screener-card';
+import { UniversePicker, parseUniverse } from '../universe-picker';
 
-const DEFAULT_SLEEVE = 'mega_tech';
 const DEFAULT_STRATEGY = 'weakness';
 const EXPLAINER_KEY = 'options-explainer-open';
 
@@ -63,7 +63,10 @@ export function OptionsTab() {
 export function OptionsTabContent() {
   const { config } = useSleevesContext();
   const [strategies, setStrategies] = useState<OptionsStrategyMeta[]>([]);
-  const [sleeve, setSleeve] = useState<string>(DEFAULT_SLEEVE);
+  // Encoded "<source>:<name>" — portfolio (sleeve) or watchlist. Empty until
+  // config loads; we then default to the first real portfolio (never a
+  // hardcoded name, which breaks when the user renames their portfolios).
+  const [universe, setUniverse] = useState<string>('');
   const [strategy, setStrategy] = useState<string>(DEFAULT_STRATEGY);
   const [data, setData] = useState<OptionsScreenerResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,11 +103,12 @@ export function OptionsTabContent() {
     })();
   }, []);
 
-  const load = useCallback(async (slv: string, strat: string) => {
+  const load = useCallback(async (uni: string, strat: string) => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await sleevesApi.getOptionsScreener(slv, strat);
+      const { source, name } = parseUniverse(uni);
+      const resp = await sleevesApi.getOptionsScreener(source, name, strat);
       setData(resp);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -113,9 +117,17 @@ export function OptionsTabContent() {
     }
   }, []);
 
+  // Seed the universe to the first portfolio once config arrives. Runs only
+  // while `universe` is still empty, so it never overrides a user choice.
   useEffect(() => {
-    void load(sleeve, strategy);
-  }, [load, sleeve, strategy]);
+    if (universe) return;
+    const first = config?.sleeves?.[0]?.name;
+    if (first) setUniverse(`sleeve:${first}`);
+  }, [config, universe]);
+
+  useEffect(() => {
+    if (universe) void load(universe, strategy);
+  }, [load, universe, strategy]);
 
   const activeMeta = useMemo(
     () => strategies.find((s) => s.key === strategy),
@@ -129,7 +141,7 @@ export function OptionsTabContent() {
           <h1 className="text-xl font-semibold">Options Screener</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {activeMeta?.description ??
-              'Pick a strategy, pick a sleeve, then explore option chains for the ranked candidates.'}
+              'Pick a strategy, pick a portfolio or watchlist, then explore option chains for the ranked candidates.'}
           </p>
         </header>
 
@@ -149,22 +161,12 @@ export function OptionsTabContent() {
         />
 
         <div className="flex items-center gap-3 mb-4 mt-4 flex-wrap">
-          <label className="text-xs text-muted-foreground">Sleeve</label>
-          <select
-            value={sleeve}
-            onChange={(e) => setSleeve(e.target.value)}
-            className="bg-background border border-border rounded px-2 py-1 text-sm font-mono"
-          >
-            {(config?.sleeves ?? [{ name: DEFAULT_SLEEVE } as { name: string }]).map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name.replace(/_/g, ' ')}
-              </option>
-            ))}
-          </select>
+          <label className="text-xs text-muted-foreground">Portfolio / Watchlist</label>
+          <UniversePicker value={universe} onChange={setUniverse} />
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void load(sleeve, strategy)}
+            onClick={() => void load(universe, strategy)}
             disabled={loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
@@ -193,7 +195,7 @@ export function OptionsTabContent() {
 
         {data && data.candidates.length === 0 && !loading && (
           <div className="text-xs text-muted-foreground italic px-2 py-3 rounded border border-dashed">
-            No candidates returned for this sleeve.
+            No candidates returned for this portfolio / watchlist.
           </div>
         )}
 
@@ -297,7 +299,7 @@ function Explainer({
       {open && (
         <div className="px-3 pb-3 space-y-3 text-xs leading-relaxed text-foreground/90 border-t border-sky-500/20 pt-3">
           <Section title="What this does">
-            For every ticker in the selected sleeve, the active strategy runs
+            For every ticker in the selected portfolio or watchlist, the active strategy runs
             three short-term signals. Each fired signal is magnitude-weighted
             (how far past the threshold?) to produce a{' '}
             <Strong>conviction %</Strong> score (0–100%). Tickers ranked
@@ -324,8 +326,8 @@ function Explainer({
               </ul>
             )}
             <p className="mt-2 text-muted-foreground">
-              Switch with the Strategy pills above. The sleeve picker is
-              independent — all strategies work on any sleeve.
+              Switch with the Strategy pills above. The portfolio / watchlist
+              picker is independent — all strategies work on any list.
             </p>
           </Section>
 
@@ -340,7 +342,7 @@ function Explainer({
 
           <Section title="How to use it">
             <ol className="list-decimal pl-5 space-y-1">
-              <li>Pick a strategy + sleeve.</li>
+              <li>Pick a strategy + portfolio or watchlist.</li>
               <li>Scan the list — high-conviction names rank to the top.</li>
               <li>
                 Click a card to open its option chain — calls on the left, puts

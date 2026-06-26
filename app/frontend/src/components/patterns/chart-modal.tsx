@@ -20,6 +20,7 @@ function toChartTime(date: string): Time {
 
 /** Per-timeframe chart history window (server clamps further). */
 const CHART_LOOKBACK: Record<PatternTimeframe, number> = {
+  week: 1095, // 3y of weekly bars
   day: 365,
   '1h': 90,
   '15m': 30,
@@ -84,7 +85,8 @@ export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = '
         if (destroyed) return;
         setChartData(data);
 
-        const intraday = timeframe !== 'day';
+        // Weekly + daily are date-labeled; only sub-daily needs HH:MM + intraday scaling.
+        const intraday = timeframe === '1h' || timeframe === '15m';
 
         // ── Price chart ──────────────────────────────────────────
         const priceChart = createChart(priceRef.current!, {

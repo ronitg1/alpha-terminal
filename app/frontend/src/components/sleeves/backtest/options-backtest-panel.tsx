@@ -33,6 +33,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Histogram } from '../charts/histogram';
 import { LineChart, LinePoint } from '../charts/line-chart';
 import { WinLossBar } from '../charts/win-loss-bar';
+import { UniversePicker, parseUniverse } from '../universe-picker';
 
 type RunStatus = 'idle' | 'running' | 'done' | 'error';
 type Direction = 'auto' | 'straddle' | 'calls' | 'puts';
@@ -85,14 +86,15 @@ function contractLabel(t: OptionsBacktestTrade): string {
 
 export function OptionsBacktestPanel() {
   const { config } = useSleevesContext();
-
   const [strategies, setStrategies] = useState<OptionsStrategyMeta[]>([]);
   // Default to ~6 months so the window spans more than one regime — a 1-2 month
   // window overfits to whatever the market just did and produces unrealistic
   // (often 100%) win rates.
   const [startDate, setStartDate] = useState(isoNDaysAgo(180));
   const [endDate, setEndDate] = useState(isoNDaysAgo(0));
-  const [sleeve, setSleeve] = useState<string>('mega_tech');
+  // Encoded "<source>:<name>" — portfolio (sleeve) or watchlist. Empty until
+  // config loads; seeded to the first real portfolio below.
+  const [universe, setUniverse] = useState<string>('');
   const [tickerInput, setTickerInput] = useState('');
   const [strategy, setStrategy] = useState<string>('weakness');
   const [direction, setDirection] = useState<Direction>('auto');
@@ -132,6 +134,14 @@ export function OptionsBacktestPanel() {
       });
   }, []);
 
+  // Seed the universe to the first portfolio once config arrives (never a
+  // hardcoded name). Runs only while empty, so it can't override a user pick.
+  useEffect(() => {
+    if (universe) return;
+    const first = config?.sleeves?.[0]?.name;
+    if (first) setUniverse(`sleeve:${first}`);
+  }, [config, universe]);
+
   const activeStrategyMeta = useMemo(
     () => strategies.find((s) => s.key === strategy),
     [strategies, strategy],
@@ -159,6 +169,8 @@ export function OptionsBacktestPanel() {
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean);
 
+    const { source, name } = parseUniverse(universe);
+
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
@@ -168,7 +180,9 @@ export function OptionsBacktestPanel() {
         {
           start_date: startDate,
           end_date: endDate,
-          sleeve,
+          source,
+          sleeve: source === 'sleeve' ? name : 'mega_tech',
+          watchlist: source === 'watchlist' ? name : null,
           tickers: tickers.length ? tickers : null,
           strategy,
           direction,
@@ -443,22 +457,16 @@ export function OptionsBacktestPanel() {
             ))}
           </select>
         </Field>
-        <Field label="Sleeve">
-          <select
-            value={sleeve}
-            onChange={(e) => setSleeve(e.target.value)}
+        <Field label="Portfolio / Watchlist">
+          <UniversePicker
+            value={universe}
+            onChange={setUniverse}
             className="bg-background border border-border rounded px-2 py-1 w-full font-mono"
-          >
-            {(config?.sleeves ?? [{ name: 'mega_tech' } as { name: string }]).map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name.replace(/_/g, ' ')}
-              </option>
-            ))}
-          </select>
+          />
         </Field>
         <Field
           label="Tickers (optional)"
-          hint="Comma-separated subset of the sleeve. Leave blank = whole sleeve."
+          hint="Comma-separated subset of the portfolio/watchlist. Leave blank = whole list."
         >
           <input
             value={tickerInput}

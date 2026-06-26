@@ -37,8 +37,8 @@ function getSuggestions(ticker: string | null, section: string): string[] {
   if (section === 'portfolio') {
     return [
       'What is the overall portfolio bias right now?',
-      'Which sleeve has the strongest signals today?',
-      'What are the top short candidates across my sleeves?',
+      'Which portfolio has the strongest signals today?',
+      'What are the top short candidates across my portfolios?',
     ];
   }
   return [

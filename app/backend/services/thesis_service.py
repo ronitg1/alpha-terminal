@@ -98,7 +98,8 @@ def _cache_put(key: _CacheKey, value: dict[str, Any]) -> None:
 
 
 _PORTFOLIO_SYSTEM = """You are the PM of a long/short equity hedge fund writing
-a same-day thesis memo from your sleeves dashboard scan.
+a same-day thesis memo from your dashboard scan. The book is organized into
+named portfolios; refer to those groups as "portfolios", never "sleeves".
 
 Voice rules:
 - First-person plural ("we see", "our view", "the book").
@@ -119,22 +120,23 @@ abstention is the right call — never invent conviction.
 """
 
 
-_SLEEVE_SYSTEM = """You are the sector PM writing a thesis on one sleeve of
-the book, post-scan. Same voice rules as the portfolio PM:
+_SLEEVE_SYSTEM = """You are the sector PM writing a thesis on one portfolio
+within the book, post-scan. Same voice rules as the overall PM:
 
 - First-person plural.
 - Specific tickers + numbers.
 - Plain prose, no bullets.
+- Refer to the group as a "portfolio" (never a "sleeve").
 
 Framework for the full memo (2-3 paragraphs):
-  Para 1 — directional view on this sleeve, dominant theme.
+  Para 1 — directional view on this portfolio, dominant theme.
   Para 2 — top long + top short with one-sentence reasoning each. If
-            the sleeve is one-sided (e.g. all bullish), say so.
-  Para 3 — risk to the view + any structural callouts (e.g. for
-            energy_transition: IRA / FEOC exposure across the sleeve).
+            the portfolio is one-sided (e.g. all bullish), say so.
+  Para 3 — risk to the view + any structural callouts (e.g. for an
+            energy-transition portfolio: IRA / FEOC exposure across it).
 
-The condensed view is one sentence: "We are [bias] [sleeve], led by
-[ticker]."
+The condensed view is one sentence: "We are [bias] on [portfolio name],
+led by [ticker]."
 """
 
 
@@ -171,10 +173,10 @@ def _build_portfolio_prompt(
                 Portfolio rollup:
                 {portfolio_rollup}
 
-                Per-sleeve readouts (allocation, bias, conviction, signal mix):
+                Per-portfolio readouts (allocation, bias, conviction, signal mix):
                 {per_sleeve}
 
-                High-conviction signals (ticker, sleeve, signal, confidence,
+                High-conviction signals (ticker, portfolio, signal, confidence,
                 variant_perception, position):
                 {high_conviction}
 
@@ -211,10 +213,10 @@ def _build_sleeve_prompt(
             ("system", _SLEEVE_SYSTEM),
             (
                 "human",
-                """Sleeve: {sleeve_name}
+                """Portfolio: {sleeve_name}
                 Scan date: {scan_date}
 
-                Sleeve metadata (allocation, agents, agent_weights):
+                Portfolio metadata (allocation, agents, agent_weights):
                 {sleeve_meta}
 
                 Ticker rows (signal, weighted_score, avg_confidence,

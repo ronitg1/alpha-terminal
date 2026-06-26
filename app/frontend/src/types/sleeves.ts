@@ -300,7 +300,12 @@ export interface OptionsStrategyMeta {
 export type OptionsStrategy = string;
 
 export interface OptionsScreenerResponse {
+  /** Resolved universe label — sleeve name or watchlist name. */
   sleeve: string;
+  /** Which kind of universe produced this run. Older backends omit it. */
+  source?: 'sleeve' | 'watchlist';
+  /** Resolved universe label (mirror of `sleeve`). */
+  universe?: string;
   strategy: OptionsStrategy;
   benchmark: string; // 'QQQ'
   generated_at: string; // ISO

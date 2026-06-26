@@ -31,6 +31,17 @@ const TIMEFRAME_OPTIONS: {
   lookbacks: { label: string; value: number }[];
   defaultLookback: number;
 }[] = [
+  {
+    value: 'week',
+    label: 'Weekly',
+    lookbacks: [
+      { label: '1yr', value: 365 },
+      { label: '2yr', value: 730 },
+      { label: '3yr', value: 1095 },
+      { label: '5yr', value: 1825 },
+    ],
+    defaultLookback: 1095,
+  },
   { value: 'day', label: 'Daily', lookbacks: LOOKBACK_OPTIONS, defaultLookback: 180 },
   {
     value: '1h',
@@ -141,7 +152,7 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
   const handleScan = async () => {
     const tickers = resolvedTickers();
     if (tickers.length === 0) {
-      toast.error('No tickers selected. Add tickers to a watchlist, sleeve, or enter them manually.');
+      toast.error('No tickers selected. Add tickers to a watchlist, portfolio, or enter them manually.');
       return;
     }
     if (selectedPatterns.length === 0) {
@@ -149,12 +160,22 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
       return;
     }
     setIsScanning(true);
+    // Big universes (hundreds of names) take a while against a rate-limited
+    // provider — set expectations so a long wait doesn't read as a hang.
+    if (tickers.length > 120) {
+      toast.info(`Scanning ${tickers.length} names — large scans can take a minute or two.`);
+    }
     try {
       const results = await scanTickers(tickers, selectedPatterns, lookback, timeframe);
       onResults(results, timeframe);
     } catch (err) {
       console.warn('Scan failed:', err);
-      toast.error('Scan failed. Check backend connection.');
+      const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
+      toast.error(
+        isTimeout
+          ? `Scan timed out on ${tickers.length} names — try fewer tickers or a single watchlist.`
+          : 'Scan failed — check that the backend is running.',
+      );
     } finally {
       setIsScanning(false);
     }
@@ -170,7 +191,7 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
       <div className="flex border-b border-gray-800">
         {([
           { id: 'watchlist', label: 'Watchlist' },
-          { id: 'sleeves', label: 'My Sleeves' },
+          { id: 'sleeves', label: 'My Portfolios' },
           { id: 'custom', label: 'Custom' },
         ] as { id: TabId; label: string }[]).map((t) => (
           <button
@@ -214,13 +235,13 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
 
         {tab === 'sleeves' && (
           <div className="space-y-2">
-            <label className="text-xs text-gray-400 block">Sleeve</label>
+            <label className="text-xs text-gray-400 block">Portfolio</label>
             <select
               value={selectedSleeve}
               onChange={(e) => setSelectedSleeve(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-indigo-500"
             >
-              <option value="all">All Sleeves</option>
+              <option value="all">All Portfolios</option>
               {(config?.sleeves ?? []).map((s) => (
                 <option key={s.name} value={s.name}>
                   {s.name.replace(/_/g, ' ')}
@@ -228,7 +249,7 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
               ))}
             </select>
             {(!config || config.sleeves.length === 0) && (
-              <p className="text-xs text-gray-600 italic">No sleeves configured.</p>
+              <p className="text-xs text-gray-600 italic">No portfolios configured.</p>
             )}
           </div>
         )}
@@ -322,11 +343,13 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
                 type="button"
                 onClick={() => selectTimeframe(opt.value)}
                 title={
-                  opt.value === 'day'
-                    ? 'Daily bars — swing / position setups'
-                    : opt.value === '1h'
-                      ? 'Hourly bars — multi-day swing setups'
-                      : '15-minute bars — day-trade setups'
+                  opt.value === 'week'
+                    ? 'Weekly bars — long-base / position setups (months)'
+                    : opt.value === 'day'
+                      ? 'Daily bars — swing / position setups'
+                      : opt.value === '1h'
+                        ? 'Hourly bars — multi-day swing setups'
+                        : '15-minute bars — day-trade setups'
                 }
                 className={
                   'flex-1 py-1 text-xs rounded-md font-medium transition-colors ' +

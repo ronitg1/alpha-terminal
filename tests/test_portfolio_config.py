@@ -24,10 +24,11 @@ def test_default_config_is_valid() -> None:
 
 def test_sleeve_allocations_within_bounds() -> None:
     """Sleeve allocations are informational (real allocation is the per-ticker
-    overlay), so they no longer must sum to exactly 100% — but they must each be
-    in [0, 100] and not over-allocate the book beyond 100% in total."""
+    overlay), so they're optional — each must be in [0, 100] and the total
+    must not over-allocate the book beyond 100%. (0 is valid: a user may
+    create portfolios without setting allocation weights.)"""
     total = sum(s["allocation_pct"] for s in PORTFOLIO_SLEEVES.values())
-    assert 0 < total <= 100.0 + 1e-6
+    assert 0 <= total <= 100.0 + 1e-6
     for s in PORTFOLIO_SLEEVES.values():
         assert 0 <= s["allocation_pct"] <= 100
 
@@ -101,10 +102,22 @@ def test_validate_catches_agent_weight_key_skew() -> None:
 
 
 def test_sleeve_for_ticker_finds_known_name() -> None:
-    assert sleeve_for_ticker("NVDA") == "mega_tech"
-    assert sleeve_for_ticker("nvda") == "mega_tech"  # case-insensitive
-    assert sleeve_for_ticker("NBIS") == "opportunistic"
-    assert sleeve_for_ticker("IONQ") == "emerging_tech"
+    """Config-agnostic: pick a real (sleeve, ticker) from whatever the live
+    config holds and assert the reverse lookup + case-insensitivity. Avoids
+    hard-coding sleeve names, which are user-editable (portfolio_config.py is
+    both the shipped default and the live user store)."""
+    sample = next(
+        (
+            (name, sleeve["tickers"][0])
+            for name, sleeve in PORTFOLIO_SLEEVES.items()
+            if sleeve.get("tickers")
+        ),
+        None,
+    )
+    assert sample is not None, "no configured portfolio has any tickers"
+    name, ticker = sample
+    assert sleeve_for_ticker(ticker) == name
+    assert sleeve_for_ticker(ticker.lower()) == name  # case-insensitive
 
 
 def test_sleeve_for_ticker_returns_none_for_unknown() -> None:

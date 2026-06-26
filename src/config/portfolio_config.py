@@ -43,51 +43,42 @@ CASH_RESERVE_PCT: float = 10.0
 # The short-hand names "damodaran", "burry", "fundamentals" used in the
 # project spec are mapped to their canonical registry keys here.
 PORTFOLIO_SLEEVES: dict[str, Sleeve] = {
-    "mega_tech": {
-        "allocation_pct": 20.0,
-        "agents": ["alpha_seeker", "aswath_damodaran", "fundamentals_analyst"],
+    "individual": {
+        "allocation_pct": 0.0,
+        "agents": ["aswath_damodaran"],
         "agent_weights": {
-            "alpha_seeker": 0.3333333333333333,
-            "aswath_damodaran": 0.3333333333333333,
-            "fundamentals_analyst": 0.33333333333333337,
-        },
-        "tickers": ["NVDA", "MSFT", "GOOGL", "META", "AAPL", "AMZN", "TSLA"],
-    },
-    "opportunistic": {
-        "allocation_pct": 10.0,
-        "agents": ["alpha_seeker", "stanley_druckenmiller", "charlie_munger", "aswath_damodaran", "ben_graham"],
-        "agent_weights": {
-            "alpha_seeker": 0.2,
-            "stanley_druckenmiller": 0.2,
-            "charlie_munger": 0.2,
-            "aswath_damodaran": 0.2,
-            "ben_graham": 0.19999999999999996,
-        },
-        "tickers": ["NBIS", "ASTS", "DELL", "MU", "NOW"],
-    },
-    "emerging_tech": {
-        "allocation_pct": 20.0,
-        "agents": ["emerging_tech", "alpha_seeker", "michael_burry"],
-        "agent_weights": {
-            "alpha_seeker": 0.3333333333333333,
-            "michael_burry": 0.33333333333333337,
-            "emerging_tech": 0.3333333333333333,
+            "aswath_damodaran": 1.0,
         },
         "tickers": [
-            "ARM",
-            "AVGO",
-            "ALAB",
-            "SMCI",
-            "IONQ",
-            "RGTI",
-            "RKLB",
-            "LUNR",
-            "RXRX",
-            "NVAX",
-            "HOOD",
-            "AFRM",
-            "NU",
+            "NVDA",
+            "GOOG",
+            "SPXL",
+            "AAPL",
+            "AMZN",
+            "QCOM",
+            "NFLX",
+            "VOO",
+            "VIG",
+            "AVUV",
+            "VXUS",
+            "DRAM",
         ],
+    },
+    "roth": {
+        "allocation_pct": 0.0,
+        "agents": ["aswath_damodaran"],
+        "agent_weights": {
+            "aswath_damodaran": 1.0,
+        },
+        "tickers": ["GOOG", "AMZN", "TSM", "MSFT", "TTWO", "ASML"],
+    },
+    "traditional": {
+        "allocation_pct": 0.0,
+        "agents": ["aswath_damodaran"],
+        "agent_weights": {
+            "aswath_damodaran": 1.0,
+        },
+        "tickers": ["NBIS", "MSFT", "META", "SON", "SMCI"],
     },
 }
 

@@ -248,7 +248,7 @@ def ticker_feed(ticker: str, *, hours_back: int = 168) -> list[dict[str, Any]]:
 
 _NEWS_SUMMARIZE_SYSTEM = (
     "You are an analyst summarizing news for a discretionary investor running real "
-    "risk. The investor's book is organized into sleeves of tickers — adapt your "
+    "risk. The investor's book is organized into portfolios of tickers — adapt your "
     "relevance lens to whatever sectors the related ticker (or macro topic) touches.\n\n"
     "Output JSON ONLY — no prose, no fences:\n"
     "{\n"

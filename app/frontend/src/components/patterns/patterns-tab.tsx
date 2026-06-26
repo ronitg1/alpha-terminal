@@ -4,6 +4,7 @@ import type { HistoricalStats, PatternTimeframe, ScanResult } from '@/types/patt
 import { ScannerPanel } from './scanner-panel';
 import { ResultsTable } from './results-table';
 import { ChartModal } from './chart-modal';
+import { PatternBacktestPanel } from './pattern-backtest-panel';
 
 interface ChartTarget {
   ticker: string;
@@ -71,6 +72,7 @@ function QuickStats({
 }
 
 export function PatternsTab() {
+  const [view, setView] = useState<'scanner' | 'backtest'>('scanner');
   const [results, setResults] = useState<ScanResult[]>([]);
   const [timeframe, setTimeframe] = useState<PatternTimeframe>('day');
   const [isScanning, setIsScanning] = useState(false);
@@ -122,6 +124,29 @@ export function PatternsTab() {
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
+      {/* Mode toggle — Scanner (live signals) vs Backtest (historical study) */}
+      <div className="flex items-center gap-1 px-4 pt-3 border-b border-border">
+        {(['scanner', 'backtest'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={
+              'px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors ' +
+              (view === v
+                ? 'border-foreground text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground')
+            }
+          >
+            {v === 'scanner' ? 'Scanner' : 'Backtest'}
+          </button>
+        ))}
+      </div>
+
+      {view === 'backtest' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <PatternBacktestPanel />
+        </div>
+      ) : (
       <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] gap-4 p-4 overflow-hidden">
         {/* Left: scanner + stats */}
         <div className="overflow-y-auto space-y-4 pr-1">
@@ -147,6 +172,7 @@ export function PatternsTab() {
           winRates={winRates}
         />
       </div>
+      )}
 
       {/* Chart modal — fixed overlay */}
       {chart && (

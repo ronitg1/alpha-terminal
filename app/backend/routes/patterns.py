@@ -7,15 +7,32 @@ per-signal historical win-rate analysis and options strategy recommendations.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.backend.routes.pattern_data import fetch_candles
+from src.backtesting import options_historical
+from src.backtesting.options_proxy import realized_vol
+from src.backtesting.pattern_options import (
+    Trade,
+    TradeConfig,
+    aggregate,
+    build_grid,
+    option_type_for,
+    price_bsm,
+    price_from_series,
+    replay_signals,
+    target_strike,
+)
 from src.patterns.patterns import BULLISH_PATTERNS, PATTERN_DETECTORS
 from src.patterns.trade_plan import (
     annualized_vol,
@@ -26,10 +43,15 @@ from src.patterns.trade_plan import (
 )
 from src.tools.massive import MassiveClient, MassiveError
 
+_ET = ZoneInfo("America/New_York")
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/patterns", tags=["patterns"])
 
-_executor = ThreadPoolExecutor(max_workers=6)
+# Detector thread pool. Pattern detection is the scan's real cost (12 numpy
+# detectors per ticker); the heavy array work releases the GIL, so a wider
+# pool meaningfully cuts wall-clock on large universes. Sized to the box.
+_executor = ThreadPoolExecutor(max_workers=max(8, (os.cpu_count() or 4) * 2))
 
 # Timeframe registry. Each entry sets the Polygon aggregate params plus the
 # guardrails that keep intraday sane: a lookback clamp (dense bars + the
@@ -38,6 +60,18 @@ _executor = ThreadPoolExecutor(max_workers=6)
 # beast from 3% in 20 fifteen-minute bars — thresholds scale down with the
 # bar size so "win" stays meaningful).
 _TIMEFRAMES: dict[str, dict] = {
+    "week": {
+        "multiplier": 1,
+        "timespan": "week",
+        # Weekly bars are sparse: 5y ≈ 260 bars (well under the cap) and gives
+        # the longer-base patterns (cup&handle, H&S) room to form. History runs
+        # 7y so the 20-bar (~5-month) outcome window still leaves a real sample.
+        "max_lookback_days": 1825,
+        "history_days": 2555,
+        # Win = a favourable move within 20 *weekly* bars (~5 months). Weekly
+        # swings dwarf daily ones, so the bar is higher than daily's 3%.
+        "win_threshold": 0.06,
+    },
     "day": {
         "multiplier": 1,
         "timespan": "day",
@@ -198,7 +232,7 @@ async def scan(req: ScanRequest) -> list[dict]:
 async def watchlist_scan(
     patterns: Optional[str] = Query(None, description="Comma-separated pattern names"),
     lookback_days: int = Query(180, ge=30, le=365),
-    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+    timeframe: str = Query("day", description="Bar size: week | day | 1h | 15m"),
 ) -> list[dict]:
     """Scan the built-in 50-ticker large-cap watchlist."""
     pattern_names = (
@@ -229,8 +263,8 @@ async def watchlist_scan(
 @router.get("/chart/{ticker}")
 async def chart(
     ticker: str,
-    lookback_days: int = Query(365, ge=1, le=730),
-    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+    lookback_days: int = Query(365, ge=1, le=1825),  # 5y ceiling for weekly
+    timeframe: str = Query("day", description="Bar size: week | day | 1h | 15m"),
 ) -> dict:
     """Return all OHLCV bars + all detected patterns (with trendlines) for one ticker."""
     cfg = _timeframe_cfg(timeframe)
@@ -268,7 +302,7 @@ async def chart(
 async def signal_analysis(
     ticker: str,
     pattern_name: str,
-    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+    timeframe: str = Query("day", description="Bar size: week | day | 1h | 15m"),
 ) -> dict:
     """
     Run a historical backtest for one ticker+pattern pair on the given timeframe.
@@ -361,13 +395,14 @@ async def signal_analysis(
 
 
 # Preferred contract DTE per scan timeframe: day-trade patterns resolve in
-# hours-to-days, swing patterns in weeks — the option should outlive the move.
-_PLAN_DTE: dict[str, int] = {"day": 30, "1h": 14, "15m": 7}
+# hours-to-days, swing patterns in weeks, weekly patterns in months — the
+# option should outlive the move.
+_PLAN_DTE: dict[str, int] = {"week": 90, "day": 30, "1h": 14, "15m": 7}
 
 # Expected hold (calendar days) for the theta haircut on the target premium.
 # Derived from the 20-bar outcome window each timeframe's win-rate uses:
-# 20 daily bars ≈ weeks; 20 hourly bars ≈ 3 trading days; 20×15m ≈ a day.
-_PLAN_HOLD_DAYS: dict[str, float] = {"day": 10.0, "1h": 3.0, "15m": 1.0}
+# 20 weekly bars ≈ months; 20 daily ≈ weeks; 20 hourly ≈ 3 trading days; 20×15m ≈ a day.
+_PLAN_HOLD_DAYS: dict[str, float] = {"week": 45.0, "day": 10.0, "1h": 3.0, "15m": 1.0}
 
 
 def _pick_plan_contract(
@@ -443,7 +478,7 @@ async def trade_plan(
     ticker: str,
     pattern_name: str,
     risk: str = Query("moderate", description="conservative | moderate | aggressive"),
-    timeframe: str = Query("day", description="Bar size: day | 1h | 15m"),
+    timeframe: str = Query("day", description="Bar size: week | day | 1h | 15m"),
 ) -> dict:
     """Entry / stop-loss / target for the most recent occurrence of a pattern.
 
@@ -504,7 +539,7 @@ async def trade_plan(
     # (5/7 converts calendar → trading days).
     import datetime as _dt
 
-    bars_per_trading_day = {"day": 1.0, "1h": 6.5, "15m": 26.0}.get(timeframe, 1.0)
+    bars_per_trading_day = {"week": 0.2, "day": 1.0, "1h": 6.5, "15m": 26.0}.get(timeframe, 1.0)
     try:
         signal_day = _dt.date.fromisoformat(latest["end_date"][:10])
         age_bars = max(0.0, (_dt.date.today() - signal_day).days * 5 / 7) * bars_per_trading_day
@@ -646,3 +681,311 @@ def _options_recommendations(
                 "ideal_iv_rank": "> 40",
             },
         ]
+
+
+# ─── Pattern-scanner options backtest ───────────────────────────────────────
+#
+# Replays the detectors over history; for every fired signal, simulates buying
+# an option (target delta + DTE) and selling it `hold` candles later. Real
+# fills come from the listed contract's historical bars (the plan exposes
+# intraday option aggregates); BSM is the fast fallback. The optimizer sweeps
+# delta x DTE x hold to surface the historically best option + hold.
+
+# Cap total signals priced in one run so a 12-pattern x big-universe sweep
+# can't spin for minutes. Most recent signals are kept when truncating.
+_MAX_BT_SIGNALS = 600
+# Cap the optimizer grid so an accidental huge sweep can't fan out unbounded.
+_MAX_BT_CONFIGS = 80
+
+
+class PatternBacktestRequest(BaseModel):
+    """Body for POST /patterns/backtest."""
+
+    tickers: list[str]
+    timeframe: str = "1h"
+    patterns: list[str] = []          # empty = all detectors
+    lookback_days: int | None = None  # None = the timeframe's history window
+    mode: str = "single"              # "single" | "optimize"
+    # single-run config
+    delta: float = 0.4
+    dte: int | None = None            # None = timeframe default DTE
+    hold: int = 1                     # candles held (1 = next candle close)
+    # optimizer sweep axes (used when mode == "optimize"; empty = sane defaults)
+    deltas: list[float] = []
+    dtes: list[int] = []
+    holds: list[int] = []
+    # shared knobs
+    direction: str = "auto"           # auto | calls | puts
+    pricing: str = "real"             # real | bsm
+    slippage_pct: float | None = 0.05
+    min_confidence: float = 0.0
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format one Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _option_label(ts_ms: int, intraday: bool) -> str:
+    """Label an option bar's timestamp on the same grid as the underlying
+    candles (ET wall-clock for intraday, date for daily/weekly)."""
+    ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    if intraday:
+        return ts.astimezone(_ET).strftime("%Y-%m-%dT%H:%M")
+    return ts.strftime("%Y-%m-%d")
+
+
+def _series_from_rows(rows: list[dict], intraday: bool) -> dict[str, float]:
+    """Build {candle-label: contract close} from Polygon option aggregates."""
+    series: dict[str, float] = {}
+    for r in rows:
+        t, c = r.get("t"), r.get("c")
+        if t is None or c is None:
+            continue
+        series[_option_label(int(t), intraday)] = float(c)
+    return series
+
+
+def _fetch_option_series(
+    client: MassiveClient,
+    ticker: str,
+    sig,
+    sigma: float,
+    cfg: TradeConfig,
+    option_type: str,
+    multiplier: int,
+    timespan: str,
+    intraday: bool,
+):
+    """Pick the listed contract closest to (target-delta strike, DTE) as of the
+    signal's fire date and return (series, real_strike, contract_ticker), or
+    None if nothing usable is listed (caller falls back to BSM)."""
+    strike = target_strike(sig, sigma, cfg, option_type)  # type: ignore[arg-type]
+    try:
+        contract = options_historical.pick_contract(
+            client,
+            underlying=ticker,
+            as_of=date.fromisoformat(sig.fire_date[:10]),
+            target_strike=strike,
+            target_expiry_days=cfg.dte,
+            option_type=option_type,  # type: ignore[arg-type]
+        )
+    except options_historical.NoSuchContract:
+        return None
+    except Exception as exc:  # network / provider hiccup — fall back to BSM
+        logger.warning("pick_contract failed for %s: %s", ticker, exc)
+        return None
+    otkr = str(contract["ticker"])
+    try:
+        aggs = client.get_option_aggregates(
+            otkr, sig.fire_date[:10], str(contract["expiration_date"]),
+            multiplier=multiplier, timespan=timespan,
+        )
+    except Exception as exc:
+        logger.warning("option aggregates failed for %s: %s", otkr, exc)
+        return None
+    series = _series_from_rows(aggs.get("results") or [], intraday)
+    if not series:
+        return None
+    return series, float(contract["strike_price"]), otkr
+
+
+def _price_ticker(
+    client: MassiveClient,
+    ticker: str,
+    candles: list[dict],
+    sigma: float,
+    signals: list,
+    configs: list[TradeConfig],
+    direction: str,
+    pricing: str,
+    slippage_pct: float | None,
+    tf: dict,
+) -> list[list[Trade]]:
+    """Price every (signal x config) for one ticker. Returns one trade list per
+    config (parallel to ``configs``). Synchronous — run via asyncio.to_thread.
+
+    Real-fill contract series are cached per (fire_date, delta, dte) so the
+    hold-length sweep is free and configs sharing a contract don't refetch.
+    """
+    multiplier, timespan = tf["multiplier"], tf["timespan"]
+    intraday = timespan in ("minute", "hour")
+    cache: dict[tuple, object] = {}
+    out: list[list[Trade]] = [[] for _ in configs]
+
+    for sig in signals:
+        otype = option_type_for(sig, direction)
+        for ci, cfg in enumerate(configs):
+            trade = None
+            if pricing == "real":
+                key = (sig.fire_date, cfg.delta, cfg.dte)
+                if key not in cache:
+                    cache[key] = _fetch_option_series(
+                        client, ticker, sig, sigma, cfg, otype,
+                        multiplier, timespan, intraday,
+                    )
+                got = cache[key]
+                if got is not None:
+                    series, strike, otkr = got  # type: ignore[misc]
+                    trade = price_from_series(
+                        sig, candles, cfg, otype,
+                        series=series, strike=strike, contract=otkr,
+                        slippage_pct=slippage_pct,
+                    )
+            if trade is None:
+                trade = price_bsm(
+                    sig, candles, sigma, cfg, otype, slippage_pct=slippage_pct,
+                )
+            if trade is not None:
+                out[ci].append(trade)
+    return out
+
+
+def _trade_dict(t: Trade) -> dict:
+    return {
+        "ticker": t.ticker,
+        "pattern": t.pattern,
+        "option_type": t.option_type,
+        "strike": round(t.strike, 2),
+        "open_date": t.open_date,
+        "close_date": t.close_date,
+        "entry_premium": round(t.entry_premium, 4),
+        "exit_premium": round(t.exit_premium, 4),
+        "pnl": round(t.pnl, 4),
+        "return_pct": round(t.return_pct, 4),
+        "confidence": round(t.confidence, 1),
+        "synthetic": t.synthetic,
+        "contract": t.contract,
+    }
+
+
+@router.post("/backtest")
+async def backtest_patterns(req: PatternBacktestRequest, request: Request):
+    """Backtest the pattern scanner as an options strategy (SSE).
+
+    Streams ``progress`` per ticker, then a final ``complete`` carrying the
+    per-config results (ranked by expectancy) and the trade list of the best
+    config. In single mode there's exactly one config.
+    """
+    tf = _timeframe_cfg(req.timeframe)
+    if req.mode not in ("single", "optimize"):
+        raise HTTPException(400, "mode must be 'single' or 'optimize'.")
+    if req.direction not in ("auto", "calls", "puts"):
+        raise HTTPException(400, "direction must be 'auto', 'calls', or 'puts'.")
+    if req.pricing not in ("real", "bsm"):
+        raise HTTPException(400, "pricing must be 'real' or 'bsm'.")
+
+    tickers = [t.strip().upper() for t in req.tickers if t.strip()]
+    if not tickers:
+        raise HTTPException(400, "No tickers supplied.")
+    sel_patterns = req.patterns or list(PATTERN_DETECTORS.keys())
+    unknown = [p for p in sel_patterns if p not in PATTERN_DETECTORS]
+    if unknown:
+        raise HTTPException(400, f"Unknown patterns: {unknown}")
+
+    default_dte = _PLAN_DTE.get(req.timeframe, 30)
+    if req.mode == "single":
+        configs = [TradeConfig(delta=req.delta, dte=req.dte or default_dte, hold=max(1, req.hold))]
+    else:
+        deltas = req.deltas or [0.3, 0.4, 0.5, 0.6]
+        dtes = req.dtes or [default_dte]
+        holds = req.holds or [1, 2, 3, 5]
+        configs = build_grid(deltas, dtes, holds)
+        if len(configs) > _MAX_BT_CONFIGS:
+            raise HTTPException(
+                400,
+                f"Grid too large ({len(configs)} combos > {_MAX_BT_CONFIGS}). "
+                "Trim the delta / DTE / hold lists.",
+            )
+
+    lookback = req.lookback_days or tf["history_days"]
+    lookback = min(lookback, tf["max_lookback_days"])
+    to_date = date.today().isoformat()
+    from_date = (date.today() - timedelta(days=lookback)).isoformat()
+    sig_from = (date.today() - timedelta(days=120)).isoformat()
+
+    async def gen():
+        client = MassiveClient()
+        per_config: list[list[Trade]] = [[] for _ in configs]
+        total_signals = 0
+        truncated = False
+        try:
+            yield _sse("progress", {"status": f"Starting — {len(tickers)} tickers, {len(configs)} config(s)"})
+            for i, tk in enumerate(tickers):
+                if await request.is_disconnected():
+                    return
+                yield _sse("progress", {"status": f"Scanning {tk} ({i + 1}/{len(tickers)})"})
+                try:
+                    candles = await fetch_candles(tk, from_date, to_date, tf["timespan"], tf["multiplier"])
+                except Exception as exc:
+                    yield _sse("progress", {"status": f"{tk}: fetch failed ({exc})"})
+                    continue
+                if len(candles) > _MAX_BARS:
+                    candles = candles[-_MAX_BARS:]
+                if len(candles) < 30:
+                    continue
+                try:
+                    daily = await fetch_candles(tk, sig_from, to_date, "day", 1)
+                    closes = [c["close"] for c in daily if c.get("close")]
+                    sigma = realized_vol(closes, window=30) or 0.30
+                except Exception:
+                    sigma = 0.30
+
+                signals = replay_signals(
+                    tk, candles, PATTERN_DETECTORS, BULLISH_PATTERNS,
+                    patterns=sel_patterns, min_confidence=req.min_confidence,
+                )
+                if not signals:
+                    continue
+                room = _MAX_BT_SIGNALS - total_signals
+                if room <= 0:
+                    truncated = True
+                    break
+                if len(signals) > room:
+                    signals = signals[-room:]
+                    truncated = True
+                total_signals += len(signals)
+                yield _sse("progress", {"status": f"{tk}: {len(signals)} signals — pricing options…"})
+
+                results = await asyncio.to_thread(
+                    _price_ticker, client, tk, candles, sigma, signals, configs,
+                    req.direction, req.pricing, req.slippage_pct, tf,
+                )
+                for ci, tlist in enumerate(results):
+                    per_config[ci].extend(tlist)
+
+            rows = []
+            for ci, cfg in enumerate(configs):
+                agg = aggregate(per_config[ci])
+                rows.append({"delta": cfg.delta, "dte": cfg.dte, "hold": cfg.hold, **agg})
+            # Rank by expectancy, then win rate, then sample size.
+            rows.sort(key=lambda r: (r["expectancy"], r["win_rate"], r["n_trades"]), reverse=True)
+
+            if req.mode == "single":
+                best_trades = [_trade_dict(t) for t in per_config[0]]
+            else:
+                best_trades = []
+                if rows:
+                    top = rows[0]
+                    for ci, cfg in enumerate(configs):
+                        if cfg.delta == top["delta"] and cfg.dte == top["dte"] and cfg.hold == top["hold"]:
+                            best_trades = [_trade_dict(t) for t in per_config[ci]]
+                            break
+
+            yield _sse("complete", {"data": {
+                "mode": req.mode,
+                "timeframe": req.timeframe,
+                "pricing": req.pricing,
+                "direction": req.direction,
+                "n_signals": total_signals,
+                "truncated": truncated,
+                "configs": rows,
+                "trades": best_trades,
+                "tickers": tickers,
+                "patterns": sel_patterns,
+            }})
+        except Exception as exc:  # noqa: BLE001 — surface any failure to the client
+            logger.exception("pattern backtest failed")
+            yield _sse("error", {"message": str(exc)})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")

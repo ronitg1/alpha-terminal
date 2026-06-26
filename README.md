@@ -4,17 +4,17 @@
 
 **A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
-[![Version: 1.2](https://img.shields.io/badge/version-1.2-blue.svg)](CHANGELOG.md)
+[![Version: 1.3](https://img.shields.io/badge/version-1.3-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-206%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.2 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester, the intraday-capable Pattern Scanner, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (195 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.3 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester (now runnable off any portfolio or watchlist), the intraday-capable Pattern Scanner with its own options backtest + optimizer, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (206 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -101,7 +101,7 @@ A three-pane terminal: a **left rail** (sleeves, watchlists, and sector ETFs wit
 | Tab | What it's for |
 | --- | --- |
 | **Market** | Per-ticker chart (price + volume), company overview, key financials, and a Finnhub fundamentals panel (growth/turnover, analyst consensus, earnings beat/miss, peers, insider flow). |
-| **Screening** | Pattern Scanner (daily / 1h / 15m) · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
+| **Screening** | Pattern Scanner (weekly / daily / 1h / 15m) · 11-strategy Options Screener (with chain viewer + spread-leg highlighting) · the realistic options Backtester. |
 | **Portfolio** | Portfolio Pulse — conviction rollup, high-conviction names, whole-portfolio + per-sleeve + per-name LLM thesis, and per-name agent deep dives. |
 | **P&L** | Track contracts you take or like — manual entry, one-click Track from any chain row, or Fidelity CSV import. Live mark-to-market, realized + unrealized totals, win rate, equity curve. |
 | **News** | Three-column market-news desk (your book · ticker search · auto-categorized macro) with per-article AI summaries. |
@@ -159,7 +159,7 @@ Your book is organized into themed **sleeves** ("Energy Transition 50% / Mega Te
 
 ### 🔎 Pattern Scanner
 
-Detects **12 classic chart patterns** on **three timeframes — daily, 1-hour, and 15-minute bars** — ranks every hit by a transparent confidence score, then — for any signal you click — shows how that pattern has historically resolved on that name and which options structures fit it.
+Detects **12 classic chart patterns** on **four timeframes — weekly, daily, 1-hour, and 15-minute bars** — ranks every hit by a transparent confidence score, then — for any signal you click — shows how that pattern has historically resolved on that name and which options structures fit it.
 
 **Patterns detected** (▲ bullish / ▼ bearish):
 
@@ -169,7 +169,7 @@ Detects **12 classic chart patterns** on **three timeframes — daily, 1-hour, a
 
 **Confidence (0–100)** is a weighted, inspectable blend — `0.4 × breakout strength + 0.3 × volume confirmation + 0.3 × trendline-touch / symmetry` — so a clean breakout on heavy volume with several trendline touches scores high, and a marginal one scores low. Overlapping detections of the same pattern are de-duplicated (highest confidence kept).
 
-**Run a scan.** Pick the universe from three tabs — **Watchlist** (all or one named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — tick which of the 12 patterns to look for, pick a **timeframe** (Daily for swing/position setups, 1h for multi-day swings, 15m for day-trade setups) and a lookback sized to it (up to 1yr daily, 90d hourly, 30d on 15m), and scan. Intraday bars are **regular-trading-hours only** (premarket noise is filtered) and timestamps read in **US-Eastern exchange time**. Results come back as a confidence-sorted table next to a **Quick Stats** card: total signals, average confidence, bullish-vs-bearish split, and the top tickers by signal count.
+**Run a scan.** Pick the universe from three tabs — **Watchlist** (all or one named list), **My Sleeves** (all or one sleeve), or **Custom** (paste any tickers) — tick which of the 12 patterns to look for, pick a **timeframe** (Weekly for long-base/position setups over months, Daily for swing setups, 1h for multi-day swings, 15m for day-trade setups) and a lookback sized to it (up to 5yr weekly, 2yr daily, 90d hourly, 30d on 15m), and scan. Intraday bars are **regular-trading-hours only** (premarket noise is filtered) and timestamps read in **US-Eastern exchange time**. Results come back as a confidence-sorted table next to a **Quick Stats** card: total signals, average confidence, bullish-vs-bearish split, and the top tickers by signal count.
 
 **Drill into any signal.** Click a row to open a full-screen chart — candlesticks plus a synced volume histogram on the scan's timeframe, every detected pattern flagged with an entry arrow and a confidence marker, and the selected pattern's **trendlines drawn directly on the chart** (pole, channel, neckline, cup walls, wedge lines) with dashed **key-level** price lines (resistance / support / neckline) labelled on the axis.
 
@@ -397,7 +397,7 @@ alpha-terminal/
 │           ├── contexts/                sleeves + dashboard state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 195 tests, pytest
+├── tests/                   ← 206 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 

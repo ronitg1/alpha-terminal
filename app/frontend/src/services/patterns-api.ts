@@ -17,6 +17,11 @@ import { API_BASE_URL } from '@/lib/api-base';
 
 const BASE = `${API_BASE_URL}/patterns`;
 
+// Large universes (e.g. "all watchlists" = hundreds of tickers) plus a flaky
+// data provider can take minutes — give the scan room rather than aborting
+// with a "failed to fetch".
+const SCAN_TIMEOUT_MS = 300_000; // 5 min
+
 async function _get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(120_000) });
   if (!res.ok) {
@@ -31,7 +36,7 @@ async function _post<T>(path: string, body: unknown): Promise<T> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(SCAN_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

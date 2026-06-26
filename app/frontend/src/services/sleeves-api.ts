@@ -128,10 +128,20 @@ export const sleevesApi = {
     getJSON<{ theses: Record<string, Thesis | TickerThesis> }>('/sleeves/thesis/saved'),
   getOptionsStrategies: () =>
     getJSON<{ strategies: OptionsStrategyMeta[] }>('/sleeves/options/strategies'),
-  getOptionsScreener: (sleeve = 'mega_tech', strategy = 'weakness') =>
-    getJSON<OptionsScreenerResponse>(
-      `/sleeves/options/screener?sleeve=${encodeURIComponent(sleeve)}&strategy=${encodeURIComponent(strategy)}`
-    ),
+  /** Run the screener over a portfolio (source='sleeve') or a watchlist
+   *  (source='watchlist'). `name` is the sleeve name or watchlist name. */
+  getOptionsScreener: (
+    source: 'sleeve' | 'watchlist',
+    name: string,
+    strategy = 'weakness',
+  ) => {
+    const params = new URLSearchParams({ strategy, source });
+    if (source === 'watchlist') params.set('watchlist', name);
+    else params.set('sleeve', name);
+    return getJSON<OptionsScreenerResponse>(
+      `/sleeves/options/screener?${params.toString()}`,
+    );
+  },
   getOptionsChain: (
     ticker: string,
     opts: { expiration?: string; horizonDays?: number } = {},

@@ -1,11 +1,12 @@
 /**
  * NewsView — Market News tab. Three columns:
- *   1. Book headlines — news fanned across your sleeve + watchlist tickers
+ *   1. Book headlines — news fanned across your portfolio (sleeve) tickers
  *   2. Ticker search — ad-hoc per-ticker feed
  *   3. Macro — general-market news auto-categorized, with filter pills
  *
- * Sector/book tickers come from this repo's sleeves + watchlists (not a
- * Supabase "book"). News is Finnhub-primary with a Polygon fallback.
+ * Book tickers are the configured portfolios' holdings only (watchlists are
+ * exploratory, not owned, so they're excluded). News is Finnhub-primary
+ * with a Polygon fallback.
  */
 
 import { ArticleCard } from '@/components/news/article-card';
@@ -27,13 +28,15 @@ const MACRO_LABELS: Record<string, string> = {
 const MACRO_ORDER = ['monetary', 'geopolitics', 'government', 'economy', 'energy', 'markets'];
 
 export function NewsView() {
-  const { config, watchlists } = useSleevesContext();
+  const { config } = useSleevesContext();
 
-  const tickers = useMemo(() => {
-    const sleeveTickers = config?.sleeves.flatMap((s) => s.tickers) ?? [];
-    const wlTickers = watchlists.flatMap((w) => w.tickers.map((t) => t.ticker));
-    return [...new Set([...sleeveTickers, ...wlTickers])];
-  }, [config, watchlists]);
+  // Book headlines = your portfolio names only (the configured sleeves).
+  // Watchlists are exploratory, not holdings, so they're intentionally
+  // excluded — the feed stays focused on what you actually own.
+  const tickers = useMemo(
+    () => [...new Set(config?.sleeves.flatMap((s) => s.tickers) ?? [])],
+    [config],
+  );
 
   const [feed, setFeed] = useState<NewsFeed | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,7 +87,7 @@ export function NewsView() {
 
       <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-px bg-border">
         {/* Column 1 — book headlines */}
-        <NewsColumn title="Your book" subtitle={`${tickers.length} names across sleeves + watchlists`}>
+        <NewsColumn title="Your book" subtitle={`${tickers.length} names across your portfolios`}>
           {feed && feed.book_headlines.length === 0 && !loading && (
             <Empty>No recent headlines for your book.</Empty>
           )}

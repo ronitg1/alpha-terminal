@@ -3,9 +3,9 @@
  * Keep in sync with app/backend/routes/patterns.py Pydantic models.
  */
 
-/** Bar size for scans/charts. Daily bars carry YYYY-MM-DD dates; intraday
- *  bars carry YYYY-MM-DDTHH:MM in US-Eastern wall-clock time. */
-export type PatternTimeframe = 'day' | '1h' | '15m';
+/** Bar size for scans/charts. Weekly + daily bars carry YYYY-MM-DD dates;
+ *  intraday bars carry YYYY-MM-DDTHH:MM in US-Eastern wall-clock time. */
+export type PatternTimeframe = 'week' | 'day' | '1h' | '15m';
 
 export interface CandleBar {
   date: string;
@@ -143,4 +143,54 @@ export interface TradePlanResponse {
   confidence?: number;
   plan: TradePlan | null;
   option: OptionTradePlan | null;
+}
+
+// ─── Pattern-scanner options backtest ───────────────────────────────────────
+
+export interface PatternBacktestConfigRow {
+  delta: number;
+  dte: number;
+  hold: number;
+  n_trades: number;
+  n_wins: number;
+  win_rate: number;
+  avg_return_pct: number;
+  avg_win_pct?: number;
+  avg_loss_pct?: number;
+  total_pnl: number;
+  expectancy: number;
+  n_synthetic: number;
+  by_pattern: Record<
+    string,
+    { n: number; wins: number; pnl: number; win_rate: number; avg_return_pct: number }
+  >;
+}
+
+export interface PatternBacktestTrade {
+  ticker: string;
+  pattern: string;
+  option_type: 'call' | 'put';
+  strike: number;
+  open_date: string;
+  close_date: string;
+  entry_premium: number;
+  exit_premium: number;
+  pnl: number;
+  return_pct: number;
+  confidence: number;
+  synthetic: boolean;
+  contract: string | null;
+}
+
+export interface PatternBacktestSummary {
+  mode: 'single' | 'optimize';
+  timeframe: PatternTimeframe;
+  pricing: 'real' | 'bsm';
+  direction: string;
+  n_signals: number;
+  truncated: boolean;
+  configs: PatternBacktestConfigRow[];
+  trades: PatternBacktestTrade[];
+  tickers: string[];
+  patterns: string[];
 }

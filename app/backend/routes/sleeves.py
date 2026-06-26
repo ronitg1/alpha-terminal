@@ -1112,11 +1112,66 @@ async def list_options_strategies() -> dict[str, Any]:
 _DEFAULT_MIN_PRICE = 10.0
 
 
+def _resolve_universe_tickers(
+    source: str,
+    sleeve: str,
+    watchlist: str | None,
+    sleeves_cfg: dict[str, Any],
+) -> tuple[list[str], str]:
+    """Resolve the ticker universe for a screener / backtest run.
+
+    ``source='sleeve'`` (default) -> the named portfolio sleeve's tickers.
+    ``source='watchlist'``        -> the named watchlist's tickers.
+
+    Returns ``(tickers, label)`` where ``label`` is a human-readable universe
+    name echoed back in the response payload. Raises ``HTTPException(400)`` on
+    an unknown sleeve / watchlist or an empty watchlist so the UI surfaces a
+    clear message instead of a silent empty run.
+    """
+    if source == "watchlist":
+        if not watchlist:
+            raise HTTPException(
+                status_code=400,
+                detail="A watchlist name is required when source='watchlist'.",
+            )
+        wl = watchlists_service.get_one(watchlist)
+        if wl is None:
+            known = [w["name"] for w in watchlists_service.get_all()]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown watchlist '{watchlist}'. Known: {known}",
+            )
+        # Watchlist entries are {ticker, comment} dicts. De-dupe, preserve order.
+        seen: set[str] = set()
+        tickers: list[str] = []
+        for entry in wl.get("tickers", []):
+            sym = str(entry.get("ticker", "")).strip().upper()
+            if sym and sym not in seen:
+                seen.add(sym)
+                tickers.append(sym)
+        if not tickers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Watchlist '{watchlist}' is empty — add tickers first.",
+            )
+        return tickers, watchlist
+
+    # Default: portfolio sleeve.
+    if sleeve not in sleeves_cfg:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown sleeve '{sleeve}'. Known: {list(sleeves_cfg.keys())}",
+        )
+    return list(sleeves_cfg[sleeve]["tickers"]), sleeve
+
+
 @router.get("/options/screener")
 async def get_options_screener(
     sleeve: str = "mega_tech",
     strategy: str = "weakness",
     min_price: float = _DEFAULT_MIN_PRICE,
+    source: str = "sleeve",
+    watchlist: str | None = None,
 ) -> dict[str, Any]:
     """Rank a sleeve's tickers by a 0–3 conviction score under a strategy.
 
@@ -1128,22 +1183,25 @@ async def get_options_screener(
     amount before scoring — keeps the list focused on names with tradeable
     option chains. Default $10. Set to 0 to disable.
 
+    The ticker universe is a portfolio (``source='sleeve'``, the default,
+    using ``sleeve``) or a watchlist (``source='watchlist'``, using
+    ``watchlist``). See ``_resolve_universe_tickers``.
+
     Sort: conviction desc, then by per-strategy extremity. Cached per
-    (sleeve, strategy, min_price) for 5 minutes.
+    (source, universe, strategy, min_price) for 5 minutes.
     """
     sleeves_cfg = _live_sleeves()
-    if sleeve not in sleeves_cfg:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown sleeve '{sleeve}'. Known: {list(sleeves_cfg.keys())}",
-        )
     if strategy not in _VALID_STRATEGIES:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown strategy '{strategy}'. Known: {sorted(_VALID_STRATEGIES)}",
         )
 
-    cache_key = f"{sleeve}|{strategy}|{min_price}"
+    tickers, universe_label = _resolve_universe_tickers(
+        source, sleeve, watchlist, sleeves_cfg
+    )
+
+    cache_key = f"{source}|{universe_label}|{strategy}|{min_price}"
     now = time.monotonic()
     cached = _screener_cache.get(cache_key)
     if cached and (now - cached[0]) < _SCREENER_CACHE_TTL_SECONDS:
@@ -1155,7 +1213,6 @@ async def get_options_screener(
     # 200d-MA lookbacks. Polygon caps at 5000 bars/call so this is comfortable.
     start_date = (today - datetime.timedelta(days=400)).isoformat()
 
-    tickers = list(sleeves_cfg[sleeve]["tickers"])
     scorer = _STRATEGY_REGISTRY[strategy]["scorer"]
 
     def _compute() -> dict[str, Any]:
@@ -1181,7 +1238,12 @@ async def get_options_screener(
 
         candidates.sort(key=lambda c: (-c["conviction"], c["sort_key"]))
         return {
-            "sleeve": sleeve,
+            # "sleeve" kept for wire back-compat; it now carries the resolved
+            # universe label (sleeve name or watchlist name). "source" +
+            # "universe" disambiguate which kind it is.
+            "sleeve": universe_label,
+            "source": source,
+            "universe": universe_label,
             "strategy": strategy,
             "benchmark": _BENCHMARK_TICKER,
             "min_price": min_price,
@@ -2009,12 +2071,23 @@ class OptionsBacktestRequest(BaseModel):
 
     start_date: str = Field(description="Backtest start (YYYY-MM-DD).")
     end_date: str = Field(description="Backtest end (YYYY-MM-DD), inclusive.")
-    sleeve: str = Field(default="mega_tech", description="Which sleeve's tickers to screen.")
+    source: str = Field(
+        default="sleeve",
+        description=(
+            "Ticker universe kind: 'sleeve' (a portfolio, resolved from "
+            "``sleeve``) or 'watchlist' (resolved from ``watchlist``)."
+        ),
+    )
+    sleeve: str = Field(default="mega_tech", description="Which sleeve's tickers to screen (when source='sleeve').")
+    watchlist: str | None = Field(
+        default=None,
+        description="Which watchlist's tickers to screen (when source='watchlist').",
+    )
     tickers: list[str] | None = Field(
         default=None,
         description=(
-            "Restrict to a subset of the sleeve's tickers. None = use the whole "
-            "sleeve. Tickers must already exist in the chosen sleeve."
+            "Restrict to a subset of the universe's tickers. None = use the whole "
+            "universe. Tickers must already exist in the chosen sleeve/watchlist."
         ),
     )
     strategy: str = Field(
@@ -2226,8 +2299,6 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
       error            — fatal failure.
     """
     sleeves_cfg = _live_sleeves()
-    if req.sleeve not in sleeves_cfg:
-        raise HTTPException(status_code=400, detail=f"Unknown sleeve '{req.sleeve}'.")
     if req.strategy not in _BACKTESTABLE_STRATEGIES:
         raise HTTPException(
             status_code=400,
@@ -2250,8 +2321,11 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
     if end_d < start_d:
         raise HTTPException(status_code=400, detail="end_date < start_date")
 
-    # Resolve ticker scope: whole sleeve, or user-supplied subset.
-    full_ticker_set = list(sleeves_cfg[req.sleeve]["tickers"])
+    # Resolve ticker scope: whole universe (portfolio or watchlist), or a
+    # user-supplied subset of it.
+    full_ticker_set, universe_label = _resolve_universe_tickers(
+        req.source, req.sleeve, req.watchlist, sleeves_cfg
+    )
     if req.tickers:
         wanted = {t.strip().upper() for t in req.tickers if t.strip()}
         tickers = [t for t in full_ticker_set if t.upper() in wanted]
@@ -2259,8 +2333,8 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"None of the requested tickers {sorted(wanted)} are in sleeve "
-                    f"'{req.sleeve}'. Sleeve members: {full_ticker_set}."
+                    f"None of the requested tickers {sorted(wanted)} are in "
+                    f"'{universe_label}'. Members: {full_ticker_set}."
                 ),
             )
     else:
@@ -2326,7 +2400,9 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                     + (f", stop=-{req.stop_loss_pct:.0%}" if req.stop_loss_pct else "")
                 ),
                 "assumption": assumption_text,
-                "sleeve": req.sleeve,
+                "sleeve": universe_label,
+                "source": req.source,
+                "universe": universe_label,
                 "tickers": tickers,
                 "strategy": req.strategy,
                 "start_date": req.start_date,

@@ -28,9 +28,14 @@ _semaphore: asyncio.Semaphore | None = None
 
 
 def _get_semaphore() -> asyncio.Semaphore:
+    # Concurrency cap for outbound aggregate fetches. 5 was far too low for
+    # large universes — a 318-ticker "all watchlists" scan serialized into
+    # ~4 min and blew past the client timeout. Polygon's paid tiers allow
+    # heavy concurrency, so 16 keeps the wall-clock bounded without tripping
+    # rate limits (each fetch already retries on 429).
     global _semaphore
     if _semaphore is None:
-        _semaphore = asyncio.Semaphore(5)
+        _semaphore = asyncio.Semaphore(16)
     return _semaphore
 
 
@@ -182,7 +187,10 @@ async def _fetch_from_api(
         "sort": "asc",
         "limit": 50000,
     }
-    intraday = timespan != "day"
+    # Intraday = sub-daily bars (need RTH filtering + HH:MM timestamps).
+    # Daily AND weekly bars are date-labeled and span full sessions, so they
+    # skip both. Don't key this off "!= day" — that wrongly catches "week".
+    intraday = timespan in ("minute", "hour")
     bar_minutes = multiplier * (60 if timespan == "hour" else 1) if intraday else 0
 
     raw: list[dict] = []

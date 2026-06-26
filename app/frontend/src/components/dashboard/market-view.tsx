@@ -503,7 +503,7 @@ function SleevesPanel() {
       setCreatingName('');
       setCreating(false);
     } catch (err) {
-      toast.error(`Failed to create sleeve: ${(err as Error).message}`);
+      toast.error(`Failed to create portfolio: ${(err as Error).message}`);
     } finally { setSaving(null); }
   };
 
@@ -518,7 +518,7 @@ function SleevesPanel() {
   };
 
   const handleDelete = (name: string) => {
-    toast(`Delete sleeve "${name}"? This cannot be undone.`, {
+    toast(`Delete portfolio "${name}"? This cannot be undone.`, {
       action: { label: 'Delete', onClick: () => void doDeleteSleeve(name) },
       cancel: { label: 'Cancel', onClick: () => {} },
     });
@@ -572,18 +572,18 @@ function SleevesPanel() {
     });
   };
 
-  if (!config) return <p className="text-sm text-muted-foreground italic">Loading sleeves…</p>;
+  if (!config) return <p className="text-sm text-muted-foreground italic">Loading portfolios…</p>;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold">Sleeves</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Each sleeve is a portfolio. Set per-ticker allocation and which analysts run on each position.</p>
+          <h3 className="text-sm font-semibold">Portfolios</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Each portfolio holds a set of positions. Set per-ticker allocation and which analysts run on each position.</p>
         </div>
         <button type="button" onClick={() => setCreating(true)}
           className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors">
-          <Plus className="h-3.5 w-3.5" /> New sleeve
+          <Plus className="h-3.5 w-3.5" /> New portfolio
         </button>
       </div>
 
@@ -594,7 +594,7 @@ function SleevesPanel() {
             value={creatingName}
             onChange={(e) => setCreatingName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate(); if (e.key === 'Escape') { setCreating(false); setCreatingName(''); } }}
-            placeholder="sleeve_name (lowercase, underscores)"
+            placeholder="portfolio_name (lowercase, underscores)"
             className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm outline-none focus:border-primary font-mono"
           />
           <button type="button" onClick={() => void handleCreate()} disabled={saving === 'new' || !creatingName.trim()}
@@ -609,7 +609,7 @@ function SleevesPanel() {
       )}
 
       {config.sleeves.length === 0 && !creating && (
-        <p className="text-sm text-muted-foreground italic py-2">No sleeves configured. Create one above.</p>
+        <p className="text-sm text-muted-foreground italic py-2">No portfolios configured. Create one above.</p>
       )}
 
       {config.sleeves.map((sleeve) => {
@@ -645,7 +645,7 @@ function SleevesPanel() {
                 </button>
               )}
               <button type="button" onClick={() => void handleDelete(sleeve.name)} disabled={!!saving}
-                className="text-muted-foreground hover:text-rose-500 transition-colors" title="Delete sleeve">
+                className="text-muted-foreground hover:text-rose-500 transition-colors" title="Delete portfolio">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -740,7 +740,7 @@ function MarketLanding() {
           </div>
           <div>
             <h1 className="text-lg font-semibold">Market Monitor</h1>
-            <p className="text-sm text-muted-foreground">Select a ticker from the sidebar, or manage your watchlists and sleeves below.</p>
+            <p className="text-sm text-muted-foreground">Select a ticker from the sidebar, or manage your watchlists and portfolios below.</p>
           </div>
         </div>
 
@@ -758,7 +758,7 @@ function MarketLanding() {
                   : 'border-transparent text-muted-foreground hover:text-foreground',
               )}
             >
-              {t}
+              {t === 'sleeves' ? 'Portfolios' : 'Watchlists'}
             </button>
           ))}
         </div>

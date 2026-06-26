@@ -27,7 +27,7 @@ import {
   SleevesBacktestTrade,
 } from '@/types/sleeves';
 import { AlertTriangle, Play, Square } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { LineChart, LineMarker, LinePoint } from '../charts/line-chart';
 import { SleeveAttributionTable } from './sleeve-attribution-table';
 
@@ -43,7 +43,9 @@ export function SleevesBacktestPanel() {
   const { config } = useSleevesContext();
   const [startDate, setStartDate] = useState(isoNDaysAgo(14));
   const [endDate, setEndDate] = useState(isoNDaysAgo(0));
-  const [sleeve, setSleeve] = useState<string>('mega_tech');
+  // Empty until config loads; seeded to the first real portfolio below so a
+  // renamed/removed portfolio can't leave this pointing at a dead name.
+  const [sleeve, setSleeve] = useState<string>('');
   const [tickerInput, setTickerInput] = useState('NVDA');
   const [initialCapital, setInitialCapital] = useState(100_000);
 
@@ -61,6 +63,14 @@ export function SleevesBacktestPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  // Seed the portfolio to the first one once config arrives (never a hardcoded
+  // name). Runs only while empty, so it can't override a user choice.
+  useEffect(() => {
+    if (sleeve) return;
+    const first = config?.sleeves?.[0]?.name;
+    if (first) setSleeve(first);
+  }, [config, sleeve]);
 
   // Equity-curve points + per-trade entry/exit markers, suitable for LineChart.
   const equityPoints: LinePoint[] = useMemo(
@@ -184,7 +194,7 @@ export function SleevesBacktestPanel() {
     <div className="space-y-5">
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
         <strong className="text-amber-700 dark:text-amber-400">Cost warning:</strong>{' '}
-        Each trading day fires the selected sleeve's full agent panel on every ticker.
+        Each trading day fires the selected portfolio's full agent panel on every ticker.
         A 2-week × 1-ticker run is roughly 10 days × 3 agents = ~30 LLM calls. Scale up
         cautiously.
       </div>
@@ -206,7 +216,7 @@ export function SleevesBacktestPanel() {
             className="bg-background border border-border rounded px-2 py-1 w-full font-mono"
           />
         </Field>
-        <Field label="Sleeve" hint="Which sleeve's agent panel to run.">
+        <Field label="Portfolio" hint="Which portfolio's agent panel to run.">
           <select
             value={sleeve}
             onChange={(e) => setSleeve(e.target.value)}
@@ -219,7 +229,7 @@ export function SleevesBacktestPanel() {
             ))}
           </select>
         </Field>
-        <Field label="Tickers" hint="Comma-separated. Leave blank = whole sleeve. Use 1–3 to keep LLM cost low.">
+        <Field label="Tickers" hint="Comma-separated. Leave blank = whole portfolio. Use 1–3 to keep LLM cost low.">
           <input
             value={tickerInput}
             onChange={(e) => setTickerInput(e.target.value)}
@@ -384,7 +394,7 @@ export function SleevesBacktestPanel() {
               <thead className="sticky top-0 bg-background border-b border-border">
                 <tr className="text-muted-foreground">
                   <th className="text-left px-2 py-1">Ticker</th>
-                  <th className="text-left px-2 py-1">Sleeve</th>
+                  <th className="text-left px-2 py-1">Portfolio</th>
                   <th className="text-left px-2 py-1">Best signal</th>
                   <th className="text-left px-2 py-1">Open</th>
                   <th className="text-left px-2 py-1">Close</th>

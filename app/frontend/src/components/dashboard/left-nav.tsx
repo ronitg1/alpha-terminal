@@ -14,7 +14,8 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { sleevesApi } from '@/services/sleeves-api';
 import { DashboardSection, Quote, WatchlistEntry } from '@/types/sleeves';
-import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -258,7 +259,14 @@ function WatchlistEditor({
 
 export function LeftNav() {
   const { section, setSection, selectedTicker, setSelectedTicker, chatOpen, toggleChat } = useDashboard();
-  const { config, watchlists, updateNamedWatchlist, createNamedWatchlist } = useSleevesContext();
+  const { config, watchlists, updateNamedWatchlist, createNamedWatchlist, deleteNamedWatchlist } = useSleevesContext();
+
+  const confirmDeleteWatchlist = (name: string) => {
+    toast(`Delete watchlist "${name}"?`, {
+      action: { label: 'Delete', onClick: () => void deleteNamedWatchlist(name) },
+      cancel: { label: 'Cancel', onClick: () => {} },
+    });
+  };
 
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [watchlistsOpen, setWatchlistsOpen] = useState(true);
@@ -421,9 +429,11 @@ export function LeftNav() {
                     onChange={(e) => setNewWatchlistName(e.target.value)}
                     onKeyDown={async (e) => {
                       if (e.key === 'Enter' && newWatchlistName.trim()) {
-                        await createNamedWatchlist(newWatchlistName.trim());
-                        setNewWatchlistName('');
-                        setCreatingWatchlist(false);
+                        try {
+                          await createNamedWatchlist(newWatchlistName.trim());
+                          setNewWatchlistName('');
+                          setCreatingWatchlist(false);
+                        } catch { /* context toasts; keep the form open to retry */ }
                       } else if (e.key === 'Escape') {
                         setCreatingWatchlist(false);
                         setNewWatchlistName('');
@@ -436,9 +446,11 @@ export function LeftNav() {
                     type="button"
                     onClick={async () => {
                       if (newWatchlistName.trim()) {
-                        await createNamedWatchlist(newWatchlistName.trim());
-                        setNewWatchlistName('');
-                        setCreatingWatchlist(false);
+                        try {
+                          await createNamedWatchlist(newWatchlistName.trim());
+                          setNewWatchlistName('');
+                          setCreatingWatchlist(false);
+                        } catch { /* context toasts; keep the form open to retry */ }
                       }
                     }}
                     className="text-muted-foreground hover:text-primary transition-colors"
@@ -487,14 +499,24 @@ export function LeftNav() {
                         <span className="text-[10px] opacity-60">{wl.tickers.length}</span>
                       </button>
                       {!isEditing && (
-                        <button
-                          type="button"
-                          onClick={() => { setEditingWatchlist(wl.name); setExpandedWatchlists((prev) => new Set([...prev, wl.name])); }}
-                          className="mr-2 p-0.5 opacity-60 group-hover/wl:opacity-100 text-muted-foreground hover:text-primary transition-all"
-                          title="Add / edit tickers"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingWatchlist(wl.name); setExpandedWatchlists((prev) => new Set([...prev, wl.name])); }}
+                            className="p-0.5 opacity-60 group-hover/wl:opacity-100 text-muted-foreground hover:text-primary transition-all"
+                            title="Add / edit tickers"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => confirmDeleteWatchlist(wl.name)}
+                            className="mr-2 p-0.5 opacity-60 group-hover/wl:opacity-100 text-muted-foreground hover:text-rose-500 transition-all"
+                            title="Delete watchlist"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </>
                       )}
                     </div>
 
@@ -532,7 +554,7 @@ export function LeftNav() {
         {/* ── My Sleeves ── */}
         <div className="pt-2 border-t border-border/50 mt-2">
           <SectionHeader
-            label="My Sleeves"
+            label="My Portfolios"
             open={sleevesOpen}
             onToggle={() => setSleevesOpen((o) => !o)}
             count={config?.sleeves.length}
@@ -540,7 +562,7 @@ export function LeftNav() {
           {sleevesOpen && (
             <div>
               {(!config || config.sleeves.length === 0) && (
-                <p className="px-4 py-2 text-[11px] text-muted-foreground italic">No sleeves configured.</p>
+                <p className="px-4 py-2 text-[11px] text-muted-foreground italic">No portfolios configured.</p>
               )}
               {config?.sleeves.map((sleeve) => {
                 const expanded = expandedSleeves.has(sleeve.name);

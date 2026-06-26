@@ -26,7 +26,7 @@ export function BacktestTabContent() {
           Two engines.{' '}
           <strong>Strategy</strong> backtests any of the 10 technical screener strategies
           via Black-Scholes pricing — fast, deterministic, free per run.{' '}
-          <strong>Sleeves</strong> backtests the real LLM agent panel making
+          <strong>Portfolio agents</strong> backtests the real LLM agent panel making
           long/short equity decisions per trading day — slower and costs LLM credits.
         </p>
       </header>
@@ -36,7 +36,7 @@ export function BacktestTabContent() {
           Strategy
         </TabBtn>
         <TabBtn active={sub === 'sleeves'} onClick={() => setSub('sleeves')}>
-          Sleeves (LLM agents)
+          Portfolio agents (LLM)
         </TabBtn>
       </div>
 

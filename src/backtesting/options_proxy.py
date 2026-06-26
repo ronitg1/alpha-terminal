@@ -21,6 +21,7 @@ often have stale/illiquid quotes that BSM still prices sensibly.
 from __future__ import annotations
 
 import math
+import statistics
 from typing import Literal
 
 # Matches BacktestService._update_performance_metrics — keep in sync.
@@ -72,6 +73,65 @@ def bsm_price(
     if option_type == "call":
         return spot * _norm_cdf(d1) - strike * discount * _norm_cdf(d2)
     return strike * discount * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
+
+
+def bsm_delta(
+    *,
+    spot: float,
+    strike: float,
+    time_to_expiry_years: float,
+    sigma: float,
+    option_type: Literal["call", "put"],
+    risk_free: float = RISK_FREE_RATE,
+) -> float:
+    """Black-Scholes delta. Calls return [0, 1]; puts return [-1, 0].
+
+    Degenerate inputs collapse to the intrinsic-moneyness delta: an in-the-
+    money option has |delta| 1, out-of-the-money 0, at-the-money 0.5.
+    """
+    if time_to_expiry_years <= 0 or sigma <= 0:
+        itm = (spot > strike) if option_type == "call" else (spot < strike)
+        atm = abs(spot - strike) < 1e-9
+        mag = 0.5 if atm else (1.0 if itm else 0.0)
+        return mag if option_type == "call" else -mag
+    sqrt_t = math.sqrt(time_to_expiry_years)
+    d1 = (math.log(spot / strike) + (risk_free + 0.5 * sigma * sigma) * time_to_expiry_years) / (
+        sigma * sqrt_t
+    )
+    nd1 = _norm_cdf(d1)
+    return nd1 if option_type == "call" else nd1 - 1.0
+
+
+def strike_for_delta(
+    *,
+    spot: float,
+    target_delta: float,
+    time_to_expiry_years: float,
+    sigma: float,
+    option_type: Literal["call", "put"],
+    risk_free: float = RISK_FREE_RATE,
+) -> float:
+    """Strike whose Black-Scholes delta equals ``target_delta`` (magnitude).
+
+    ``target_delta`` is given as a positive magnitude in (0, 1) — e.g. 0.4
+    means "the 0.40-delta call" or "the 0.40-delta put". Inverts the delta
+    formula via the standard-normal quantile (probit). Falls back to the
+    at-the-money strike (= spot) when inputs are degenerate.
+
+    Lower magnitudes sit further out-of-the-money: a 0.40-delta call has a
+    strike above spot, a 0.40-delta put below spot.
+    """
+    mag = min(0.99, max(0.01, abs(target_delta)))
+    if time_to_expiry_years <= 0 or sigma <= 0 or spot <= 0:
+        return spot
+    # Call delta = N(d1); put delta = N(d1) - 1 = -mag  ->  N(d1) = 1 - mag.
+    nd1_target = mag if option_type == "call" else (1.0 - mag)
+    d1 = statistics.NormalDist().inv_cdf(nd1_target)
+    sqrt_t = math.sqrt(time_to_expiry_years)
+    # K = S * exp((r + 0.5 sigma^2) T - d1 * sigma * sqrt_t)
+    return spot * math.exp(
+        (risk_free + 0.5 * sigma * sigma) * time_to_expiry_years - d1 * sigma * sqrt_t
+    )
 
 
 def realized_vol(closes: list[float], *, window: int = 30) -> float | None:

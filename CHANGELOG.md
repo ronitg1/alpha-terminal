@@ -4,6 +4,80 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-06-26
+
+### Changed
+- **"Sleeve" is now "Portfolio" everywhere it's visible.** Renamed all
+  user-facing labels (sidebar "My Portfolios", the Market-tab manager, the
+  Pattern Scanner's portfolio picker, Portfolio Pulse "By Portfolio" /
+  per-portfolio Run-agents and thesis controls, chat suggestions, and the
+  Backtest + Options Screener tabs — labels, the "Portfolio agents (LLM)"
+  backtest engine name, and the per-portfolio attribution/trade columns) and the
+  LLM thesis / news / transcript prompts so generated text says "portfolio"
+  too. Internal code, API routes (`/sleeves/*`), and config keys are
+  unchanged. (Existing saved theses keep their old wording until re-run.)
+- **Market News "Your book" feed is now your portfolio holdings only.**
+  Watchlist tickers are excluded — they're exploratory, not owned — so the
+  book column stays focused on what you actually hold.
+- Made two `test_portfolio_config` tests config-agnostic so they don't break
+  when you reorganize your portfolios (they no longer hard-code sleeve names
+  or assume allocations are set).
+
+### Fixed
+- **Options Screener no longer errors with "Failed to load screener" after
+  you rename your portfolios.** The Screener and both Backtest panels
+  defaulted to a hardcoded portfolio name (`mega_tech`); once that portfolio
+  was renamed/removed, the first load fired against a dead name and 400'd.
+  They now seed to your first actual portfolio as soon as config loads, so
+  there's nothing hardcoded to go stale.
+- **Large Pattern Scanner runs ("all watchlists") no longer fail to fetch.**
+  Scanning a big universe (e.g. ~318 names across every watchlist) routinely
+  ran past the frontend's 120s fetch timeout and aborted with "failed to
+  fetch." Raised the scan timeout to 5 minutes, widened the detector thread
+  pool and the data-fetch concurrency, and added a heads-up toast for big
+  scans plus a clear timeout message ("try fewer tickers") instead of a raw
+  fetch error. A 139-name scan now completes in ~90s; 300+ names finish
+  within the new budget.
+- **Watchlists can now be deleted from the left sidebar.** The sidebar
+  watchlist headers only had an edit (pencil) button — delete existed only
+  on the Market-tab manager, so there was no obvious way to remove a
+  watchlist where they're actually listed. Added a trash button (with a
+  confirm toast) next to each. Also wrapped the sidebar's create handlers so
+  a failed create (e.g. backend unreachable) surfaces the context's error
+  toast and leaves the form open to retry, instead of an unhandled rejection.
+
+### Added
+- **Pattern Scanner backtest.** New "Backtest" tab inside the Pattern Scanner
+  that replays the detectors over history: every time a pattern fires, it
+  simulates buying an option (target delta + DTE) and selling it a set number
+  of candles later, then reports win rate, average return, expectancy, P&L,
+  and a per-pattern breakdown. **Optimize** mode sweeps delta x DTE x hold and
+  ranks every combination so you can see which option to buy and how long to
+  hold. Prices off **real historical option fills** by default (the data plan
+  exposes intraday option aggregates at 1h/15m, confirmed live); BSM is a
+  fast fallback, flagged because it diverges from real premiums (~24% median,
+  worse for OTM / high-IV names). Universe is any portfolio or watchlist, or a
+  custom ticker list. New: `src/backtesting/pattern_options.py` engine +
+  `strike_for_delta`/`bsm_delta` in `options_proxy.py`, the SSE route
+  `POST /patterns/backtest`, and the `PatternBacktestPanel` UI. 11 new unit
+  tests (206 total).
+- **Options Screener and Options-Strategy Backtest can now run off a
+  watchlist, not just a portfolio.** Both tabs gained a combined
+  "Portfolio / Watchlist" picker (portfolios and watchlists grouped in one
+  dropdown); pick either as the ticker universe. The backend resolves the
+  chosen source to its tickers (unknown/empty lists return a clear error).
+  The optional ticker-subset box still narrows whichever list you pick. The
+  LLM-agent ("Portfolio agents") backtest stays portfolio-only — it needs a
+  portfolio's agent panel, which a watchlist doesn't have.
+- **Weekly timeframe in the Pattern Scanner.** A fourth bar size alongside
+  daily / 1h / 15m, for long-base position setups that play out over months.
+  Weekly bars are date-labeled (no intraday RTH filtering), lookbacks run up
+  to 5 years (default 3y), the historical win threshold scales up to 6% over
+  the 20-bar (~5-month) outcome window, and trade plans pick ~90-DTE
+  contracts with the theta hold widened to match. Also fixes a latent bug
+  where any non-daily timespan was treated as intraday — weekly now bypasses
+  the RTH filter and HH:MM labeling correctly.
+
 ## [1.2.0] - 2026-06-12
 
 Risk-managed trade plans on the Pattern Scanner's options plays, a freshness-
