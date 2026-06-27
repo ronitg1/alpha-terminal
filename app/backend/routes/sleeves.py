@@ -3289,7 +3289,11 @@ async def rename_watchlist(name: str, body: RenamePayload) -> dict[str, Any]:
     new_name = body.new_name.strip()
     if not new_name:
         raise HTTPException(status_code=400, detail="new_name is required")
-    ok = watchlists_service.rename(name, new_name)
+    try:
+        ok = watchlists_service.rename(name, new_name)
+    except ValueError as exc:
+        # DB backend enforces name uniqueness; a clash is a conflict, not a 500.
+        raise HTTPException(status_code=409, detail=str(exc))
     if not ok:
         raise HTTPException(status_code=404, detail=f"Watchlist '{name}' not found")
     return {"name": new_name}

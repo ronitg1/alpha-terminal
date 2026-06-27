@@ -4,6 +4,33 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-06-27
+
+### Added (Phase 2 database cutover — dormant; local behavior unchanged)
+- **`STORAGE_BACKEND` switch.** A new environment variable selects where live
+  application state is stored: `file` (the default — today's local JSON/config
+  files, so every existing install is byte-for-byte unchanged) or `db` (the
+  multi-tenant Postgres repositories built in 1.4.0). The cloud deploy will set
+  `STORAGE_BACKEND=db`; locally it stays `file`. Because it defaults to `file`,
+  this code is inert until the flag is flipped.
+- **Watchlists store cut over.** `watchlists_service` now dispatches to
+  `WatchlistRepository` when `STORAGE_BACKEND=db`, returning the identical
+  `{name, tickers}` shapes — so routes and the frontend are unaffected by the
+  backend choice. New `app/backend/services/_storage.py` houses the shared
+  dispatch seam (backend flag, short-lived DB session, and an
+  `IntegrityError → ValueError` translator for clean conflict handling).
+
+### Fixed
+- **Watchlist rename now returns 409, not 500, on a name clash** (DB backend).
+  The repository enforces per-user name uniqueness; the rename route now catches
+  that and returns a proper conflict status.
+
+### Tests
+- New `tests/test_storage_cutover.py` exercises each cut-over service under
+  **both** backends and asserts they are shape-identical, plus the rename
+  conflict path (service + route) and the integrity-error translation. Suite at
+  228 passing.
+
 ## [1.4.1] — 2026-06-27
 
 ### Added

@@ -4,6 +4,12 @@ Runtime user state lives under ``app/data/`` (same dir as
 ``portfolio_settings.json``) — consolidated from the old ``app/backend/data/``
 location. ``_LEGACY_STORE_PATH`` is read once as a fallback so existing
 installs keep their watchlists; the next write lands in the new location.
+
+Storage backend: when ``STORAGE_BACKEND=db`` each public function dispatches to
+:class:`WatchlistRepository` (Postgres) instead of the JSON file. The dict
+shapes returned are identical either way, so routes and the frontend are
+unaffected by the backend choice. Default is ``file`` — local behavior is
+unchanged until the flag is flipped. See :mod:`app.backend.services._storage`.
 """
 from __future__ import annotations
 
@@ -13,6 +19,14 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+
+from app.backend.repositories.watchlist_repository import WatchlistRepository
+from app.backend.services._storage import (
+    DEFAULT_USER_ID,
+    integrity_as_value_error,
+    session_scope,
+    use_db,
+)
 
 # app/data/watchlists.json  (parents[2] == the app/ dir)
 _STORE_PATH = Path(__file__).resolve().parents[2] / "data" / "watchlists.json"
@@ -50,12 +64,18 @@ def _save(data: dict[str, Any]) -> None:
 
 def get_all() -> list[dict]:
     """Return all watchlists [{name, tickers}]."""
+    if use_db():
+        with session_scope() as db:
+            return WatchlistRepository(db, DEFAULT_USER_ID).get_all()
     with _lock:
         return _load()["watchlists"]
 
 
 def get_one(name: str) -> dict | None:
     """Return the watchlist with the given name, or None if not found."""
+    if use_db():
+        with session_scope() as db:
+            return WatchlistRepository(db, DEFAULT_USER_ID).get_one(name)
     with _lock:
         for wl in _load()["watchlists"]:
             if wl["name"] == name:
@@ -65,6 +85,9 @@ def get_one(name: str) -> dict | None:
 
 def upsert(name: str, tickers: list[dict]) -> dict:
     """Create or replace the watchlist with this name."""
+    if use_db():
+        with session_scope() as db, integrity_as_value_error():
+            return WatchlistRepository(db, DEFAULT_USER_ID).upsert(name, tickers)
     with _lock:
         data = _load()
         for wl in data["watchlists"]:
@@ -80,7 +103,16 @@ def upsert(name: str, tickers: list[dict]) -> dict:
 
 
 def rename(old_name: str, new_name: str) -> bool:
-    """Rename a watchlist. Returns True if found and renamed, False otherwise."""
+    """Rename a watchlist. Returns True if found and renamed, False otherwise.
+
+    Under the DB backend, raises ValueError if ``new_name`` already exists (the
+    repo enforces per-user name uniqueness). The route is responsible for
+    catching that and returning 409. The file backend never enforced uniqueness
+    and so never raises here — a known, accepted divergence until the file
+    backend is retired."""
+    if use_db():
+        with session_scope() as db, integrity_as_value_error():
+            return WatchlistRepository(db, DEFAULT_USER_ID).rename(old_name, new_name)
     with _lock:
         data = _load()
         for wl in data["watchlists"]:
@@ -93,6 +125,9 @@ def rename(old_name: str, new_name: str) -> bool:
 
 def delete(name: str) -> bool:
     """Delete a watchlist by name. Returns True if found and deleted, False otherwise."""
+    if use_db():
+        with session_scope() as db:
+            return WatchlistRepository(db, DEFAULT_USER_ID).delete(name)
     with _lock:
         data = _load()
         before = len(data["watchlists"])
