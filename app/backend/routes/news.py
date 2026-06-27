@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.backend.services import finnhub_news
-from src.config.portfolio_config import PORTFOLIO_SLEEVES
+from app.backend.services import sleeve_config_service
 from src.tools.finnhub import is_finnhub_configured
 
 logger = logging.getLogger(__name__)
@@ -24,9 +24,13 @@ router = APIRouter(prefix="/news")
 
 
 def _sleeve_for_ticker(ticker: str) -> str | None:
-    """Which sleeve (if any) holds this ticker — used for summary relevance."""
+    """Which sleeve (if any) holds this ticker — used for summary relevance.
+
+    Reads through the backend-aware sleeve config so it honors STORAGE_BACKEND
+    (per-user sleeves from Postgres under the db backend, the module global
+    under the file backend)."""
     t = ticker.upper()
-    for name, sleeve in PORTFOLIO_SLEEVES.items():
+    for name, sleeve in sleeve_config_service.read_sleeves().items():
         if t in {x.upper() for x in sleeve.get("tickers", [])}:
             return name
     return None

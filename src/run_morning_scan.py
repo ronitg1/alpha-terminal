@@ -15,6 +15,14 @@ Usage::
 
 This script intentionally does **not** invoke the LangGraph portfolio
 manager — we only want signals here, not sized positions.
+
+Multi-tenancy note: the scan engine takes the portfolio config as a
+**parameter** — :func:`run_scan` accepts a ``sleeves`` dict so a caller can
+inject a per-user portfolio (e.g. the hosted backend passing a user's sleeves
+read from Postgres) instead of the module-global ``PORTFOLIO_SLEEVES``. The CLI
+``main`` resolves the global as its default, so local single-user behavior is
+unchanged; ``PORTFOLIO_SLEEVES`` is read only there (and for the ``--sleeve``
+choices), never baked into the run logic.
 """
 from __future__ import annotations
 
@@ -392,6 +400,57 @@ def _apply_ticker_filter(
     return out
 
 
+def run_scan(
+    sleeves: dict[str, Sleeve],
+    end_date: str,
+    *,
+    sleeve_filter: list[str] | None = None,
+    ticker_filter: list[str] | None = None,
+    watchlist_tickers: list[str] | None = None,
+    show_reasoning: bool = False,
+) -> list[TickerRow]:
+    """Run the morning scan over a given portfolio config and return ranked rows.
+
+    The ``sleeves`` config is a **parameter**, not the module global — pass a
+    per-user portfolio (e.g. the hosted backend's DB-read sleeves) here. The CLI
+    ``main`` passes :data:`PORTFOLIO_SLEEVES`.
+
+    - ``sleeve_filter``: restrict to these sleeve names (None = all).
+    - ``watchlist_tickers``: override the ``opportunistic`` sleeve's tickers with
+      this list (applied before the ticker filter, mirroring the CLI).
+    - ``ticker_filter``: intersect every selected sleeve's tickers with this list.
+    """
+    selected: dict[str, Sleeve] = {
+        name: sleeve
+        for name, sleeve in sleeves.items()
+        if (sleeve_filter is None) or (name in sleeve_filter)
+    }
+
+    if watchlist_tickers:
+        # Override the opportunistic sleeve tickers with the watchlist. Fall back
+        # to the config's opportunistic sleeve if it was filtered out above.
+        opp = selected.get("opportunistic") or sleeves.get("opportunistic")
+        if opp is not None:
+            opp = dict(opp)
+            opp["tickers"] = watchlist_tickers
+            selected["opportunistic"] = opp  # type: ignore[assignment]
+        else:
+            logger.warning(
+                "watchlist tickers provided but no 'opportunistic' sleeve in config."
+            )
+
+    # Ticker filter applied AFTER the watchlist override so users can intersect both.
+    if ticker_filter:
+        selected = _apply_ticker_filter(selected, ticker_filter)
+
+    all_rows: list[TickerRow] = []
+    for sleeve_name, sleeve in selected.items():
+        all_rows.extend(
+            run_sleeve(sleeve_name, sleeve, end_date, show_reasoning=show_reasoning)
+        )
+    return all_rows
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(
@@ -400,31 +459,26 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
-    selected: dict[str, Sleeve] = {
-        name: sleeve
-        for name, sleeve in PORTFOLIO_SLEEVES.items()
-        if (args.sleeve is None) or (name in args.sleeve)
-    }
+    watchlist_tickers: list[str] | None = None
     if args.watchlist:
         watchlist_tickers = get_watchlist()
-        if watchlist_tickers:
-            # Override the opportunistic sleeve tickers with the watchlist.
-            opp = selected.get("opportunistic") or PORTFOLIO_SLEEVES["opportunistic"]
-            opp = dict(opp)
-            opp["tickers"] = watchlist_tickers
-            selected["opportunistic"] = opp  # type: ignore[assignment]
-        else:
+        if not watchlist_tickers:
             logger.warning("--watchlist passed but src/config/watchlist.py is empty.")
 
-    # --tickers filter (applied AFTER --watchlist so users can intersect both).
-    if args.tickers:
-        ticker_list = [t.strip() for t in args.tickers.split(",") if t.strip()]
-        selected = _apply_ticker_filter(selected, ticker_list)
+    ticker_list = (
+        [t.strip() for t in args.tickers.split(",") if t.strip()] if args.tickers else None
+    )
 
-    all_rows: list[TickerRow] = []
-    for sleeve_name, sleeve in selected.items():
-        rows = run_sleeve(sleeve_name, sleeve, args.end_date, show_reasoning=args.show_reasoning)
-        all_rows.extend(rows)
+    # The CLI is local single-user: inject the module-global config as the
+    # default. A multi-tenant caller passes its own sleeves to run_scan().
+    all_rows = run_scan(
+        PORTFOLIO_SLEEVES,
+        args.end_date,
+        sleeve_filter=args.sleeve,
+        ticker_filter=ticker_list,
+        watchlist_tickers=watchlist_tickers,
+        show_reasoning=args.show_reasoning,
+    )
 
     # Print the table + summary, write CSV.
     print()

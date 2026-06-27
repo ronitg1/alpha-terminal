@@ -4,6 +4,32 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-06-27
+
+### Changed (Phase 2 database cutover — COMPLETE; dormant, local behavior unchanged)
+- **Scan engine takes the portfolio config as a parameter.** New
+  `run_scan(sleeves, end_date, ...)` in `src/run_morning_scan.py` runs the scan
+  over a portfolio config passed in by the caller, instead of reaching for the
+  module-global `PORTFOLIO_SLEEVES`. The CLI still passes the local global as its
+  default, so `poetry run python -m src.run_morning_scan` is unchanged; a hosted,
+  multi-user caller can now inject a specific user's sleeves (read from Postgres)
+  — the last structural blocker to true per-user scans.
+- **News sleeve-relevance lookup is now backend-aware** (`routes/news.py`) — it
+  reads sleeves through the storage-backend-aware config service, so it reflects
+  the active portfolio (Postgres under `db`, the local config under `file`).
+
+This release **completes the Phase 2 storage cutover**: every file-backed store
+(watchlists, portfolios, settings, theses, P&L, scans, the opportunistic list)
+and the scan engine now honor `STORAGE_BACKEND`. The flag still defaults to
+`file`, so the local single-user app is byte-for-byte unchanged; the cloud
+deploy sets `STORAGE_BACKEND=db`. Remaining multi-user work (real accounts,
+per-user isolation, background jobs) is Phases 3–4.
+
+### Tests
+- `tests/test_morning_scan.py` gains `run_scan` config-injection coverage
+  (selection, ticker filter, watchlist override, the `--watchlist`/`--sleeve`
+  re-injection edge). Full suite at 257 passing.
+
 ## [1.4.5] — 2026-06-27
 
 ### Added (Phase 2 database cutover — dormant; local behavior unchanged)
