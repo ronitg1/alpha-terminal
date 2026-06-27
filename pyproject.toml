@@ -3,7 +3,7 @@
 # brand is "Alpha Terminal" (see README.md, LICENSE).
 [tool.poetry]
 name = "ai-hedge-fund"
-version = "1.5.2"
+version = "1.6.0"
 description = "Alpha Terminal — retail-investor research terminal. AI agent panels score your book, a realistic options backtester checks your strategies, and a market-news + earnings-call desk keeps you current."
 authors = ["Ronit Ganguly <ganguly.ronit@gmail.com>"]
 readme = "README.md"
@@ -46,6 +46,8 @@ pypdf = "^6.12.2"
 beautifulsoup4 = "^4.14.3"
 python-multipart = "^0.0.30"
 psycopg2-binary = "^2.9"
+pyjwt = {version = "^2.9.0", extras = ["crypto"]}
+cryptography = "^43.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

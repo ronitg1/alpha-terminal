@@ -4,6 +4,33 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-06-27
+
+### Added (Phase 3 — auth, step 1 of 7; DORMANT behind a flag, nothing changes until flipped)
+- **Backend authentication seam behind `AUTH_ENABLED` (default off).** New
+  `app/backend/auth.py` adds a FastAPI dependency, `get_current_user_id`, that
+  resolves the user for a request. With the flag **off** (every install today,
+  local and the current cloud deploy) it yields the existing `default` user — no
+  behavior change, safe to ship. With the flag **on** it requires a valid Clerk
+  session JWT in the `Authorization: Bearer …` header, verifies the RS256
+  signature against Clerk's published keys (JWKS), checks expiry (with a small
+  clock-skew leeway), optionally pins the issuer (`CLERK_ISSUER`), and returns
+  the Clerk user id. Missing/invalid/expired tokens return **401**; a server
+  with auth on but no Clerk keys configured returns **500** (a loud deploy-time
+  misconfiguration, not a silent bad-token). This mirrors the Phase 2
+  `STORAGE_BACKEND` flag discipline: build dormant, push safely, flip in cloud.
+- **`GET /auth/me`** — returns the resolved `user_id` and whether auth is
+  enforced. The first consumer of the dependency and the frontend's future
+  token-check endpoint.
+- **Config (env):** `AUTH_ENABLED`, `CLERK_JWKS_URL` (or derived from
+  `CLERK_ISSUER` as `<issuer>/.well-known/jwks.json`), `CLERK_ISSUER`.
+- **Dependencies:** added `PyJWT[crypto]` and `cryptography` (the latter also
+  for Phase 3 step 3's at-rest key encryption).
+- **Tests:** 19 new auth tests covering both flag states and the real RS256
+  verification path (generated keypair, in-memory JWKS, `kid` matching, expiry,
+  leeway, wrong-signature, wrong-issuer, missing-subject, JWKS caching). Suite
+  is **276 passing**.
+
 ## [1.5.2] — 2026-06-27
 
 ### Fixed
