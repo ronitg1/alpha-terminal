@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backend.repositories.pnl_repository import PnlRepository
-from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
+from app.backend.services._storage import current_user_id, session_scope, use_db
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ def instrument_key(position: dict[str, Any]) -> str:
 def get_all() -> list[dict[str, Any]]:
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).get_all()
+            return PnlRepository(db, current_user_id()).get_all()
     with _lock:
         return _load()
 
@@ -201,7 +201,7 @@ def create(fields: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("qty must be positive (use side='short' for shorts)")
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).insert(record)
+            return PnlRepository(db, current_user_id()).insert(record)
     with _lock:
         positions = _load()
         positions.append(record)
@@ -221,7 +221,7 @@ def update(position_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
     patch["updated_at"] = _now()
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).update(position_id, patch)
+            return PnlRepository(db, current_user_id()).update(position_id, patch)
     with _lock:
         positions = _load()
         for p in positions:
@@ -247,7 +247,7 @@ def close(position_id: str, exit_price: float, exit_date: str | None = None) -> 
 def delete(position_id: str) -> bool:
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).delete(position_id)
+            return PnlRepository(db, current_user_id()).delete(position_id)
     with _lock:
         positions = _load()
         kept = [p for p in positions if p["id"] != position_id]
@@ -266,7 +266,7 @@ def existing_import_keys() -> set[str]:
     """
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).existing_import_keys()
+            return PnlRepository(db, current_user_id()).existing_import_keys()
     with _lock:
         keys: set[str] = set()
         for p in _load():
@@ -281,7 +281,7 @@ def bulk_insert(records: list[dict[str, Any]]) -> int:
     """Insert pre-validated records (used by the Fidelity importer)."""
     if use_db():
         with session_scope() as db:
-            return PnlRepository(db, DEFAULT_USER_ID).bulk_insert(records)
+            return PnlRepository(db, current_user_id()).bulk_insert(records)
     with _lock:
         positions = _load()
         positions.extend(records)

@@ -1,12 +1,45 @@
+from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 from rich.style import Style
 from rich.text import Text
-from typing import Dict, Optional, Callable, List
+from typing import Dict, Optional, Callable, List, Tuple
 
 console = Console()
+
+# Per-scan dispatch scope (Phase 3 multi-tenant). ``progress`` is a process-wide
+# singleton, so when two users run scans concurrently each registers its own SSE
+# handler on the same instance. Without scoping, ``update_status`` would fan every
+# agent event out to *both* handlers — one user's live scan activity (agent +
+# ticker + status) leaking into the other's stream. To prevent that, an SSE route
+# sets a unique scope for its scan (via :func:`set_scope`) and registers its
+# handler under that scope; ``update_status`` then only calls handlers whose scope
+# equals the *currently active* one. The scope rides into the scan worker thread
+# because ``asyncio.create_task`` / ``asyncio.to_thread`` copy the context.
+#
+# Default scope is ``None`` — the CLI and any non-scoped caller register under
+# ``None`` and emit under active scope ``None``, so they match each other and
+# behave exactly as before (this is dormant for the local/CLI path).
+_current_scope: ContextVar[Optional[str]] = ContextVar("progress_scope", default=None)
+
+
+def set_scope(scope: Optional[str]) -> Token:
+    """Bind the active progress dispatch scope for this context. Returns a token
+    for :func:`reset_scope`. Call before launching the scan task so the scope is
+    copied into the worker thread."""
+    return _current_scope.set(scope)
+
+
+def reset_scope(token: Token) -> None:
+    """Undo a :func:`set_scope`."""
+    _current_scope.reset(token)
+
+
+def current_scope() -> Optional[str]:
+    """The active dispatch scope for the current context."""
+    return _current_scope.get()
 
 
 class AgentProgress:
@@ -17,17 +50,22 @@ class AgentProgress:
         self.table = Table(show_header=False, box=None, padding=(0, 1))
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
-        self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
+        # Each entry is (scope, handler). ``scope`` is the dispatch scope the
+        # handler was registered under (None for CLI/non-scoped callers).
+        self.update_handlers: List[Tuple[Optional[str], Callable[..., None]]] = []
 
-    def register_handler(self, handler: Callable[[str, Optional[str], str], None]):
-        """Register a handler to be called when agent status updates."""
-        self.update_handlers.append(handler)
+    def register_handler(self, handler: Callable[..., None], scope: Optional[str] = None):
+        """Register a handler to be called when agent status updates.
+
+        ``scope`` confines the handler to events emitted under the same scope (see
+        :func:`set_scope`); the default ``None`` preserves the legacy
+        broadcast-to-CLI behavior."""
+        self.update_handlers.append((scope, handler))
         return handler  # Return handler to support use as decorator
 
-    def unregister_handler(self, handler: Callable[[str, Optional[str], str], None]):
-        """Unregister a previously registered handler."""
-        if handler in self.update_handlers:
-            self.update_handlers.remove(handler)
+    def unregister_handler(self, handler: Callable[..., None]):
+        """Unregister a previously registered handler (matched by identity)."""
+        self.update_handlers = [(s, h) for (s, h) in self.update_handlers if h is not handler]
 
     def start(self):
         """Start the progress display."""
@@ -57,9 +95,12 @@ class AgentProgress:
         timestamp = datetime.now(timezone.utc).isoformat()
         self.agent_status[agent_name]["timestamp"] = timestamp
 
-        # Notify all registered handlers
-        for handler in self.update_handlers:
-            handler(agent_name, ticker, status, analysis, timestamp)
+        # Notify handlers registered under the currently active scope only, so a
+        # concurrent scan for another user never receives this scan's events.
+        active = _current_scope.get()
+        for scope, handler in list(self.update_handlers):
+            if scope == active:
+                handler(agent_name, ticker, status, analysis, timestamp)
 
         self._refresh_display()
 

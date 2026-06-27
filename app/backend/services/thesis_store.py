@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backend.repositories.thesis_repository import ThesisRepository
-from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
+from app.backend.services._storage import current_user_id, session_scope, use_db
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def save(key: str, thesis: dict[str, Any]) -> None:
     record = {**thesis, "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     if use_db():
         with session_scope() as db:
-            ThesisRepository(db, DEFAULT_USER_ID).upsert(key, record)
+            ThesisRepository(db, current_user_id()).upsert(key, record)
         return
     with _lock:
         data = _load()
@@ -85,6 +85,6 @@ def get_all() -> dict[str, Any]:
     """Every saved thesis, keyed by scope."""
     if use_db():
         with session_scope() as db:
-            return ThesisRepository(db, DEFAULT_USER_ID).get_all()
+            return ThesisRepository(db, current_user_id()).get_all()
     with _lock:
         return _load()

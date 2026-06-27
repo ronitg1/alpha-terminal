@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 from app.backend.repositories.watchlist_repository import WatchlistRepository
 from app.backend.services._storage import (
-    DEFAULT_USER_ID,
+    current_user_id,
     RESERVED_OPPORTUNISTIC_WATCHLIST,
     integrity_as_value_error,
     session_scope,
@@ -86,7 +86,7 @@ def get_all() -> list[dict]:
     if use_db():
         with session_scope() as db:
             return [
-                w for w in WatchlistRepository(db, DEFAULT_USER_ID).get_all()
+                w for w in WatchlistRepository(db, current_user_id()).get_all()
                 if w["name"] != RESERVED_OPPORTUNISTIC_WATCHLIST
             ]
     with _lock:
@@ -99,7 +99,7 @@ def get_one(name: str) -> dict | None:
         if name == RESERVED_OPPORTUNISTIC_WATCHLIST:
             return None  # hidden from the multi-watchlist surface
         with session_scope() as db:
-            return WatchlistRepository(db, DEFAULT_USER_ID).get_one(name)
+            return WatchlistRepository(db, current_user_id()).get_one(name)
     with _lock:
         for wl in _load()["watchlists"]:
             if wl["name"] == name:
@@ -112,7 +112,7 @@ def upsert(name: str, tickers: list[dict]) -> dict:
     _reject_reserved(name)
     if use_db():
         with session_scope() as db, integrity_as_value_error():
-            return WatchlistRepository(db, DEFAULT_USER_ID).upsert(name, tickers)
+            return WatchlistRepository(db, current_user_id()).upsert(name, tickers)
     with _lock:
         data = _load()
         for wl in data["watchlists"]:
@@ -140,7 +140,7 @@ def rename(old_name: str, new_name: str) -> bool:
         if old_name == RESERVED_OPPORTUNISTIC_WATCHLIST:
             return False  # not visible here, so "not found"
         with session_scope() as db, integrity_as_value_error():
-            return WatchlistRepository(db, DEFAULT_USER_ID).rename(old_name, new_name)
+            return WatchlistRepository(db, current_user_id()).rename(old_name, new_name)
     with _lock:
         data = _load()
         for wl in data["watchlists"]:
@@ -157,7 +157,7 @@ def delete(name: str) -> bool:
         if name == RESERVED_OPPORTUNISTIC_WATCHLIST:
             return False  # not deletable through the multi-watchlist surface
         with session_scope() as db:
-            return WatchlistRepository(db, DEFAULT_USER_ID).delete(name)
+            return WatchlistRepository(db, current_user_id()).delete(name)
     with _lock:
         data = _load()
         before = len(data["watchlists"])

@@ -4,6 +4,45 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] — 2026-06-27
+
+### Added (Phase 3 — auth, step 2 of 7; DORMANT behind AUTH_ENABLED)
+- **Per-user data isolation.** The owning user for the current request is now
+  carried in a request-scoped context var (`app/backend/context.py`), set once at
+  the request edge by a new pure-ASGI `UserContextMiddleware`
+  (`app/backend/middleware.py`) and read by every storage service. The 6 file/DB
+  services and the 5 scan-result repository call sites now scope to
+  `current_user_id()` instead of the hardcoded `default` user. With auth **on**,
+  two different Clerk tokens get two completely separate datasets; with auth
+  **off** the context var defaults to the `default` user, so behavior is
+  unchanged. The binding propagates into the SSE `StreamingResponse` body and the
+  morning-scan `asyncio.to_thread` worker (both verified by tests).
+- **Login enforcement at the router level.** The data routers (sleeves, patterns,
+  news, transcripts, pnl) and the legacy data/key routers (hedge-fund, flows,
+  flow-runs, api-keys) now require an authenticated user via a router-level
+  dependency. Dormant when auth is off (resolves the default user, no 401); when
+  on, an unauthenticated request gets a 401 before the handler runs.
+- **Scope-aware scan progress.** `src/utils/progress.py` dispatch is now confined
+  to the active scan's scope, so two users scanning concurrently no longer receive
+  each other's live progress events (a cross-user leak the process-wide singleton
+  previously allowed). The default `None` scope preserves CLI behavior.
+- **An `UNAUTHENTICATED_USER_ID` sentinel** is bound for unauthenticated requests
+  when auth is on, so any not-yet-gated route reads an empty dataset rather than
+  the owner's — defense in depth.
+- **Tests:** +12 (per-user isolation through real CRUD routes under the DB
+  backend, context propagation through SSE + `to_thread`, concurrent-request
+  non-bleed, scan-persistence scoping, and scope-aware progress dispatch). Suite
+  is **288 passing**. Architect-reviewed (no blockers; the progress-singleton
+  leak and router-gating gaps it flagged are fixed here).
+
+### Known follow-ups
+- `flows`, `flow_runs`, and `api_keys` still use the legacy single-tenant tables
+  (no `user_id`); they are gated but globally shared until step 3 user-scopes
+  `api_keys` (and encrypts it).
+- The legacy `hedge_fund` SSE path still uses the unscoped (`None`) progress
+  scope; two concurrent hedge-fund runs could cross-deliver progress (the
+  dashboard's scan path is fixed).
+
 ## [1.6.0] — 2026-06-27
 
 ### Added (Phase 3 — auth, step 1 of 7; DORMANT behind a flag, nothing changes until flipped)

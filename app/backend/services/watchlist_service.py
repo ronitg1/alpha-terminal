@@ -34,7 +34,7 @@ from fastapi import HTTPException
 import src.config.watchlist as watchlist_module  # noqa: F401  (for reload target)
 from app.backend.repositories.watchlist_repository import WatchlistRepository
 from app.backend.services._storage import (
-    DEFAULT_USER_ID,
+    current_user_id,
     RESERVED_OPPORTUNISTIC_WATCHLIST,
     integrity_as_value_error,
     session_scope,
@@ -95,7 +95,7 @@ def read_watchlist_with_comments() -> list[dict[str, str]]:
     """
     if use_db():
         with session_scope() as db:
-            wl = WatchlistRepository(db, DEFAULT_USER_ID).get_one(
+            wl = WatchlistRepository(db, current_user_id()).get_one(
                 RESERVED_OPPORTUNISTIC_WATCHLIST
             )
         return list(wl["tickers"]) if wl else []
@@ -157,7 +157,7 @@ def write_watchlist(entries: Sequence[dict[str, str]]) -> list[dict[str, str]]:
 
     if use_db():
         with session_scope() as db, integrity_as_value_error():
-            WatchlistRepository(db, DEFAULT_USER_ID).upsert(
+            WatchlistRepository(db, current_user_id()).upsert(
                 RESERVED_OPPORTUNISTIC_WATCHLIST, canonical
             )
         return canonical

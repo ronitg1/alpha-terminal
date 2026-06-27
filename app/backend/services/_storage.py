@@ -56,8 +56,14 @@ from sqlalchemy.orm import Session
 from app.backend.database import SessionLocal
 from app.backend.database.app_models import DEFAULT_USER_ID
 
+# Re-exported so the file services can scope a write to the *current request's*
+# user (Phase 3) with one import. Defaults to DEFAULT_USER_ID when nothing set it
+# (auth off, or a non-request call site), so single-tenant behavior is unchanged.
+from app.backend.context import current_user_id
+
 __all__ = [
     "DEFAULT_USER_ID",
+    "current_user_id",
     "RESERVED_OPPORTUNISTIC_WATCHLIST",
     "use_db",
     "storage_backend",

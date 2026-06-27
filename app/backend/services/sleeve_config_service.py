@@ -43,7 +43,7 @@ from fastapi import HTTPException
 import src.config.portfolio_config as portfolio_config_module  # noqa: F401  (reload target)
 from app.backend.repositories.portfolio_repository import PortfolioRepository
 from app.backend.services._storage import (
-    DEFAULT_USER_ID,
+    current_user_id,
     integrity_as_value_error,
     session_scope,
     use_db,
@@ -72,7 +72,7 @@ def read_sleeves() -> dict[str, dict[str, Any]]:
     """
     if use_db():
         with session_scope() as db:
-            return PortfolioRepository(db, DEFAULT_USER_ID).read_sleeves()
+            return PortfolioRepository(db, current_user_id()).read_sleeves()
     raw = portfolio_config_module.PORTFOLIO_SLEEVES
     return {
         name: {
@@ -91,7 +91,7 @@ def get_cash_reserve() -> float:
     the same value). There is no setter route today — this is read-only."""
     if use_db():
         with session_scope() as db:
-            return float(PortfolioRepository(db, DEFAULT_USER_ID).get_cash_reserve())
+            return float(PortfolioRepository(db, current_user_id()).get_cash_reserve())
     return float(portfolio_config_module.CASH_RESERVE_PCT)
 
 
@@ -192,7 +192,7 @@ def replace_all_sleeves(sleeves: dict[str, dict[str, Any]]) -> dict[str, dict[st
     if use_db():
         try:
             with session_scope() as db, integrity_as_value_error():
-                return PortfolioRepository(db, DEFAULT_USER_ID).replace_all_sleeves(validated)
+                return PortfolioRepository(db, current_user_id()).replace_all_sleeves(validated)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
     _persist(validated)
@@ -205,7 +205,7 @@ def create_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
     if use_db():
         try:
             with session_scope() as db, integrity_as_value_error():
-                return PortfolioRepository(db, DEFAULT_USER_ID).create_sleeve(name, validated)
+                return PortfolioRepository(db, current_user_id()).create_sleeve(name, validated)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
     current = read_sleeves()
@@ -225,7 +225,7 @@ def update_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
         # renames need that wrapper.
         try:
             with session_scope() as db:
-                return PortfolioRepository(db, DEFAULT_USER_ID).update_sleeve(name, validated)
+                return PortfolioRepository(db, current_user_id()).update_sleeve(name, validated)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
     current = read_sleeves()
@@ -244,7 +244,7 @@ def delete_sleeve(name: str) -> dict[str, dict[str, Any]]:
         # ValueError -> 400 (refusing to delete the last sleeve).
         try:
             with session_scope() as db:
-                return PortfolioRepository(db, DEFAULT_USER_ID).delete_sleeve(name)
+                return PortfolioRepository(db, current_user_id()).delete_sleeve(name)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
@@ -279,7 +279,7 @@ def rename_sleeve(old_name: str, new_name: str) -> dict[str, dict[str, Any]]:
     if use_db():
         try:
             with session_scope() as db, integrity_as_value_error():
-                return PortfolioRepository(db, DEFAULT_USER_ID).rename_sleeve(old_name, new_name)
+                return PortfolioRepository(db, current_user_id()).rename_sleeve(old_name, new_name)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:

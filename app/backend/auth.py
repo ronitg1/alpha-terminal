@@ -33,13 +33,14 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import jwt
 from fastapi import HTTPException, Request
 from jwt import PyJWKClient
 
-from app.backend.database.app_models import DEFAULT_USER_ID
+from app.backend.context import DEFAULT_USER_ID, UNAUTHENTICATED_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,17 @@ __all__ = [
     "auth_enabled",
     "get_current_user_id",
     "verify_clerk_token",
+    "resolve_auth",
+    "AuthResult",
     "ClerkAuthError",
     "ClerkConfigError",
 ]
+
+# AuthResult.status values.
+_STATUS_DISABLED = "disabled"          # auth off — single-tenant default user
+_STATUS_OK = "ok"                      # valid token, user resolved
+_STATUS_UNAUTHENTICATED = "unauthenticated"  # missing/invalid/expired token -> 401
+_STATUS_MISCONFIGURED = "misconfigured"      # auth on but no Clerk JWKS -> 500
 
 
 class ClerkAuthError(Exception):
@@ -171,17 +180,61 @@ def verify_clerk_token(token: str) -> dict[str, Any]:
     return claims
 
 
-def _extract_bearer(request: Request) -> str | None:
-    """Pull the token out of an ``Authorization: Bearer <token>`` header, or
-    ``None`` when the header is absent or not a well-formed bearer credential."""
-    header = request.headers.get("Authorization") or request.headers.get("authorization")
-    if not header:
+def _extract_bearer(authorization: str | None) -> str | None:
+    """Pull the token out of an ``Authorization: Bearer <token>`` header value, or
+    ``None`` when it is absent or not a well-formed bearer credential."""
+    if not authorization:
         return None
-    parts = header.split(None, 1)
+    parts = authorization.split(None, 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
     token = parts[1].strip()
     return token or None
+
+
+@dataclass(frozen=True)
+class AuthResult:
+    """The outcome of resolving auth for one request.
+
+    ``user_id`` is the owner to scope data to: the real Clerk ``sub`` when ``ok``,
+    :data:`DEFAULT_USER_ID` when auth is ``disabled``, and
+    :data:`UNAUTHENTICATED_USER_ID` (a non-existent owner) otherwise — so an
+    un-gated route never reads the default user's data on a bad token."""
+
+    user_id: str
+    status: str
+    detail: str = ""
+
+
+def resolve_auth(authorization: str | None) -> AuthResult:
+    """Resolve the current request's auth from its ``Authorization`` header.
+
+    Pure (no FastAPI types, no raising) so both the middleware and the
+    :func:`get_current_user_id` dependency can share one code path. The dependency
+    turns a non-OK status into the right HTTP error; the middleware just records
+    the result and binds the context var."""
+    if not auth_enabled():
+        return AuthResult(DEFAULT_USER_ID, _STATUS_DISABLED)
+
+    token = _extract_bearer(authorization)
+    if not token:
+        return AuthResult(
+            UNAUTHENTICATED_USER_ID, _STATUS_UNAUTHENTICATED, "Missing or malformed bearer token"
+        )
+
+    try:
+        claims = verify_clerk_token(token)
+    except ClerkConfigError as exc:
+        return AuthResult(UNAUTHENTICATED_USER_ID, _STATUS_MISCONFIGURED, str(exc))
+    except ClerkAuthError as exc:
+        return AuthResult(UNAUTHENTICATED_USER_ID, _STATUS_UNAUTHENTICATED, str(exc))
+
+    sub = claims.get("sub")
+    if not sub or not isinstance(sub, str):
+        return AuthResult(
+            UNAUTHENTICATED_USER_ID, _STATUS_UNAUTHENTICATED, "Token has no subject (sub) claim"
+        )
+    return AuthResult(sub, _STATUS_OK)
 
 
 async def get_current_user_id(request: Request) -> str:
@@ -192,23 +245,17 @@ async def get_current_user_id(request: Request) -> str:
     - Auth **on**: requires a valid Clerk bearer token; returns its ``sub``
       (the Clerk user id). Missing/invalid/expired token -> 401. Server with no
       Clerk JWKS configured -> 500.
-    """
-    if not auth_enabled():
-        return DEFAULT_USER_ID
 
-    token = _extract_bearer(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing or malformed bearer token")
+    Reuses the result :class:`app.backend.middleware.UserContextMiddleware`
+    already computed for this request (stored on ``request.state.auth``); if the
+    middleware did not run (e.g. a direct unit-test call), it resolves inline."""
+    result: AuthResult | None = getattr(request.state, "auth", None)
+    if result is None:
+        result = resolve_auth(request.headers.get("Authorization"))
 
-    try:
-        claims = verify_clerk_token(token)
-    except ClerkConfigError as exc:
+    if result.status in (_STATUS_DISABLED, _STATUS_OK):
+        return result.user_id
+    if result.status == _STATUS_MISCONFIGURED:
         # Server-side misconfiguration — fail loudly so it's caught at deploy.
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except ClerkAuthError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    sub = claims.get("sub")
-    if not sub or not isinstance(sub, str):
-        raise HTTPException(status_code=401, detail="Token has no subject (sub) claim")
-    return sub
+        raise HTTPException(status_code=500, detail=result.detail)
+    raise HTTPException(status_code=401, detail=result.detail or "Unauthorized")

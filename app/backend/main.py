@@ -56,7 +56,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.6.0",
+    version="1.6.1",
     lifespan=_lifespan,
 )
 
@@ -128,6 +128,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Bind the current-request user for per-user data isolation (Phase 3). This
+# middleware never raises (it only records the auth result and binds the context
+# var; the get_current_user_id dependency enforces 401/500), and CORS handles its
+# own preflight, so the relative order is immaterial. Dormant when AUTH_ENABLED is
+# off — it binds the default user, a no-op vs. the context-var default.
+from app.backend.middleware import UserContextMiddleware  # noqa: E402
+
+app.add_middleware(UserContextMiddleware)
 
 
 @app.get("/health")

@@ -60,7 +60,7 @@ from app.backend.services import watchlists_service
 from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
-from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
+from app.backend.services._storage import current_user_id, session_scope, use_db
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
 import src.config.portfolio_config as _portfolio_config_module
@@ -102,7 +102,7 @@ from src.run_morning_scan import (
     write_csv,
 )
 from src.utils.analysts import get_agents_list
-from src.utils.progress import progress
+from src.utils.progress import progress, set_scope as _progress_set_scope, reset_scope as _progress_reset_scope
 
 # Load .env so agents can see DEEPSEEK_API_KEY etc. when invoked via the API.
 # Safe to call repeatedly; later loads don't override already-set values.
@@ -425,7 +425,7 @@ async def list_scans(limit: int = 30, db: Session = Depends(get_db)) -> dict[str
     treats both as opaque metadata, so this stays shape-compatible.
     """
     if use_db():
-        return {"scans": ScanRepository(db, DEFAULT_USER_ID).list_scans(limit)}
+        return {"scans": ScanRepository(db, current_user_id()).list_scans(limit)}
     files = _list_scan_files()
     out = []
     for path in files[:limit]:
@@ -443,7 +443,7 @@ async def list_scans(limit: int = 30, db: Session = Depends(get_db)) -> dict[str
 async def get_latest_scan(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return the most recent scan, fully parsed (JSON sidecar preferred)."""
     if use_db():
-        latest = ScanRepository(db, DEFAULT_USER_ID).latest()
+        latest = ScanRepository(db, current_user_id()).latest()
         if latest is None:
             raise HTTPException(
                 status_code=404,
@@ -477,7 +477,7 @@ async def get_scan_by_date(scan_date: str, db: Session = Depends(get_db)) -> dic
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid date '{scan_date}': {exc}")
     if use_db():
-        payload = ScanRepository(db, DEFAULT_USER_ID).get(scan_date)
+        payload = ScanRepository(db, current_user_id()).get(scan_date)
         if payload is None:
             raise HTTPException(status_code=404, detail=f"No scan for {scan_date}")
         return payload
@@ -592,7 +592,7 @@ def _write_scan_json_ui(rows_ui: list[dict[str, Any]], outputs_dir: Path, scan_d
             "rows": rows_ui,
         }
         with session_scope() as db:
-            ScanRepository(db, DEFAULT_USER_ID).upsert(scan_date, payload_db)
+            ScanRepository(db, current_user_id()).upsert(scan_date, payload_db)
         return None
     outputs_dir.mkdir(parents=True, exist_ok=True)
     path = outputs_dir / f"{scan_date}_morning_scan.json"
@@ -666,7 +666,7 @@ def _merge_into_today(rows_ui: list[dict[str, Any]], scan_date: str) -> list[dic
     existing: list[dict[str, Any]] = []
     if use_db():
         with session_scope() as db:
-            payload = ScanRepository(db, DEFAULT_USER_ID).get(scan_date)
+            payload = ScanRepository(db, current_user_id()).get(scan_date)
         existing = (payload or {}).get("rows") or []
     else:
         for path in (
@@ -918,7 +918,12 @@ async def run_scan(req: ScanRequest, request: Request):
                 )
             return out
 
-        progress.register_handler(progress_handler)
+        # Scope this scan's progress events to this request so a concurrent
+        # scan for another user can't receive them. The scope rides into the
+        # worker thread via the task/to_thread context copy.
+        scope_id = f"scan-{id(progress_handler)}"
+        scope_token = _progress_set_scope(scope_id)
+        progress.register_handler(progress_handler, scope=scope_id)
         try:
             scan_task = asyncio.create_task(_run_all())
             disconnect_task = asyncio.create_task(_detect_disconnect())
@@ -992,6 +997,7 @@ async def run_scan(req: ScanRequest, request: Request):
             return
         finally:
             progress.unregister_handler(progress_handler)
+            _progress_reset_scope(scope_token)
             if scan_task and not scan_task.done():
                 scan_task.cancel()
             if disconnect_task and not disconnect_task.done():
@@ -1054,7 +1060,10 @@ async def run_ticker_scan(ticker: str, request: Request):
                 )
             )
 
-        progress.register_handler(progress_handler)
+        # Scope this scan's progress events to this request (see run_scan).
+        scope_id = f"scan-{id(progress_handler)}"
+        scope_token = _progress_set_scope(scope_id)
+        progress.register_handler(progress_handler, scope=scope_id)
         scan_task: asyncio.Task | None = None
         disconnect_task: asyncio.Task | None = None
         try:
@@ -1104,6 +1113,7 @@ async def run_ticker_scan(ticker: str, request: Request):
             return
         finally:
             progress.unregister_handler(progress_handler)
+            _progress_reset_scope(scope_token)
             if scan_task and not scan_task.done():
                 scan_task.cancel()
             if disconnect_task and not disconnect_task.done():
@@ -3099,7 +3109,10 @@ async def backtest_sleeves(req: SleevesBacktestRequest, request: Request):
                     )
                 )
 
-        progress.register_handler(agent_progress_handler)
+        # Scope this run's progress events to this request (see run_scan).
+        scope_id = f"backtest-{id(agent_progress_handler)}"
+        scope_token = _progress_set_scope(scope_id)
+        progress.register_handler(agent_progress_handler, scope=scope_id)
         try:
             yield StartEvent(data={
                 "tickers": tickers,
@@ -3234,6 +3247,7 @@ async def backtest_sleeves(req: SleevesBacktestRequest, request: Request):
             return
         finally:
             progress.unregister_handler(agent_progress_handler)
+            _progress_reset_scope(scope_token)
             if backtest_task and not backtest_task.done():
                 backtest_task.cancel()
             if disconnect_task and not disconnect_task.done():
