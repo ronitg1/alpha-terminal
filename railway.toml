@@ -13,7 +13,10 @@ dockerfilePath = "docker/Dockerfile.web"
 # (the app no longer create_all's on Postgres — Alembic owns it). Runs from
 # app/backend where alembic.ini lives; PYTHONPATH=/app is set in the image.
 preDeployCommand = "sh -c 'cd app/backend && alembic upgrade head'"
-startCommand = "uvicorn app.backend.main:app --host 0.0.0.0 --port $PORT"
+# Shell form (sh -c) so $PORT expands — Railway runs startCommand without a
+# shell otherwise, passing the literal string "$PORT" to uvicorn (which then
+# fails "not a valid integer" and never binds, failing the healthcheck).
+startCommand = "sh -c 'uvicorn app.backend.main:app --host 0.0.0.0 --port $PORT'"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"

@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-06-27
+
+### Fixed
+- **Railway start command now binds to the host port.** `railway.toml`'s
+  `startCommand` passed `--port $PORT` without a shell, so Railway handed uvicorn
+  the literal string `$PORT` ("not a valid integer") and the app never bound —
+  failing the deploy healthcheck. Wrapped it in `sh -c` (matching the
+  `preDeployCommand`) so `$PORT` expands. Surfaced on the first real cloud deploy.
+
 ## [1.5.0] — 2026-06-27
 
 ### Changed (Phase 2 database cutover — COMPLETE; dormant, local behavior unchanged)
