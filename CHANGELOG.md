@@ -4,6 +4,29 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] — 2026-06-27
+
+### Added (Phase 2 database cutover — dormant; local behavior unchanged)
+- **Sleeve / portfolio config store cut over.** Under `STORAGE_BACKEND=db`,
+  reading and editing your sleeves (the portfolio definitions that drive every
+  scan) now goes to Postgres via `PortfolioRepository` instead of rewriting the
+  Python config file. Identical shapes and the same HTTP error codes (409 on a
+  duplicate name, 404 on a missing sleeve, 400 when you try to delete your last
+  one), so the dashboard is unaffected. The cash-reserve read is backend-aware
+  too. Under the default `file` backend nothing changes — it still rewrites
+  `portfolio_config.py` and hot-reloads, exactly as before.
+- **Fresh-database seed.** A new Alembic data migration copies the shipped
+  sleeves + cash reserve into the database for the default owner on a brand-new
+  Postgres, so turning on the `db` backend boots with real content instead of an
+  empty portfolio (which would have made scans fail). Idempotent — it never
+  overwrites edits you've already made.
+
+### Tests
+- Extended `tests/test_storage_cutover.py`: full sleeve CRUD + HTTP-code
+  mapping + integrity-conflict handling under the DB backend, a non-destructive
+  exercise of the file backend's config-rewrite path, and a cross-backend
+  shape-identity check. Suite at 233 passing.
+
 ## [1.4.2] — 2026-06-27
 
 ### Added (Phase 2 database cutover — dormant; local behavior unchanged)

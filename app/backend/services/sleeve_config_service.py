@@ -9,6 +9,15 @@ Writes are atomic (temp file + ``os.replace``) and trigger ``importlib.reload``
 so subsequent endpoints in the same uvicorn process see the new sleeves
 without a restart.
 
+Storage backend: when ``STORAGE_BACKEND=db`` every read and mutation dispatches
+to :class:`PortfolioRepository` (Postgres) instead of rewriting the config
+module; the file rewrite + ``importlib.reload`` machinery below is the ``file``
+backend only. The returned ``{name: sleeve}`` shapes are identical either way.
+The repository raises ``ValueError``/``LookupError`` (HTTP-agnostic); this layer
+translates them into the same ``HTTPException`` codes the file path already used
+(409 conflict, 404 missing, 400 last-sleeve) so routes are unaffected. Default
+is ``file`` — local behavior unchanged. See :mod:`app.backend.services._storage`.
+
 Sleeve invariants enforced before writing:
 * Agent weights within a sleeve must sum to 1.0.
 * Every agent in ``agents`` must have a matching ``agent_weights`` key.
@@ -32,6 +41,13 @@ from typing import Any
 from fastapi import HTTPException
 
 import src.config.portfolio_config as portfolio_config_module  # noqa: F401  (reload target)
+from app.backend.repositories.portfolio_repository import PortfolioRepository
+from app.backend.services._storage import (
+    DEFAULT_USER_ID,
+    integrity_as_value_error,
+    session_scope,
+    use_db,
+)
 
 _CONFIG_PATH = (
     Path(__file__).resolve().parents[3] / "src" / "config" / "portfolio_config.py"
@@ -46,11 +62,17 @@ _ALLOC_TOLERANCE = 1e-6
 
 
 def read_sleeves() -> dict[str, dict[str, Any]]:
-    """Snapshot the live PORTFOLIO_SLEEVES dict from the imported module.
+    """Snapshot the sleeves as ``{name: {allocation_pct, agents, agent_weights,
+    tickers}}``.
 
-    Reloading happens on every write so this view is always current. We
-    coerce to plain dicts so callers can serialize without TypedDict drama.
+    File backend: read the live PORTFOLIO_SLEEVES dict from the imported module
+    (reloaded on every write, so the view is always current) and coerce to plain
+    dicts. DB backend: read from :class:`PortfolioRepository`, which already
+    returns this exact shape.
     """
+    if use_db():
+        with session_scope() as db:
+            return PortfolioRepository(db, DEFAULT_USER_ID).read_sleeves()
     raw = portfolio_config_module.PORTFOLIO_SLEEVES
     return {
         name: {
@@ -61,6 +83,16 @@ def read_sleeves() -> dict[str, dict[str, Any]]:
         }
         for name, sleeve in raw.items()
     }
+
+
+def get_cash_reserve() -> float:
+    """The cash-reserve floor (percent). File backend reads the module-level
+    ``CASH_RESERVE_PCT``; DB backend reads the per-user setting (defaulting to
+    the same value). There is no setter route today — this is read-only."""
+    if use_db():
+        with session_scope() as db:
+            return float(PortfolioRepository(db, DEFAULT_USER_ID).get_cash_reserve())
+    return float(portfolio_config_module.CASH_RESERVE_PCT)
 
 
 # ─── Validate ───────────────────────────────────────────────────────────────
@@ -157,16 +189,28 @@ def replace_all_sleeves(sleeves: dict[str, dict[str, Any]]) -> dict[str, dict[st
     validated: dict[str, dict[str, Any]] = {}
     for name, sleeve in sleeves.items():
         validated[name] = _validate_sleeve_payload(name, sleeve)
+    if use_db():
+        try:
+            with session_scope() as db, integrity_as_value_error():
+                return PortfolioRepository(db, DEFAULT_USER_ID).replace_all_sleeves(validated)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     _persist(validated)
     return read_sleeves()
 
 
 def create_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Add a new sleeve. Raises 409 if the name already exists."""
+    validated = _validate_sleeve_payload(name, sleeve)
+    if use_db():
+        try:
+            with session_scope() as db, integrity_as_value_error():
+                return PortfolioRepository(db, DEFAULT_USER_ID).create_sleeve(name, validated)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
     current = read_sleeves()
     if name in current:
         raise HTTPException(status_code=409, detail=f"Sleeve '{name}' already exists.")
-    validated = _validate_sleeve_payload(name, sleeve)
     current[name] = validated
     _persist(current)
     return read_sleeves()
@@ -174,10 +218,19 @@ def create_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
 
 def update_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Replace an existing sleeve. Raises 404 if it doesn't exist."""
+    validated = _validate_sleeve_payload(name, sleeve)
+    if use_db():
+        # No integrity_as_value_error wrapper: update keeps the same name, so it
+        # can't collide with the (user, name) unique constraint. Only inserts and
+        # renames need that wrapper.
+        try:
+            with session_scope() as db:
+                return PortfolioRepository(db, DEFAULT_USER_ID).update_sleeve(name, validated)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
     current = read_sleeves()
     if name not in current:
         raise HTTPException(status_code=404, detail=f"Sleeve '{name}' not found.")
-    validated = _validate_sleeve_payload(name, sleeve)
     current[name] = validated
     _persist(current)
     return read_sleeves()
@@ -185,6 +238,17 @@ def update_sleeve(name: str, sleeve: dict[str, Any]) -> dict[str, dict[str, Any]
 
 def delete_sleeve(name: str) -> dict[str, dict[str, Any]]:
     """Delete a sleeve. Raises 404 if missing; refuses to delete the last sleeve."""
+    if use_db():
+        # No integrity_as_value_error wrapper: a delete can't violate a unique
+        # constraint (see update_sleeve). LookupError -> 404 (missing),
+        # ValueError -> 400 (refusing to delete the last sleeve).
+        try:
+            with session_scope() as db:
+                return PortfolioRepository(db, DEFAULT_USER_ID).delete_sleeve(name)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     current = read_sleeves()
     if name not in current:
         raise HTTPException(status_code=404, detail=f"Sleeve '{name}' not found.")
@@ -212,6 +276,14 @@ def rename_sleeve(old_name: str, new_name: str) -> dict[str, dict[str, Any]]:
                 "underscores; start with a letter; max 31 chars."
             ),
         )
+    if use_db():
+        try:
+            with session_scope() as db, integrity_as_value_error():
+                return PortfolioRepository(db, DEFAULT_USER_ID).rename_sleeve(old_name, new_name)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
     current = read_sleeves()
     if old_name not in current:
         raise HTTPException(status_code=404, detail=f"Sleeve '{old_name}' not found.")

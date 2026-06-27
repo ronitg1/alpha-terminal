@@ -29,9 +29,18 @@ Cutover recipe (follow this for every service so all stores stay consistent):
 
 2. Wrap inserts/renames that can violate a unique constraint in
    :func:`integrity_as_value_error` so a race becomes a clean ``ValueError``.
-3. The **route** owns HTTP status mapping: catch ``ValueError`` and return
-   **409** for a name/uniqueness conflict, **400** for bad input. This seam does
-   NOT map status codes for you — it only normalizes the exception type.
+   Omit it for updates/deletes that keep the key unchanged (they can't collide)
+   — and leave a one-line comment saying why, so the next service is consistent.
+3. The **route** (or service, where it already raises HTTPException) owns HTTP
+   status mapping: catch ``ValueError`` and return **409** for a name/uniqueness
+   conflict, **400** for bad input; catch ``LookupError`` for **404**. This seam
+   does NOT map status codes for you — it only normalizes the exception type.
+4. Return the canonical post-write read shape from BOTH backends (the repo's
+   mutating methods already return their ``read_*`` snapshot; the file path
+   returns its own read) so the two never drift.
+5. Fresh-DB seeding: if a store is empty on a brand-new Postgres but the app
+   needs shipped defaults (e.g. portfolios), seed them in an Alembic data
+   migration (idempotent), not lazily on read.
 """
 from __future__ import annotations
 

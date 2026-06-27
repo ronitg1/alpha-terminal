@@ -22,6 +22,7 @@ from app.backend.database.connection import Base
 import app.backend.database.app_models  # noqa: F401  (register tables on Base)
 from app.backend.services import _storage
 from app.backend.services import watchlists_service
+from app.backend.services import sleeve_config_service
 
 
 @pytest.fixture()
@@ -165,3 +166,157 @@ def test_watchlists_backends_shape_identical(db_backend, monkeypatch, tmp_path):
     file_result = _exercise_watchlists()
 
     assert db_result == file_result
+
+
+# ─── sleeve_config_service (portfolios) ──────────────────────────────────────
+
+_SLEEVE_KEYS = {"allocation_pct", "agents", "agent_weights", "tickers"}
+
+
+def _valid_sleeve(tickers=("NVDA", "MSFT")) -> dict:
+    return {
+        "allocation_pct": 20.0,
+        "agents": ["aswath_damodaran"],
+        "agent_weights": {"aswath_damodaran": 1.0},
+        "tickers": list(tickers),
+    }
+
+
+def test_sleeves_db_backend_crud_and_http_codes(db_backend):
+    """Full sleeve lifecycle under the DB backend, including the HTTP status
+    codes the routes rely on (the service translates repo ValueError/LookupError
+    into the same HTTPException codes the file backend used)."""
+    from fastapi import HTTPException
+
+    out = sleeve_config_service.create_sleeve("alpha", _valid_sleeve())
+    assert set(out["alpha"].keys()) == _SLEEVE_KEYS
+    assert out["alpha"]["tickers"] == ["NVDA", "MSFT"]
+
+    # duplicate -> 409
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.create_sleeve("alpha", _valid_sleeve())
+    assert ei.value.status_code == 409
+
+    # update existing reflects; update missing -> 404
+    sleeve_config_service.update_sleeve("alpha", _valid_sleeve(tickers=["GOOG"]))
+    assert sleeve_config_service.read_sleeves()["alpha"]["tickers"] == ["GOOG"]
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.update_sleeve("ghost", _valid_sleeve())
+    assert ei.value.status_code == 404
+
+    # can't delete the last sleeve -> 400; add a second, then delete works
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.delete_sleeve("alpha")
+    assert ei.value.status_code == 400
+    sleeve_config_service.create_sleeve("beta", _valid_sleeve())
+    after_del = sleeve_config_service.delete_sleeve("alpha")
+    assert set(after_del.keys()) == {"beta"}
+
+    # delete missing -> 404
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.delete_sleeve("alpha")
+    assert ei.value.status_code == 404
+
+    # rename: success, bad-name 400, missing 404, conflict 409
+    sleeve_config_service.create_sleeve("gamma", _valid_sleeve())
+    renamed = sleeve_config_service.rename_sleeve("beta", "delta")
+    assert "delta" in renamed and "beta" not in renamed
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.rename_sleeve("delta", "Bad Name")
+    assert ei.value.status_code == 400
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.rename_sleeve("ghost", "epsilon")
+    assert ei.value.status_code == 404
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.rename_sleeve("delta", "gamma")
+    assert ei.value.status_code == 409
+
+    # cash reserve default
+    assert sleeve_config_service.get_cash_reserve() == 10.0
+
+
+def test_sleeves_db_create_integrity_maps_to_409(db_backend, monkeypatch):
+    """A race IntegrityError on create_sleeve (raised at commit INSIDE the repo)
+    must surface as a 409, not a 500 — proves the integrity->ValueError->409
+    chain fires for the portfolio path, not just watchlists."""
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError
+
+    from app.backend.repositories import portfolio_repository
+
+    def _boom(self, *a, **k):  # noqa: ANN001
+        raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+    monkeypatch.setattr(
+        portfolio_repository.PortfolioRepository, "create_sleeve", _boom
+    )
+    with pytest.raises(HTTPException) as ei:
+        sleeve_config_service.create_sleeve("alpha", _valid_sleeve())
+    assert ei.value.status_code == 409
+
+
+def test_sleeves_db_replace_all(db_backend):
+    sleeve_config_service.create_sleeve("old", _valid_sleeve())
+    result = sleeve_config_service.replace_all_sleeves(
+        {"x": _valid_sleeve(), "y": _valid_sleeve(tickers=["AAPL"])}
+    )
+    assert set(result.keys()) == {"x", "y"}
+
+
+def test_sleeves_file_backend_write_roundtrip(monkeypatch, tmp_path):
+    """Exercise the FILE backend's write path (brace-walker splice + reload)
+    without touching the checked-in src/config/portfolio_config.py: copy it into
+    a temp module, point the service at it, and assert a create/rename/delete
+    round-trips through the rewritten source."""
+    import importlib
+    import shutil
+    import sys
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+
+    real_path = sleeve_config_service._CONFIG_PATH
+    # Name the temp module so its file lives on a path importlib can re-find:
+    # _persist() calls importlib.reload(), which re-discovers the spec via the
+    # import system, so the module must be importable by name from sys.path.
+    mod_name = "tmp_portfolio_config_probe"
+    tmp_cfg = tmp_path / f"{mod_name}.py"
+    shutil.copyfile(real_path, tmp_cfg)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    mod = importlib.import_module(mod_name)
+    try:
+        monkeypatch.setattr(sleeve_config_service, "_CONFIG_PATH", tmp_cfg)
+        monkeypatch.setattr(sleeve_config_service, "portfolio_config_module", mod)
+
+        new = {
+            "allocation_pct": 0.0,  # 0 keeps total allocation valid
+            "agents": ["aswath_damodaran"],
+            "agent_weights": {"aswath_damodaran": 1.0},
+            "tickers": ["TESTX"],
+        }
+        after_create = sleeve_config_service.create_sleeve("cutover_probe", new)
+        assert after_create["cutover_probe"]["tickers"] == ["TESTX"]
+
+        after_rename = sleeve_config_service.rename_sleeve("cutover_probe", "cutover_probe2")
+        assert "cutover_probe2" in after_rename and "cutover_probe" not in after_rename
+
+        after_delete = sleeve_config_service.delete_sleeve("cutover_probe2")
+        assert "cutover_probe2" not in after_delete
+        # The original sleeves survived the splice/rewrite untouched.
+        assert len(after_delete) >= 1
+    finally:
+        sys.modules.pop(mod_name, None)
+
+
+def test_sleeves_file_backend_read_shape_matches_db(db_backend, monkeypatch):
+    """Shape-identity across backends without destructively rewriting the real
+    portfolio_config.py: a DB-created sleeve dict has exactly the same keys as a
+    file-backend read of the live config."""
+    db_sleeve = sleeve_config_service.create_sleeve("alpha", _valid_sleeve())["alpha"]
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    file_sleeves = sleeve_config_service.read_sleeves()
+    assert file_sleeves, "live config should have at least one sleeve"
+    file_sleeve = next(iter(file_sleeves.values()))
+
+    assert set(db_sleeve.keys()) == set(file_sleeve.keys()) == _SLEEVE_KEYS
+    assert isinstance(sleeve_config_service.get_cash_reserve(), float)

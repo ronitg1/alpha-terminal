@@ -58,21 +58,29 @@ from app.backend.services.watchlist_service import (
 from app.backend.services import watchlists_service
 from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
+from app.backend.services import sleeve_config_service
 import src.config.portfolio_config as _portfolio_config_module
 
 
 def _live_sleeves() -> dict:
-    """Always read the current PORTFOLIO_SLEEVES through the module attribute
-    so importlib.reload (from the sleeve-config service) takes effect mid-process.
+    """Current sleeve config, backend-aware.
 
-    A bare ``from ... import PORTFOLIO_SLEEVES`` binds the name at import time
-    and survives reloads — that's what we're sidestepping here.
+    Reads through ``sleeve_config_service`` so the storage backend
+    (``STORAGE_BACKEND``) is honored: under ``file`` it returns the live
+    PORTFOLIO_SLEEVES (kept current by importlib.reload after each write, which
+    a bare ``from ... import`` would have frozen at import time); under ``db`` it
+    returns the per-user sleeves from Postgres. Same ``{name: sleeve}`` shape
+    either way.
+
+    Call once per request and bind a local — do NOT invoke per-iteration inside
+    a scan/backtest loop: under the db backend each call opens a fresh session
+    and queries, so a per-day/per-ticker call would be an N+1.
     """
-    return _portfolio_config_module.PORTFOLIO_SLEEVES
+    return sleeve_config_service.read_sleeves()
 
 
 def _live_cash_reserve() -> float:
-    return _portfolio_config_module.CASH_RESERVE_PCT
+    return sleeve_config_service.get_cash_reserve()
 
 
 from src.config.watchlist import get_watchlist
@@ -362,8 +370,6 @@ async def replace_all_sleeves_endpoint(payload: BulkSleevesPayload) -> dict[str,
     Use when an edit spans multiple sleeves (e.g. shrinking one to make room
     for another). One round-trip — no transient out-of-balance states.
     """
-    from app.backend.services import sleeve_config_service
-
     raw = {name: defn.model_dump() for name, defn in payload.sleeves.items()}
     updated = sleeve_config_service.replace_all_sleeves(raw)
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
@@ -372,8 +378,6 @@ async def replace_all_sleeves_endpoint(payload: BulkSleevesPayload) -> dict[str,
 @router.post("/config/sleeve/{name}")
 async def create_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[str, Any]:
     """Create a new sleeve. Returns the updated full config."""
-    from app.backend.services import sleeve_config_service
-
     updated = sleeve_config_service.create_sleeve(name, payload.model_dump())
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
@@ -381,8 +385,6 @@ async def create_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[s
 @router.put("/config/sleeve/{name}")
 async def update_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[str, Any]:
     """Replace an existing sleeve's definition. Name in the URL is the target."""
-    from app.backend.services import sleeve_config_service
-
     updated = sleeve_config_service.update_sleeve(name, payload.model_dump())
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
@@ -390,8 +392,6 @@ async def update_sleeve_endpoint(name: str, payload: SleeveDefinition) -> dict[s
 @router.delete("/config/sleeve/{name}")
 async def delete_sleeve_endpoint(name: str) -> dict[str, Any]:
     """Delete a sleeve. Returns the updated full config."""
-    from app.backend.services import sleeve_config_service
-
     updated = sleeve_config_service.delete_sleeve(name)
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
@@ -405,8 +405,6 @@ class RenameSleevePayload(BaseModel):
 @router.patch("/config/sleeve/{name}/rename")
 async def rename_sleeve_endpoint(name: str, payload: RenameSleevePayload) -> dict[str, Any]:
     """Rename a sleeve. Returns the updated full config."""
-    from app.backend.services import sleeve_config_service
-
     updated = sleeve_config_service.rename_sleeve(name, payload.new_name)
     return {"sleeves": _serialize_sleeves(updated), "cash_reserve_pct": _live_cash_reserve()}
 
