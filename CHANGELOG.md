@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-06-27
+
+### Added
+- **Pattern Backtest: lookback control.** The backtest now has an explicit
+  Lookback toggle per timeframe (e.g. 1h: 2wk/1mo/2mo/3mo; daily: 3mo/6mo/1y/2y;
+  weekly up to 5y), instead of silently using the max window. Results now show
+  the exact window replayed (start → end, N days, signal/ticker counts).
+- **Min-confidence** options extended to include **90% and 100%**.
+
 ## [1.4.0] — 2026-06-27
 
 ### Added (cloud-deploy groundwork — all additive, local behavior unchanged)

@@ -196,4 +196,8 @@ export interface PatternBacktestSummary {
   trades: PatternBacktestTrade[];
   tickers: string[];
   patterns: string[];
+  /** The actual window replayed (clamped to the timeframe's max). */
+  lookback_days?: number;
+  start_date?: string;
+  end_date?: string;
 }

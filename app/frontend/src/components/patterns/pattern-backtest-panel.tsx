@@ -39,6 +39,21 @@ const TIMEFRAMES: { key: PatternTimeframe; label: string }[] = [
 const DELTA_CHOICES = [0.3, 0.4, 0.5, 0.6, 0.7];
 const HOLD_CHOICES = [1, 2, 3, 5, 10];
 
+// How far back to replay, per timeframe. The last entry is the max the data
+// plan allows for that bar size (intraday history is short); the backend
+// clamps anything larger. Default is the max.
+const LOOKBACK_PRESETS: Record<PatternTimeframe, { label: string; days: number }[]> = {
+  week: [{ label: '1y', days: 365 }, { label: '2y', days: 730 }, { label: '3y', days: 1095 }, { label: '5y (max)', days: 1825 }],
+  day: [{ label: '3mo', days: 90 }, { label: '6mo', days: 180 }, { label: '1y', days: 365 }, { label: '2y (max)', days: 730 }],
+  '1h': [{ label: '2wk', days: 14 }, { label: '1mo', days: 30 }, { label: '2mo', days: 60 }, { label: '3mo (max)', days: 90 }],
+  '15m': [{ label: '1wk', days: 7 }, { label: '2wk', days: 14 }, { label: '1mo (max)', days: 30 }],
+};
+
+function maxLookback(tf: PatternTimeframe): number {
+  const p = LOOKBACK_PRESETS[tf];
+  return p[p.length - 1].days;
+}
+
 type RunStatus = 'idle' | 'running' | 'done' | 'error';
 
 function pct(v: number): string {
@@ -59,9 +74,16 @@ export function PatternBacktestPanel() {
 
   // ─── Scan scope ────────────────────────────────────────────────────────
   const [timeframe, setTimeframe] = useState<PatternTimeframe>('1h');
+  const [lookbackDays, setLookbackDays] = useState<number>(maxLookback('1h'));
   const [allPatterns, setAllPatterns] = useState<string[]>([]);
   const [selPatterns, setSelPatterns] = useState<Set<string>>(new Set());
   const [patternsOpen, setPatternsOpen] = useState(false);
+
+  // Each timeframe has its own valid lookback range — reset to that
+  // timeframe's max when it changes so we never send an out-of-range window.
+  useEffect(() => {
+    setLookbackDays(maxLookback(timeframe));
+  }, [timeframe]);
 
   // ─── Option + exit knobs ───────────────────────────────────────────────
   const [mode, setMode] = useState<'single' | 'optimize'>('single');
@@ -134,6 +156,7 @@ export function PatternBacktestPanel() {
       pricing,
       slippage_pct: slippagePct,
       min_confidence: minConfidence,
+      lookback_days: lookbackDays,
     };
     if (mode === 'single') {
       body.delta = delta;
@@ -246,6 +269,25 @@ export function PatternBacktestPanel() {
                 )}
               >
                 {t.label}
+              </button>
+            ))}
+          </div>
+          <Label>Lookback</Label>
+          <div className="inline-flex rounded-md border border-border overflow-hidden">
+            {LOOKBACK_PRESETS[timeframe].map((p, i) => (
+              <button
+                key={p.days}
+                onClick={() => setLookbackDays(p.days)}
+                title={`Replay the last ${p.days} calendar days`}
+                className={cls(
+                  'px-2.5 py-1 text-xs font-mono',
+                  i > 0 && 'border-l border-border',
+                  lookbackDays === p.days
+                    ? 'bg-indigo-500/15 text-indigo-400'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {p.label}
               </button>
             ))}
           </div>
@@ -410,9 +452,9 @@ export function PatternBacktestPanel() {
               onChange={(e) => setMinConfidence(Number(e.target.value))}
               className="bg-background border border-border rounded px-2 py-1 font-mono text-xs"
             >
-              {[0, 50, 60, 70, 80].map((c) => (
+              {[0, 50, 60, 70, 80, 90, 100].map((c) => (
                 <option key={c} value={c}>
-                  {c === 0 ? 'Any' : `${c}+`}
+                  {c === 0 ? 'Any' : c === 100 ? '100' : `${c}+`}
                 </option>
               ))}
             </select>
@@ -495,6 +537,17 @@ function Results({
           Hit the signal cap — results cover the most recent signals only. Narrow the
           universe or patterns for a complete run.
         </Note>
+      )}
+
+      {/* Window replayed */}
+      {summary.start_date && summary.end_date && (
+        <div className="text-[11px] text-muted-foreground font-mono">
+          Backtested <span className="text-foreground">{summary.start_date}</span> →{' '}
+          <span className="text-foreground">{summary.end_date}</span>
+          {summary.lookback_days ? ` (${summary.lookback_days} days)` : ''} ·{' '}
+          {summary.n_signals} signals over {summary.tickers.length}{' '}
+          {summary.tickers.length === 1 ? 'ticker' : 'tickers'}
+        </div>
       )}
 
       {/* Headline metrics for the best config */}

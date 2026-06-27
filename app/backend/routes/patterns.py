@@ -1066,6 +1066,10 @@ async def backtest_patterns(req: PatternBacktestRequest, request: Request):
                 "trades": best_trades,
                 "tickers": tickers,
                 "patterns": sel_patterns,
+                # The actual window replayed (clamped to the timeframe's max).
+                "lookback_days": lookback,
+                "start_date": from_date,
+                "end_date": to_date,
             }})
         except Exception as exc:  # noqa: BLE001 — surface any failure to the client
             logger.exception("pattern backtest failed")
