@@ -55,8 +55,11 @@ export interface SleevesConfig {
 
 export interface ScanListItem {
   date: string;
+  // path is a real outputs/ path under the file backend, or a synthetic
+  // "db://scan/<date>" reference under the DB backend; treated as opaque.
   path: string;
-  size_bytes: number;
+  // null under the DB backend (no file on disk); a byte count under file.
+  size_bytes: number | null;
 }
 
 export interface WatchlistEntry {

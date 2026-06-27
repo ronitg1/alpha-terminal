@@ -12,6 +12,13 @@ Comments per ticker are preserved as ``"TICKER",  # <comment>`` lines and
 parsed back on read via regex. Header docstring is regenerated from a
 template — anyone hand-editing the file should keep additions BELOW the
 ``WATCHLIST`` assignment.
+
+Storage backend: when ``STORAGE_BACKEND=db`` this single opportunistic
+watchlist is stored in the shared ``watchlists`` table under the reserved name
+``RESERVED_OPPORTUNISTIC_WATCHLIST`` (the multi-watchlist service hides that
+name, so the two stores stay separate exactly as they are as separate files
+under the file backend). The ``[{ticker, comment}]`` shape is identical either
+way. Default ``file`` — local behavior unchanged.
 """
 from __future__ import annotations
 
@@ -25,6 +32,14 @@ from typing import Sequence
 from fastapi import HTTPException
 
 import src.config.watchlist as watchlist_module  # noqa: F401  (for reload target)
+from app.backend.repositories.watchlist_repository import WatchlistRepository
+from app.backend.services._storage import (
+    DEFAULT_USER_ID,
+    RESERVED_OPPORTUNISTIC_WATCHLIST,
+    integrity_as_value_error,
+    session_scope,
+    use_db,
+)
 
 # Strict-ish ticker pattern — uppercase, digits, dots, hyphens. Up to 10 chars.
 # Generous enough for foreign listings ("BABA"), share-class suffixes ("BRK.B"),
@@ -78,6 +93,12 @@ def read_watchlist_with_comments() -> list[dict[str, str]]:
     Best-effort regex parse — survives hand edits as long as each ticker
     sits on its own line in the standard form.
     """
+    if use_db():
+        with session_scope() as db:
+            wl = WatchlistRepository(db, DEFAULT_USER_ID).get_one(
+                RESERVED_OPPORTUNISTIC_WATCHLIST
+            )
+        return list(wl["tickers"]) if wl else []
     if not _WATCHLIST_PATH.exists():
         return []
     text = _WATCHLIST_PATH.read_text(encoding="utf-8")
@@ -133,6 +154,13 @@ def write_watchlist(entries: Sequence[dict[str, str]]) -> list[dict[str, str]]:
                 "comment": (raw.get("comment") or "").strip(),
             }
         )
+
+    if use_db():
+        with session_scope() as db, integrity_as_value_error():
+            WatchlistRepository(db, DEFAULT_USER_ID).upsert(
+                RESERVED_OPPORTUNISTIC_WATCHLIST, canonical
+            )
+        return canonical
 
     lines: list[str] = []
     for e in canonical:

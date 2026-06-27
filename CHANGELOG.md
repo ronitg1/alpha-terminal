@@ -4,6 +4,33 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] — 2026-06-27
+
+### Added (Phase 2 database cutover — dormant; local behavior unchanged)
+- **Scan results store cut over.** Under `STORAGE_BACKEND=db`, the dashboard's
+  scan history (list, latest, by-date) and the per-scan write/merge read and
+  write the `scan_results` Postgres table instead of the JSON sidecar in
+  `outputs/`. The CSV is still written for CLI compatibility. Reads carry a
+  synthetic `path` and null size (no file on disk) — opaque metadata the UI
+  already ignores.
+- **Legacy single watchlist cut over.** The opportunistic watchlist
+  (`/watchlist`) now persists in the shared watchlists table under a reserved
+  name when `STORAGE_BACKEND=db`, kept hidden from the multi-watchlist list so
+  the two stay separate — exactly as they are as separate files locally.
+- This completes the storage cutover for every file-backed store. (The shared
+  scan engine still reads the global portfolio config; threading per-user config
+  through it is the final, separate step.)
+
+### Fixed
+- **Reserved watchlist name is now rejected (400) on write** in both backends,
+  so a user can't accidentally create/rename a watchlist into the reserved
+  opportunistic slot.
+
+### Tests
+- Extended `tests/test_storage_cutover.py` with scan-store CRUD/list/upsert +
+  payload key-set parity, and legacy-watchlist isolation + reserved-name guards
+  (service and route level). Suite at 251 passing.
+
 ## [1.4.4] — 2026-06-27
 
 ### Added (Phase 2 database cutover — dormant; local behavior unchanged)

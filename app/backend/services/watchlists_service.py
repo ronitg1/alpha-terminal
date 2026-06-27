@@ -20,9 +20,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.backend.repositories.watchlist_repository import WatchlistRepository
 from app.backend.services._storage import (
     DEFAULT_USER_ID,
+    RESERVED_OPPORTUNISTIC_WATCHLIST,
     integrity_as_value_error,
     session_scope,
     use_db,
@@ -62,11 +65,30 @@ def _save(data: dict[str, Any]) -> None:
         raise
 
 
+def _reject_reserved(name: str) -> None:
+    """Block writes targeting the reserved opportunistic-watchlist name.
+
+    Applied in BOTH backends for parity: under db the name aliases the legacy
+    opportunistic store (writing it would clobber that hidden list); under file
+    it would create a confusing ``__opportunistic__`` entry in watchlists.json.
+    Either way it's a bad request."""
+    if name == RESERVED_OPPORTUNISTIC_WATCHLIST:
+        raise HTTPException(status_code=400, detail=f"'{name}' is a reserved name.")
+
+
 def get_all() -> list[dict]:
-    """Return all watchlists [{name, tickers}]."""
+    """Return all watchlists [{name, tickers}].
+
+    The reserved opportunistic-watchlist name is hidden under the db backend so
+    the legacy single watchlist (stored in the same table) never leaks into the
+    multi-watchlist list — matching the file backend, where it's a separate file.
+    """
     if use_db():
         with session_scope() as db:
-            return WatchlistRepository(db, DEFAULT_USER_ID).get_all()
+            return [
+                w for w in WatchlistRepository(db, DEFAULT_USER_ID).get_all()
+                if w["name"] != RESERVED_OPPORTUNISTIC_WATCHLIST
+            ]
     with _lock:
         return _load()["watchlists"]
 
@@ -74,6 +96,8 @@ def get_all() -> list[dict]:
 def get_one(name: str) -> dict | None:
     """Return the watchlist with the given name, or None if not found."""
     if use_db():
+        if name == RESERVED_OPPORTUNISTIC_WATCHLIST:
+            return None  # hidden from the multi-watchlist surface
         with session_scope() as db:
             return WatchlistRepository(db, DEFAULT_USER_ID).get_one(name)
     with _lock:
@@ -85,6 +109,7 @@ def get_one(name: str) -> dict | None:
 
 def upsert(name: str, tickers: list[dict]) -> dict:
     """Create or replace the watchlist with this name."""
+    _reject_reserved(name)
     if use_db():
         with session_scope() as db, integrity_as_value_error():
             return WatchlistRepository(db, DEFAULT_USER_ID).upsert(name, tickers)
@@ -110,7 +135,10 @@ def rename(old_name: str, new_name: str) -> bool:
     catching that and returning 409. The file backend never enforced uniqueness
     and so never raises here — a known, accepted divergence until the file
     backend is retired."""
+    _reject_reserved(new_name)  # can't rename a list INTO the reserved name
     if use_db():
+        if old_name == RESERVED_OPPORTUNISTIC_WATCHLIST:
+            return False  # not visible here, so "not found"
         with session_scope() as db, integrity_as_value_error():
             return WatchlistRepository(db, DEFAULT_USER_ID).rename(old_name, new_name)
     with _lock:
@@ -126,6 +154,8 @@ def rename(old_name: str, new_name: str) -> bool:
 def delete(name: str) -> bool:
     """Delete a watchlist by name. Returns True if found and deleted, False otherwise."""
     if use_db():
+        if name == RESERVED_OPPORTUNISTIC_WATCHLIST:
+            return False  # not deletable through the multi-watchlist surface
         with session_scope() as db:
             return WatchlistRepository(db, DEFAULT_USER_ID).delete(name)
     with _lock:

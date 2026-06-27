@@ -40,9 +40,10 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.backend.models.events import (
     BaseEvent,
@@ -59,6 +60,9 @@ from app.backend.services import watchlists_service
 from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
+from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
+from app.backend.database import get_db
+from app.backend.repositories.scan_repository import ScanRepository
 import src.config.portfolio_config as _portfolio_config_module
 
 
@@ -413,8 +417,15 @@ async def rename_sleeve_endpoint(name: str, payload: RenameSleevePayload) -> dic
 
 
 @router.get("/scans")
-async def list_scans(limit: int = 30) -> dict[str, Any]:
-    """List past scan files (newest first) with basic metadata."""
+async def list_scans(limit: int = 30, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """List past scans (newest first) with basic metadata.
+
+    DB backend: entries come from ScanRepository and carry a synthetic
+    ``path`` (``db://scan/<date>``) and ``size_bytes`` of None — the frontend
+    treats both as opaque metadata, so this stays shape-compatible.
+    """
+    if use_db():
+        return {"scans": ScanRepository(db, DEFAULT_USER_ID).list_scans(limit)}
     files = _list_scan_files()
     out = []
     for path in files[:limit]:
@@ -429,8 +440,16 @@ async def list_scans(limit: int = 30) -> dict[str, Any]:
 
 
 @router.get("/scans/latest")
-async def get_latest_scan() -> dict[str, Any]:
+async def get_latest_scan(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return the most recent scan, fully parsed (JSON sidecar preferred)."""
+    if use_db():
+        latest = ScanRepository(db, DEFAULT_USER_ID).latest()
+        if latest is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No scans found. Click Run Scan to generate one.",
+            )
+        return latest
     files = _list_scan_files()
     if not files:
         raise HTTPException(
@@ -451,12 +470,17 @@ async def get_latest_scan() -> dict[str, Any]:
 
 
 @router.get("/scans/{scan_date}")
-async def get_scan_by_date(scan_date: str) -> dict[str, Any]:
+async def get_scan_by_date(scan_date: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return the scan for a specific date (YYYY-MM-DD). JSON sidecar preferred."""
     try:
         date.fromisoformat(scan_date)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid date '{scan_date}': {exc}")
+    if use_db():
+        payload = ScanRepository(db, DEFAULT_USER_ID).get(scan_date)
+        if payload is None:
+            raise HTTPException(status_code=404, detail=f"No scan for {scan_date}")
+        return payload
     json_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.json"
     csv_path = _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv"
     if json_path.exists():
@@ -548,8 +572,28 @@ def _write_scan_json(rows: list[TickerRow], outputs_dir: Path, scan_date: str) -
     return _write_scan_json_ui([_tickerrow_to_ui(r) for r in rows], outputs_dir, scan_date)
 
 
-def _write_scan_json_ui(rows_ui: list[dict[str, Any]], outputs_dir: Path, scan_date: str) -> Path:
-    """Persist UI-shaped rows as the JSON sidecar (atomic write)."""
+def _write_scan_json_ui(rows_ui: list[dict[str, Any]], outputs_dir: Path, scan_date: str) -> Path | None:
+    """Persist UI-shaped rows as the scan's UI payload.
+
+    DB backend: upsert the payload into ScanRepository (one row per date) and
+    return None — there's no file. File backend: write the JSON sidecar atomically
+    and return its path. Either way the CSV is written separately by the caller
+    (it stays the CLI-compat artifact).
+    """
+    if use_db():
+        # NOTE: synchronous DB I/O on the event loop. Fine here — this runs once
+        # per scan, after all agent work and the final progress event, so no
+        # client sees a mid-stream stall. If a future call site puts this on a
+        # hot path, wrap it in asyncio.to_thread.
+        payload_db = {
+            "date": scan_date,
+            "path": f"db://scan/{scan_date}",
+            "row_count": len(rows_ui),
+            "rows": rows_ui,
+        }
+        with session_scope() as db:
+            ScanRepository(db, DEFAULT_USER_ID).upsert(scan_date, payload_db)
+        return None
     outputs_dir.mkdir(parents=True, exist_ok=True)
     path = outputs_dir / f"{scan_date}_morning_scan.json"
     payload = {
@@ -620,16 +664,21 @@ def _merge_into_today(rows_ui: list[dict[str, Any]], scan_date: str) -> list[dic
     exists for ``scan_date``.
     """
     existing: list[dict[str, Any]] = []
-    for path in (
-        _OUTPUTS_DIR / f"{scan_date}_morning_scan.json",
-        _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv",
-    ):
-        if path.exists():
-            try:
-                existing = _read_scan_file(path).get("rows") or []
-                break
-            except HTTPException:
-                continue
+    if use_db():
+        with session_scope() as db:
+            payload = ScanRepository(db, DEFAULT_USER_ID).get(scan_date)
+        existing = (payload or {}).get("rows") or []
+    else:
+        for path in (
+            _OUTPUTS_DIR / f"{scan_date}_morning_scan.json",
+            _OUTPUTS_DIR / f"{scan_date}_morning_scan.csv",
+        ):
+            if path.exists():
+                try:
+                    existing = _read_scan_file(path).get("rows") or []
+                    break
+                except HTTPException:
+                    continue
     fresh_tickers = {r.get("ticker") for r in rows_ui}
     kept = [r for r in existing if isinstance(r, dict) and r.get("ticker") not in fresh_tickers]
     return kept + rows_ui

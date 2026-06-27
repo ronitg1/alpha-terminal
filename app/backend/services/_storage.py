@@ -58,11 +58,20 @@ from app.backend.database.app_models import DEFAULT_USER_ID
 
 __all__ = [
     "DEFAULT_USER_ID",
+    "RESERVED_OPPORTUNISTIC_WATCHLIST",
     "use_db",
     "storage_backend",
     "session_scope",
     "integrity_as_value_error",
 ]
+
+# Reserved ``Watchlist.name`` under which the legacy single "opportunistic"
+# watchlist (``src/config/watchlist.py``) is stored when ``STORAGE_BACKEND=db``.
+# Under the file backend it has its own file and never appears in the
+# multi-watchlist store; to keep that separation in the shared ``watchlists``
+# table, the multi-watchlist service hides this sentinel name. The double
+# underscore makes a real-user collision implausible (single-tenant, pre-auth).
+RESERVED_OPPORTUNISTIC_WATCHLIST = "__opportunistic__"
 
 
 def storage_backend() -> str:

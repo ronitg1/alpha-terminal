@@ -26,6 +26,8 @@ from app.backend.services import sleeve_config_service
 from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import pnl_service
+from app.backend.services import watchlist_service
+from app.backend.routes import sleeves as sleeves_routes
 
 
 @pytest.fixture()
@@ -41,7 +43,9 @@ def db_backend(monkeypatch):
     monkeypatch.setattr(_storage, "SessionLocal", TestSession)
     monkeypatch.setenv("STORAGE_BACKEND", "db")
     try:
-        yield
+        # Yield the session factory so route-layer tests (which take an explicit
+        # ``db`` via Depends) can bind to this same in-memory engine.
+        yield TestSession
     finally:
         engine.dispose()
 
@@ -485,3 +489,183 @@ def test_pnl_create_keyset_identical_across_backends(db_backend, monkeypatch, tm
 
     assert db_keys == file_keys
     assert "closing_import_key" in file_keys
+
+
+# ─── scan results (routes/sleeves.py) ────────────────────────────────────────
+
+def _scan_rows(*tickers) -> list[dict]:
+    return [{"ticker": t, "sleeve": "individual", "consensus": "bullish",
+             "weighted_score": 1.0, "per_agent": []} for t in tickers]
+
+
+def test_scans_db_backend(db_backend, tmp_path):
+    import asyncio
+
+    TestSession = db_backend
+    outputs = tmp_path / "outputs"
+
+    # Write two dates via the (now backend-aware) write helper -> ScanRepository.
+    sleeves_routes._write_scan_json_ui(_scan_rows("NVDA", "MSFT"), outputs, "2026-06-24")
+    sleeves_routes._write_scan_json_ui(_scan_rows("AAPL"), outputs, "2026-06-25")
+
+    # list_scans: synthetic db path + size_bytes None, newest first.
+    listing = asyncio.run(sleeves_routes.list_scans(limit=30, db=TestSession()))["scans"]
+    assert [e["date"] for e in listing] == ["2026-06-25", "2026-06-24"]
+    assert listing[0] == {"date": "2026-06-25", "path": "db://scan/2026-06-25", "size_bytes": None}
+
+    # latest + by-date read back the stored payload.
+    latest = asyncio.run(sleeves_routes.get_latest_scan(db=TestSession()))
+    assert latest["date"] == "2026-06-25"
+    by_date = asyncio.run(sleeves_routes.get_scan_by_date("2026-06-24", db=TestSession()))
+    assert [r["ticker"] for r in by_date["rows"]] == ["NVDA", "MSFT"]
+
+    # missing date -> 404
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(sleeves_routes.get_scan_by_date("2020-01-01", db=TestSession()))
+    assert ei.value.status_code == 404
+
+    # merge: a partial rescan of one ticker folds into the existing date.
+    merged = sleeves_routes._merge_into_today(_scan_rows("MSFT"), "2026-06-24")
+    # MSFT (rescanned) replaces its old row; NVDA survives.
+    assert {r["ticker"] for r in merged} == {"NVDA", "MSFT"}
+
+
+def test_scans_latest_empty_404(db_backend):
+    import asyncio
+    from fastapi import HTTPException
+
+    TestSession = db_backend
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(sleeves_routes.get_latest_scan(db=TestSession()))
+    assert ei.value.status_code == 404
+
+
+def test_scans_db_write_is_upsert(db_backend, tmp_path):
+    """Re-writing the same date replaces (one row per date), not appends."""
+    import asyncio
+
+    TestSession = db_backend
+    outputs = tmp_path / "outputs"
+    sleeves_routes._write_scan_json_ui(_scan_rows("NVDA"), outputs, "2026-06-24")
+    sleeves_routes._write_scan_json_ui(_scan_rows("AAPL", "GOOG"), outputs, "2026-06-24")
+
+    listing = asyncio.run(sleeves_routes.list_scans(limit=30, db=TestSession()))["scans"]
+    assert len(listing) == 1
+    by_date = asyncio.run(sleeves_routes.get_scan_by_date("2026-06-24", db=TestSession()))
+    assert [r["ticker"] for r in by_date["rows"]] == ["AAPL", "GOOG"]
+
+
+def test_scan_payload_keyset_identical_across_backends(db_backend, monkeypatch, tmp_path):
+    """The scan payload envelope must have the same keys under both backends
+    (only the `path` VALUE differs by design: db://scan/... vs a real path)."""
+    import asyncio
+
+    TestSession = db_backend
+    outputs = tmp_path / "outputs"
+    sleeves_routes._write_scan_json_ui(_scan_rows("NVDA"), outputs, "2026-06-24")
+    db_payload = asyncio.run(sleeves_routes.get_scan_by_date("2026-06-24", db=TestSession()))
+
+    # File backend: write the sidecar and read it back, pointing the route's
+    # path resolution at the temp project root.
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(sleeves_routes, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(sleeves_routes, "_OUTPUTS_DIR", outputs)
+    sleeves_routes._write_scan_json_ui(_scan_rows("NVDA"), outputs, "2026-06-23")
+    file_payload = asyncio.run(
+        sleeves_routes.get_scan_by_date("2026-06-23", db=None)
+    )
+    assert set(db_payload.keys()) == set(file_payload.keys())
+
+
+# ─── legacy single (opportunistic) watchlist_service ─────────────────────────
+
+def test_legacy_watchlist_db_backend(db_backend):
+    assert watchlist_service.read_watchlist_with_comments() == []
+    out = watchlist_service.write_watchlist(
+        [{"ticker": "nvda", "comment": "ai"}, {"ticker": "TSLA", "comment": ""}]
+    )
+    # canonicalized: uppercased, shape preserved
+    assert out == [
+        {"ticker": "NVDA", "comment": "ai"},
+        {"ticker": "TSLA", "comment": ""},
+    ]
+    assert watchlist_service.read_watchlist_with_comments() == out
+
+
+def test_legacy_watchlist_hidden_from_multi(db_backend):
+    """The opportunistic list shares the watchlists table under the db backend
+    but must NOT appear in the multi-watchlist surface (matches the file backend
+    where it's a separate file)."""
+    watchlist_service.write_watchlist([{"ticker": "NVDA", "comment": ""}])
+    watchlists_service.upsert("Tech", [{"ticker": "MSFT", "comment": ""}])
+
+    names = [w["name"] for w in watchlists_service.get_all()]
+    assert names == ["Tech"]  # opportunistic sentinel hidden
+    assert watchlists_service.get_one(_storage.RESERVED_OPPORTUNISTIC_WATCHLIST) is None
+    assert watchlists_service.delete(_storage.RESERVED_OPPORTUNISTIC_WATCHLIST) is False
+    # but the legacy service still sees it
+    assert watchlist_service.read_watchlist_with_comments() == [
+        {"ticker": "NVDA", "comment": ""}
+    ]
+
+
+def test_multi_upsert_rejects_reserved_name(db_backend):
+    """The multi-watchlist store must refuse to write the reserved opportunistic
+    name (would clobber/hide the legacy store). 400, and the legacy store is
+    untouched."""
+    from fastapi import HTTPException
+
+    watchlist_service.write_watchlist([{"ticker": "NVDA", "comment": ""}])
+    with pytest.raises(HTTPException) as ei:
+        watchlists_service.upsert(_storage.RESERVED_OPPORTUNISTIC_WATCHLIST, [])
+    assert ei.value.status_code == 400
+    # legacy store intact
+    assert watchlist_service.read_watchlist_with_comments() == [
+        {"ticker": "NVDA", "comment": ""}
+    ]
+
+
+def test_multi_rename_to_reserved_rejected(db_backend):
+    from fastapi import HTTPException
+
+    watchlists_service.upsert("Tech", [{"ticker": "MSFT", "comment": ""}])
+    with pytest.raises(HTTPException) as ei:
+        watchlists_service.rename("Tech", _storage.RESERVED_OPPORTUNISTIC_WATCHLIST)
+    assert ei.value.status_code == 400
+    assert watchlists_service.get_one("Tech") is not None  # unchanged
+
+
+def test_multi_upsert_rejects_reserved_name_file_backend(monkeypatch, tmp_path):
+    """Parity: the file backend rejects the reserved name too, so a git-diff'd
+    watchlists.json never grows an __opportunistic__ entry."""
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(watchlists_service, "_STORE_PATH", tmp_path / "wl.json")
+    monkeypatch.setattr(watchlists_service, "_LEGACY_STORE_PATH", tmp_path / "absent.json")
+    with pytest.raises(HTTPException) as ei:
+        watchlists_service.upsert(_storage.RESERVED_OPPORTUNISTIC_WATCHLIST, [])
+    assert ei.value.status_code == 400
+
+
+def test_legacy_watchlist_validation_both_backends(db_backend):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as ei:
+        watchlist_service.write_watchlist([{"ticker": "not a ticker!", "comment": ""}])
+    assert ei.value.status_code == 400
+
+
+def test_legacy_watchlist_file_read_shape_matches_db(db_backend, monkeypatch):
+    """Non-destructive shape check: a db-written entry has the same keys as a
+    file-backend read of the real watchlist.py."""
+    db_entry = watchlist_service.write_watchlist([{"ticker": "NVDA", "comment": "x"}])[0]
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    file_entries = watchlist_service.read_watchlist_with_comments()
+    # file read returns {ticker, comment} dicts; compare the key set
+    if file_entries:
+        assert set(file_entries[0].keys()) == set(db_entry.keys()) == {"ticker", "comment"}
+    else:
+        assert set(db_entry.keys()) == {"ticker", "comment"}

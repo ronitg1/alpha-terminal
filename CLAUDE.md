@@ -145,6 +145,12 @@ The UI is a single new tab type (`'sleeves'`) that auto-opens on first load. All
 
 Scan output is dual-written: `outputs/YYYY-MM-DD_morning_scan.csv` (always, for CLI compat) plus `outputs/YYYY-MM-DD_morning_scan.json` (when run via the UI; carries full per-agent raw fields the drill drawer needs). The backend prefers JSON when both exist.
 
+Under `STORAGE_BACKEND=db` the UI scan payload lives in the `scan_results` Postgres table (the source of truth for the dashboard), not the JSON sidecar. The CSV is still written to `outputs/` for CLI compat, but on cloud that directory is ephemeral — it is NOT the source of truth there.
+
+## Storage backend (Phase 2 cutover)
+
+`STORAGE_BACKEND` (default `file`) selects where live app state is stored. `file` = today's local JSON/config files (local app 100% unchanged). `db` = the multi-tenant Postgres repositories in `app/backend/repositories/`. The cloud deploy sets `STORAGE_BACKEND=db`. The dispatch seam is [`app/backend/services/_storage.py`](app/backend/services/_storage.py) — read its module docstring for the cutover recipe before touching a store. Each file service branches on `use_db()` and returns the SAME dict shapes either way (proven by `tests/test_storage_cutover.py`, which exercises every cut-over store under both backends). All rows are owned by `DEFAULT_USER_ID` until Clerk auth (Phase 3).
+
 ## What's deferred / known follow-ups
 
 - Sparkline of weighted_score per sleeve over time (needs ≥3 historical scans before it's meaningful).
