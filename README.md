@@ -4,17 +4,17 @@
 
 **A research terminal for retail investors. AI agent panels score your book, a realistic options backtester pressure-tests your strategies, and a market-news + earnings-call desk keeps you on top of every name — all from your laptop.**
 
-[![Version: 1.3](https://img.shields.io/badge/version-1.3-blue.svg)](CHANGELOG.md)
+[![Version: 1.4](https://img.shields.io/badge/version-1.4-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-210%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.3 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester (now runnable off any portfolio or watchlist), the intraday-capable Pattern Scanner with its own options backtest + optimizer, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (210 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.4 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester (now runnable off any portfolio or watchlist), the intraday-capable Pattern Scanner with its own options backtest + optimizer, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (222 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -397,7 +397,7 @@ alpha-terminal/
 │           ├── contexts/                sleeves + dashboard state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 210 tests, pytest
+├── tests/                   ← 222 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 

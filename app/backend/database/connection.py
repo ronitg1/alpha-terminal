@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 import os
 from pathlib import Path
 
@@ -8,13 +7,24 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).parent.parent
 DATABASE_PATH = BACKEND_DIR / "hedge_fund.db"
 
-# Database configuration - use absolute path
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+# Database URL: prefer DATABASE_URL from the environment (set by the host —
+# e.g. Railway/Render Postgres) so cloud deploys use a managed database; fall
+# back to a local SQLite file for local development when it's unset.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or f"sqlite:///{DATABASE_PATH}"
+# Some providers hand out the legacy "postgres://" scheme; SQLAlchemy 2 needs
+# "postgresql://". Normalize so either form works.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Create SQLAlchemy engine
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+
+# Create SQLAlchemy engine. check_same_thread is a SQLite-only arg; Postgres
+# gets pool_pre_ping so dropped connections (idle timeouts on managed DBs) are
+# transparently recycled.
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Needed for SQLite
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    pool_pre_ping=not _is_sqlite,
 )
 
 # Create SessionLocal class

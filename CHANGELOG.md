@@ -4,6 +4,30 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-06-27
+
+### Added (cloud-deploy groundwork — all additive, local behavior unchanged)
+- **Deploy-ready backend.** Config is now environment-driven so the same code
+  runs locally and in the cloud: CORS origins via `ALLOWED_ORIGINS`, database
+  via `DATABASE_URL` (managed Postgres in the cloud, local SQLite otherwise),
+  an optional `SKIP_OLLAMA_CHECK` for fast container startup, and a trivial
+  `/health` route for platform health checks. Added `docker/Dockerfile.web`
+  (uvicorn web image), `railway.toml` (auto-runs DB migrations on deploy),
+  `app/frontend/vercel.json`, and a `DEPLOY.md` walkthrough.
+- **Multi-tenant database layer (dormant until enabled).** New SQLAlchemy
+  models + Alembic migration for users, portfolios, watchlists, settings, P&L,
+  theses, and scans — every row scoped to a `user_id` — plus user-scoped
+  repositories mirroring the existing file stores 1:1, with tests. Nothing is
+  wired into the running app yet; the file-based stores remain the live path,
+  so local single-user behavior is unchanged. This is the foundation for the
+  hosted multi-user build.
+
+### Fixed
+- **Alembic chain now runs from scratch.** A pre-existing migration created a
+  duplicate index, which broke `alembic upgrade head` on a fresh database
+  (i.e. the first deploy to a new Postgres). Removed the duplicate.
+- Modernized the SQLAlchemy `declarative_base` import (2.0 form).
+
 ## [1.3.1] — 2026-06-26
 
 ### Changed

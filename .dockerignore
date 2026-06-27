@@ -23,6 +23,20 @@ logs/
 data/
 *.log
 
+# Runtime user state + scan outputs (recreated at runtime; Phase 2 moves these
+# to the database). Don't bake personal data into the image.
+app/data/
+app/backend/data/
+outputs/
+*.db
+*.db-journal
+*.sqlite*
+
+# Frontend (the web API image doesn't need the React app or its deps)
+app/frontend/node_modules/
+app/frontend/dist/
+node_modules/
+
 # OS specific
 .DS_Store
-Thumbs.db 
+Thumbs.db

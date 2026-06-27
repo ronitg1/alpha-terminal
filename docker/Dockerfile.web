@@ -1,0 +1,34 @@
+# Web API image for Alpha Terminal — runs the FastAPI backend with uvicorn.
+#
+# The sibling docker/Dockerfile runs the CLI (python src/main.py); THIS image
+# serves the HTTP API and is what container hosts (Railway / Render / Fly /
+# any Docker host) deploy. Build context is the repo root:
+#
+#   docker build -f docker/Dockerfile.web -t alpha-terminal-api .
+#   docker run -p 8000:8000 --env-file .env alpha-terminal-api
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000
+
+# Poetry, installing into the system environment (no project virtualenv).
+RUN pip install --no-cache-dir poetry==1.7.1
+
+# Dependencies first, for Docker layer caching. poetry.lock* tolerates a
+# missing lockfile (it's committed, so this normally hits the cache).
+COPY pyproject.toml poetry.lock* /app/
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root --only main
+
+# Application source (frontend / app data / outputs excluded via .dockerignore).
+COPY . /app/
+
+EXPOSE 8000
+
+# Bind to the host-provided $PORT (Railway/Render set it). Shell form so the
+# variable expands. Single worker: the app still holds in-memory state today —
+# the Phase-2 database migration is what unlocks multiple workers/replicas.
+CMD uvicorn app.backend.main:app --host 0.0.0.0 --port ${PORT:-8000}

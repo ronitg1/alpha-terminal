@@ -41,7 +41,12 @@ def upgrade():
         op.create_table(
             'hedge_fund_flow_run_cycles',
             sa.Column('id', sa.Integer, primary_key=True, index=True),
-            sa.Column('flow_run_id', sa.Integer, nullable=False, index=True),
+            # NOTE: index created explicitly below, so no index=True here — the
+            # two together emitted a duplicate CREATE INDEX and broke a from-
+            # scratch `alembic upgrade head` (e.g. the first deploy to a fresh
+            # Postgres). Keep the explicit create_index calls as the source of
+            # truth for this table's secondary indexes.
+            sa.Column('flow_run_id', sa.Integer, nullable=False),
             sa.Column('cycle_number', sa.Integer, nullable=False),
             sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
             sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),

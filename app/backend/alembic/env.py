@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -9,14 +10,25 @@ from alembic import context
 # access to the values within the .ini file in use.
 config = context.config
 
+# Run migrations against the same database the app uses. DATABASE_URL (set by
+# the host — Railway/Render Postgres) takes precedence over the static
+# sqlalchemy.url in alembic.ini so `alembic upgrade head` targets the cloud DB
+# in production and the local SQLite file otherwise.
+_db_url = os.environ.get("DATABASE_URL", "").strip()
+if _db_url:
+    if _db_url.startswith("postgres://"):
+        _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", _db_url)
+
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
+# add your model's MetaData object here for 'autogenerate' support. Importing
+# app_models registers the multi-tenant domain tables on Base.metadata too.
 from app.backend.database.models import Base
+from app.backend.database import app_models  # noqa: F401
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

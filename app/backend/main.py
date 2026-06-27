@@ -5,7 +5,7 @@ import logging
 import os
 
 from app.backend.routes import api_router
-from app.backend.database.connection import engine
+from app.backend.database.connection import engine, _is_sqlite
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
 
@@ -24,6 +24,13 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 async def _lifespan(app: FastAPI):
     """Startup checks: required API keys, then Ollama availability."""
     _check_required_keys()
+    # The Ollama probe is for local-model users; on a cloud box with no Ollama
+    # it just wastes startup time on a connection attempt. Skip it when
+    # SKIP_OLLAMA_CHECK is set (recommended in container deploys).
+    if os.environ.get("SKIP_OLLAMA_CHECK", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("Skipping Ollama check (SKIP_OLLAMA_CHECK set).")
+        yield
+        return
     try:
         logger.info("Checking Ollama availability...")
         status = await ollama_service.check_ollama_status()
@@ -49,7 +56,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.3.1",
+    version="1.4.0",
     lifespan=_lifespan,
 )
 
@@ -83,17 +90,52 @@ def _check_required_keys() -> None:
             "insider / growth-ratio fallbacks will be unavailable; everything else works."
         )
 
-# Initialize database tables (this is safe to run multiple times)
-Base.metadata.create_all(bind=engine)
+# Initialize database tables. On SQLite (local dev) we create_all for zero-setup
+# convenience. On a managed Postgres, Alembic owns the schema — running
+# create_all there would race the migrations (it creates tables Alembic then
+# tries to CREATE again, and skips the migration's seed rows), so we skip it and
+# rely on `alembic upgrade head` in the deploy step (see DEPLOY.md / railway.toml).
+if _is_sqlite:
+    Base.metadata.create_all(bind=engine)
 
-# Configure CORS
+# Configure CORS. Origins come from the ALLOWED_ORIGINS env var (comma-
+# separated) so the deployed frontend's domain can be whitelisted without a
+# code change; it defaults to the local Vite dev server so local development is
+# unchanged. In production set e.g.
+#   ALLOWED_ORIGINS=https://your-app.vercel.app,https://app.yourdomain.com
+_DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
+    if o.strip()
+]
+
+# Browsers reject `allow_credentials=True` together with a `*` wildcard origin,
+# and it would silently break every credentialed request. If someone sets
+# ALLOWED_ORIGINS=*, honor the wildcard but turn credentials off and say so.
+_allow_credentials = True
+if "*" in _allowed_origins:
+    logger.warning(
+        "ALLOWED_ORIGINS contains '*' — disabling allow_credentials (the two are "
+        "incompatible). Set explicit origins to allow credentialed requests."
+    )
+    _allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Frontend URLs
-    allow_credentials=True,
+    allow_origins=_allowed_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health() -> dict:
+    """Liveness probe — no DB or external calls, so platform health checks
+    (Railway/Render) don't flap when a data provider is slow."""
+    return {"ok": True, "service": "alpha-terminal-api", "version": app.version}
+
 
 # Include all routes
 app.include_router(api_router)
