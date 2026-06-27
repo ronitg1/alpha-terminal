@@ -34,6 +34,13 @@ A position record:
 Money math convention: ``entry_price``/``exit_price``/marks are always
 PER SHARE. Options carry a 100x contract multiplier applied by
 :func:`position_multiplier`, never baked into stored prices.
+
+Storage backend: when ``STORAGE_BACKEND=db`` the PERSISTENCE functions (get_all,
+create, update, delete, bulk_insert, existing_import_keys) dispatch to
+:class:`PnlRepository` (Postgres). Id generation, timestamps, validation, and
+all the P&L math below stay here — only the read/write target changes. Position
+dict shapes are preserved. Default ``file`` — local behavior unchanged. See
+:mod:`app.backend.services._storage`.
 """
 from __future__ import annotations
 
@@ -46,6 +53,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.backend.repositories.pnl_repository import PnlRepository
+from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +158,9 @@ def instrument_key(position: dict[str, Any]) -> str:
 
 
 def get_all() -> list[dict[str, Any]]:
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).get_all()
     with _lock:
         return _load()
 
@@ -171,6 +184,10 @@ def create(fields: dict[str, Any]) -> dict[str, Any]:
         "real": bool(fields.get("real", False)),
         "notes": fields.get("notes", ""),
         "import_key": fields.get("import_key"),
+        # Include closing_import_key (None for a fresh open) so a created record
+        # has the same full key set the DB backend / importer produce — no
+        # shape divergence between backends.
+        "closing_import_key": fields.get("closing_import_key"),
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -182,6 +199,9 @@ def create(fields: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("option positions need an option leg (type/strike/expiration)")
     if record["qty"] <= 0:
         raise ValueError("qty must be positive (use side='short' for shorts)")
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).insert(record)
     with _lock:
         positions = _load()
         positions.append(record)
@@ -195,14 +215,18 @@ def update(position_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         "qty", "entry_price", "entry_date", "notes", "real",
         "status", "exit_price", "exit_date", "side",
     }
+    # Same filter both backends: only the allowed, non-None fields, plus a fresh
+    # updated_at stamp.
+    patch = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    patch["updated_at"] = _now()
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).update(position_id, patch)
     with _lock:
         positions = _load()
         for p in positions:
             if p["id"] == position_id:
-                for k, v in fields.items():
-                    if k in allowed and v is not None:
-                        p[k] = v
-                p["updated_at"] = _now()
+                p.update(patch)
                 _save(positions)
                 return p
     return None
@@ -221,6 +245,9 @@ def close(position_id: str, exit_price: float, exit_date: str | None = None) -> 
 
 
 def delete(position_id: str) -> bool:
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).delete(position_id)
     with _lock:
         positions = _load()
         kept = [p for p in positions if p["id"] != position_id]
@@ -237,6 +264,9 @@ def existing_import_keys() -> set[str]:
     open record — so re-importing the same activity file doesn't replay
     the close as a spurious standalone trade.
     """
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).existing_import_keys()
     with _lock:
         keys: set[str] = set()
         for p in _load():
@@ -249,6 +279,9 @@ def existing_import_keys() -> set[str]:
 
 def bulk_insert(records: list[dict[str, Any]]) -> int:
     """Insert pre-validated records (used by the Fidelity importer)."""
+    if use_db():
+        with session_scope() as db:
+            return PnlRepository(db, DEFAULT_USER_ID).bulk_insert(records)
     with _lock:
         positions = _load()
         positions.extend(records)

@@ -19,6 +19,13 @@ migration step:
 Writes are atomic (temp file + ``os.replace``) and thread-safe (module-level
 ``threading.Lock``). Reads return empty dicts gracefully when the file does
 not exist yet.
+
+Storage backend: when ``STORAGE_BACKEND=db`` each public function dispatches to
+:class:`PortfolioSettingsRepository` (Postgres). The nested
+``{sleeve: {ticker: {allocation_pct, agents}}}`` shape is identical either way.
+Validation (the ``HTTPException`` 400s below) runs in both backends; only the
+persistence target changes. Default ``file`` — local behavior unchanged. See
+:mod:`app.backend.services._storage`.
 """
 from __future__ import annotations
 
@@ -30,6 +37,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
+
+from app.backend.repositories.portfolio_settings_repository import (
+    PortfolioSettingsRepository,
+)
+from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
 
 _DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "portfolio_settings.json"
 _DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +91,9 @@ def _save(data: dict[str, Any]) -> None:
 
 def get_all() -> dict[str, Any]:
     """Return the full settings dict (sleeve → ticker → {allocation_pct, agents})."""
+    if use_db():
+        with session_scope() as db:
+            return PortfolioSettingsRepository(db, DEFAULT_USER_ID).get_all()
     with _lock:
         return _load()
 
@@ -87,6 +102,9 @@ def put_all(settings: dict[str, Any]) -> dict[str, Any]:
     """Replace the entire settings dict atomically. Returns the saved state."""
     if not isinstance(settings, dict):
         raise HTTPException(status_code=400, detail="settings must be a JSON object.")
+    if use_db():
+        with session_scope() as db:
+            return PortfolioSettingsRepository(db, DEFAULT_USER_ID).put_all(settings)
     with _lock:
         _save(settings)
         return _load()
@@ -94,6 +112,9 @@ def put_all(settings: dict[str, Any]) -> dict[str, Any]:
 
 def get_sleeve(sleeve: str) -> dict[str, Any]:
     """Return per-ticker settings for one sleeve; empty dict if not configured."""
+    if use_db():
+        with session_scope() as db:
+            return PortfolioSettingsRepository(db, DEFAULT_USER_ID).get_sleeve(sleeve)
     with _lock:
         data = _load()
     return dict(data.get(sleeve, {}))
@@ -121,6 +142,12 @@ def upsert_ticker(
             raise HTTPException(status_code=400, detail="agents must be a list or null.")
         agents = [str(a).strip() for a in agents if str(a).strip()]
 
+    if use_db():
+        # Match the file backend's key normalization (ticker stored uppercased).
+        with session_scope() as db:
+            return PortfolioSettingsRepository(db, DEFAULT_USER_ID).upsert_ticker(
+                sleeve, ticker.upper(), alloc, agents
+            )
     with _lock:
         data = _load()
         sleeve_data = data.setdefault(sleeve, {})
@@ -134,6 +161,12 @@ def upsert_ticker(
 
 def delete_ticker(sleeve: str, ticker: str) -> None:
     """Remove a ticker from a sleeve's settings. No-op if not present."""
+    if use_db():
+        with session_scope() as db:
+            PortfolioSettingsRepository(db, DEFAULT_USER_ID).delete_ticker(
+                sleeve, ticker.upper()
+            )
+        return
     with _lock:
         data = _load()
         sleeve_data = data.get(sleeve, {})

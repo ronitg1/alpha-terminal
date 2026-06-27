@@ -23,6 +23,9 @@ import app.backend.database.app_models  # noqa: F401  (register tables on Base)
 from app.backend.services import _storage
 from app.backend.services import watchlists_service
 from app.backend.services import sleeve_config_service
+from app.backend.services import portfolio_settings_service
+from app.backend.services import thesis_store
+from app.backend.services import pnl_service
 
 
 @pytest.fixture()
@@ -320,3 +323,165 @@ def test_sleeves_file_backend_read_shape_matches_db(db_backend, monkeypatch):
 
     assert set(db_sleeve.keys()) == set(file_sleeve.keys()) == _SLEEVE_KEYS
     assert isinstance(sleeve_config_service.get_cash_reserve(), float)
+
+
+# ─── portfolio_settings_service ──────────────────────────────────────────────
+
+def _exercise_portfolio_settings() -> dict:
+    """Fixed sequence against the portfolio_settings_service public API."""
+    out: dict = {}
+    out["initial"] = portfolio_settings_service.get_all()
+    # lowercase ticker must be stored uppercased by both backends
+    out["after_nvda"] = portfolio_settings_service.upsert_ticker(
+        "individual", "nvda", 20.0, None
+    )
+    out["after_aapl"] = portfolio_settings_service.upsert_ticker(
+        "individual", "AAPL", 10.0, ["alpha_seeker"]
+    )
+    out["sleeve"] = portfolio_settings_service.get_sleeve("individual")
+    # update in place
+    out["updated_nvda"] = portfolio_settings_service.upsert_ticker(
+        "individual", "NVDA", 25.0, None
+    )
+    portfolio_settings_service.delete_ticker("individual", "nvda")
+    out["after_delete"] = portfolio_settings_service.get_all()
+    out["after_put_all"] = portfolio_settings_service.put_all(
+        {"roth": {"GOOG": {"allocation_pct": 50.0, "agents": None}}}
+    )
+    out["final"] = portfolio_settings_service.get_all()
+    return out
+
+
+def test_portfolio_settings_db_backend(db_backend):
+    r = _exercise_portfolio_settings()
+    assert r["initial"] == {}
+    assert r["after_nvda"]["individual"]["NVDA"] == {"allocation_pct": 20.0, "agents": None}
+    assert r["after_aapl"]["individual"]["AAPL"] == {
+        "allocation_pct": 10.0,
+        "agents": ["alpha_seeker"],
+    }
+    assert r["updated_nvda"]["individual"]["NVDA"]["allocation_pct"] == 25.0
+    assert "NVDA" not in r["after_delete"]["individual"]
+    assert r["final"] == {"roth": {"GOOG": {"allocation_pct": 50.0, "agents": None}}}
+
+
+def test_portfolio_settings_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    db_result = _exercise_portfolio_settings()
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(
+        portfolio_settings_service, "_DATA_PATH", tmp_path / "portfolio_settings.json"
+    )
+    file_result = _exercise_portfolio_settings()
+
+    assert db_result == file_result
+
+
+# ─── thesis_store ────────────────────────────────────────────────────────────
+
+def _exercise_theses() -> dict:
+    out: dict = {}
+    out["initial"] = thesis_store.get_all()
+    thesis_store.save("portfolio", {"condensed": "bullish"})
+    thesis_store.save("ticker:NVDA:quick", {"condensed": "buy"})
+    thesis_store.save("portfolio", {"condensed": "bearish"})  # replace
+    out["all"] = thesis_store.get_all()
+    return out
+
+
+def _strip_saved_at(d: dict) -> dict:
+    return {k: {kk: vv for kk, vv in v.items() if kk != "saved_at"} for k, v in d.items()}
+
+
+def test_theses_db_backend(db_backend):
+    r = _exercise_theses()
+    assert r["initial"] == {}
+    assert set(r["all"].keys()) == {"portfolio", "ticker:NVDA:quick"}
+    assert r["all"]["portfolio"]["condensed"] == "bearish"   # replace won
+    assert "saved_at" in r["all"]["portfolio"]               # stamp added
+
+
+def test_theses_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    db_result = _exercise_theses()
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(thesis_store, "_DATA_PATH", tmp_path / "theses.json")
+    file_result = _exercise_theses()
+
+    # saved_at is a wall-clock stamp that differs per call; everything else must
+    # match across backends.
+    assert _strip_saved_at(db_result["all"]) == _strip_saved_at(file_result["all"])
+    assert all("saved_at" in v for v in file_result["all"].values())
+
+
+# ─── pnl_service (persistence; math stays in the service) ────────────────────
+
+def _pnl_record(**over) -> dict:
+    """A fully-formed position record (id + timestamps set) for bulk_insert, so
+    both backends store byte-identical rows for the shape-identity check."""
+    base = {
+        "id": "pos_fixed1", "kind": "option", "ticker": "NVDA", "side": "long",
+        "qty": 2.0,
+        "option": {"type": "call", "strike": 200.0, "expiration": "2026-07-17",
+                   "contract_ticker": None},
+        "entry_price": 5.4, "entry_date": "2026-06-10", "status": "open",
+        "exit_price": None, "exit_date": None, "source": "manual", "real": False,
+        "notes": "", "import_key": None, "closing_import_key": None,
+        "created_at": "2026-06-10T21:08:13+00:00",
+        "updated_at": "2026-06-10T21:08:13+00:00",
+    }
+    base.update(over)
+    return base
+
+
+def test_pnl_db_backend_crud(db_backend):
+    assert pnl_service.get_all() == []
+    pos = pnl_service.create(
+        {"kind": "stock", "ticker": "nvda", "side": "long", "qty": 10, "entry_price": 100.0}
+    )
+    assert pos["id"].startswith("pos_")
+    assert pos["ticker"] == "NVDA"  # uppercased by the service
+    # update + close go through the repo
+    pnl_service.update(pos["id"], {"notes": "hold"})
+    assert pnl_service.get_all()[0]["notes"] == "hold"
+    pnl_service.create(
+        {"kind": "option", "ticker": "AAPL", "side": "long", "qty": 1, "entry_price": 3.0,
+         "option": {"type": "call", "strike": 200.0, "expiration": "2026-07-17",
+                    "contract_ticker": None}, "import_key": "k1"}
+    )
+    assert pnl_service.existing_import_keys() == {"k1"}
+    assert pnl_service.delete(pos["id"]) is True
+    assert pnl_service.delete(pos["id"]) is False
+    assert pnl_service.bulk_insert([_pnl_record(id="pos_b1"), _pnl_record(id="pos_b2")]) == 2
+    assert {p["id"] for p in pnl_service.get_all()} >= {"pos_b1", "pos_b2"}
+
+
+def test_pnl_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    records = [
+        _pnl_record(id="pos_a", created_at="2026-06-10T00:00:00+00:00"),
+        _pnl_record(id="pos_b", ticker="AAPL", kind="stock", option=None,
+                    created_at="2026-06-11T00:00:00+00:00"),
+    ]
+    pnl_service.bulk_insert(records)
+    db_all = sorted(pnl_service.get_all(), key=lambda p: p["id"])
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(pnl_service, "_DATA_PATH", tmp_path / "pnl_positions.json")
+    pnl_service.bulk_insert(records)
+    file_all = sorted(pnl_service.get_all(), key=lambda p: p["id"])
+
+    assert db_all == file_all
+
+
+def test_pnl_create_keyset_identical_across_backends(db_backend, monkeypatch, tmp_path):
+    """create() must return the same key set under both backends — guards the
+    closing_import_key divergence the bulk_insert test sidesteps."""
+    fields = {"kind": "stock", "ticker": "NVDA", "side": "long", "qty": 5, "entry_price": 50.0}
+    db_keys = set(pnl_service.create(fields).keys())
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(pnl_service, "_DATA_PATH", tmp_path / "pnl_positions.json")
+    file_keys = set(pnl_service.create(fields).keys())
+
+    assert db_keys == file_keys
+    assert "closing_import_key" in file_keys

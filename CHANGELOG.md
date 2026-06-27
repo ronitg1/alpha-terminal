@@ -4,6 +4,31 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] — 2026-06-27
+
+### Added (Phase 2 database cutover — dormant; local behavior unchanged)
+- **Three more stores cut over** to dispatch to Postgres under
+  `STORAGE_BACKEND=db`, each returning the exact same shapes as before:
+  - **Per-ticker portfolio settings** (`portfolio_settings_service` →
+    `PortfolioSettingsRepository`) — the allocation/agent overrides per sleeve.
+  - **Saved theses** (`thesis_store` → `ThesisRepository`) — portfolio/sleeve/
+    ticker LLM memos; the `saved_at` stamp is still applied the same way.
+  - **P&L positions** (`pnl_service` → `PnlRepository`) — persistence only; all
+    the P&L math, id generation, and validation stay exactly where they were.
+  Under the default `file` backend every one of these still reads/writes its
+  local JSON file, unchanged.
+
+### Fixed
+- **P&L record shape made backend-identical.** A freshly created position now
+  always carries the `closing_import_key` field (null until a closing fill
+  matches it), so file-backend and DB-backend records have the same key set —
+  matching what the Fidelity importer already produced.
+
+### Tests
+- Extended `tests/test_storage_cutover.py` with both-backend shape-identity
+  coverage for all three stores (incl. ticker-case normalization, thesis
+  replace, P&L CRUD + import-key dedupe + create key-set parity). Suite at 240.
+
 ## [1.4.3] — 2026-06-27
 
 ### Added (Phase 2 database cutover — dormant; local behavior unchanged)

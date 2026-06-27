@@ -13,6 +13,11 @@ Storage: ``app/data/theses.json`` — a flat dict keyed by scope:
 
 Each saved payload carries a ``saved_at`` ISO timestamp added on write.
 Writes are atomic (temp file + ``os.replace``) and thread-safe.
+
+Storage backend: when ``STORAGE_BACKEND=db`` ``save``/``get_all`` dispatch to
+:class:`ThesisRepository` (Postgres). The ``saved_at`` stamp is still added here
+(same payload either way), so the ``{key: payload}`` shape is identical. Default
+``file`` — local behavior unchanged. See :mod:`app.backend.services._storage`.
 """
 from __future__ import annotations
 
@@ -24,6 +29,9 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.backend.repositories.thesis_repository import ThesisRepository
+from app.backend.services._storage import DEFAULT_USER_ID, session_scope, use_db
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +71,10 @@ def save(key: str, thesis: dict[str, Any]) -> None:
     """Persist a thesis under ``key``, stamping ``saved_at``. Best-effort —
     callers treat a failed save as non-fatal (the live response still flows)."""
     record = {**thesis, "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if use_db():
+        with session_scope() as db:
+            ThesisRepository(db, DEFAULT_USER_ID).upsert(key, record)
+        return
     with _lock:
         data = _load()
         data[key] = record
@@ -71,5 +83,8 @@ def save(key: str, thesis: dict[str, Any]) -> None:
 
 def get_all() -> dict[str, Any]:
     """Every saved thesis, keyed by scope."""
+    if use_db():
+        with session_scope() as db:
+            return ThesisRepository(db, DEFAULT_USER_ID).get_all()
     with _lock:
         return _load()
