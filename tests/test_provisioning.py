@@ -172,6 +172,19 @@ def test_owner_claims_on_first_request(db, auth_on, rsa_keypair, monkeypatch):
         assert s.query(Portfolio).filter_by(user_id="default").count() == 0
 
 
+def test_owner_claims_with_string_email_verified(db, auth_on, rsa_keypair, monkeypatch):
+    # Clerk emits email_verified as the string "true" (shortcode in a JSON string);
+    # the owner claim must still fire.
+    monkeypatch.setenv("OWNER_EMAIL", "owner@example.com")
+    _seed_default_portfolio(db)
+    headers = _bearer(rsa_keypair, "user_owner", "owner@example.com", email_verified="true")
+    resp = client.get("/sleeves/watchlists", headers=headers)
+    assert resp.status_code == 200
+    with db() as s:
+        assert s.query(Portfolio).filter_by(user_id="user_owner").count() == 1
+        assert s.query(Portfolio).filter_by(user_id="default").count() == 0
+
+
 def test_auth_off_does_not_provision(db):
     # Auth off: no provisioning, no users created.
     client.get("/sleeves/watchlists")

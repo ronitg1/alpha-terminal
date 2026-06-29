@@ -242,7 +242,10 @@ def resolve_auth(authorization: str | None) -> AuthResult:
     # attacker cannot claim by spoofing an unverified email they don't control.
     email = claims.get("email")
     email = email.strip().lower() if isinstance(email, str) and email.strip() else None
-    email_verified = claims.get("email_verified") is True
+    # Clerk's JWT-template shortcode substitutes into a string, so email_verified
+    # may arrive as the boolean True or the string "true" — accept either.
+    raw_verified = claims.get("email_verified")
+    email_verified = raw_verified is True or (isinstance(raw_verified, str) and raw_verified.strip().lower() == "true")
     return AuthResult(sub, _STATUS_OK, email=email, email_verified=email_verified)
 
 

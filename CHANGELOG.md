@@ -4,6 +4,29 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.5] — 2026-06-28
+
+### Added (Phase 3 — auth, step 6 of 7; DORMANT behind VITE_AUTH_ENABLED)
+- **Frontend login + BYOK settings (Clerk).** Added `@clerk/clerk-react`. When
+  `VITE_AUTH_ENABLED` is on (and `VITE_CLERK_PUBLISHABLE_KEY` is set), the app
+  shows a Clerk sign-in gate (Email + Google), a top-right account menu, and an
+  **API keys** settings dialog to add/replace/remove your own DeepSeek (required),
+  Massive, and Finnhub keys — key values are write-only and never shown again.
+- **Token attachment.** A single `window.fetch` wrapper attaches the Clerk
+  session token to every backend call, covering the regular API clients AND the
+  fetch-based SSE streams (morning scan, chat). It is FormData-safe (won't corrupt
+  uploads), retries once on a transient null token, and only attaches to the
+  absolute backend origin (no third-party leak).
+- **Fully dormant when off.** With `VITE_AUTH_ENABLED` unset (the default), no
+  Clerk provider/gate/menu renders and `window.fetch` is untouched — the app is
+  byte-for-byte the current dashboard. Verified: dormant renders the full
+  dashboard, auth-on renders the Clerk gate, `tsc` + `npm run build` pass.
+- **Backend:** owner-claim now accepts `email_verified` as the boolean `true` or
+  the string `"true"` (Clerk emits the latter). Suite **335 passing**.
+- Architect-reviewed (token threading, multipart, dormant safety); code fixes
+  applied. Live OAuth round-trip + a Clerk production instance are the Step 7
+  runtime items.
+
 ## [1.6.4] — 2026-06-28
 
 ### Added (Phase 3 — auth, step 5 of 7; DORMANT behind AUTH_ENABLED)
