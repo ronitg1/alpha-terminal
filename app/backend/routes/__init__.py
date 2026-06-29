@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.backend.auth import get_current_user_id
+from app.backend.routes.access import router as access_router
 from app.backend.routes.auth import router as auth_router
 from app.backend.routes.hedge_fund import router as hedge_fund_router
 from app.backend.routes.health import router as health_router
@@ -46,3 +47,4 @@ api_router.include_router(patterns_router, tags=["patterns"], dependencies=_AUTH
 api_router.include_router(news_router, tags=["news"], dependencies=_AUTH)
 api_router.include_router(transcripts_router, tags=["transcripts"], dependencies=_AUTH)
 api_router.include_router(pnl_router, dependencies=_AUTH)
+api_router.include_router(access_router, tags=["access"], dependencies=_AUTH)

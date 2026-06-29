@@ -201,3 +201,24 @@ class ScanResult(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "scan_date", name="uq_scan_user_date"),
     )
+
+
+class AccessRequest(Base):
+    """A user's request to use the owner's shared market-data keys for free
+    (Phase 3). The owner approves/denies; an approved row grants the requester's
+    email shared-key access in addition to the static ``SHARED_DATA_EMAILS`` env
+    allowlist. One row per requester (``user_id``)."""
+
+    __tablename__ = "access_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(255), nullable=False)          # requester's Clerk sub
+    email = Column(String(320), nullable=True, index=True)  # requester's email (for the grant match)
+    status = Column(String(16), nullable=False, default="pending")  # pending | approved | denied
+    note = Column(Text, nullable=True)                     # optional message to the owner
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_access_request_user"),
+    )

@@ -27,6 +27,8 @@ const PROVIDERS: { id: Provider; label: string; required: boolean; help: string 
 ];
 
 interface KeySummary { provider: string; has_key: boolean }
+interface AccessInfo { is_owner: boolean; shared_data_approved: boolean; request_status: string | null }
+interface AccessReq { id: number; user_id: string; email: string | null; status: string; note: string | null }
 
 export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -34,6 +36,47 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [access, setAccess] = useState<AccessInfo | null>(null);
+  const [requests, setRequests] = useState<AccessReq[]>([]);
+
+  const loadAccess = useCallback(async () => {
+    try {
+      const me: AccessInfo = await (await fetch(`${API_BASE_URL}/access/me`)).json();
+      setAccess(me);
+      if (me.is_owner) {
+        const rows: AccessReq[] = await (await fetch(`${API_BASE_URL}/access/requests`)).json();
+        setRequests(rows);
+      }
+    } catch {
+      /* access info is best-effort; ignore */
+    }
+  }, []);
+
+  async function requestAccess() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/access/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success('Request sent — the owner will review it.');
+      await loadAccess();
+    } catch (e) {
+      toast.error(`Couldn't send request: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  async function decide(id: number, action: 'approve' | 'deny') {
+    try {
+      const res = await fetch(`${API_BASE_URL}/access/requests/${id}/${action}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success(`Request ${action === 'approve' ? 'approved' : 'denied'}.`);
+      await loadAccess();
+    } catch (e) {
+      toast.error(`Couldn't update request: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -50,8 +93,11 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    if (open) {
+      void refresh();
+      void loadAccess();
+    }
+  }, [open, refresh, loadAccess]);
 
   async function save(provider: Provider) {
     const key = (drafts[provider] ?? '').trim();
@@ -139,6 +185,54 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             );
           })}
           {loading && <p className="text-xs text-muted-foreground">Loading…</p>}
+
+          {/* Request free access to the owner's shared market-data keys. */}
+          {access && !access.is_owner && !access.shared_data_approved && (
+            <div className="rounded-md border border-border p-3">
+              {access.request_status === 'pending' ? (
+                <p className="text-xs text-muted-foreground">
+                  Your request for free market-data access is pending the owner's review.
+                </p>
+              ) : access.request_status === 'denied' ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Your access request was declined.</p>
+                  <Button size="sm" variant="link" className="h-auto p-0" onClick={requestAccess}>
+                    Request again
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">
+                    Don't want to add Massive/Finnhub keys?
+                  </p>
+                  <Button size="sm" variant="link" className="h-auto p-0" onClick={requestAccess}>
+                    Request free market-data access from the owner →
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Owner-only: review pending access requests. */}
+          {access?.is_owner && requests.length > 0 && (
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <p className="text-sm font-medium">Access requests</p>
+              {requests.map((r) => (
+                <div key={r.id} className="flex items-center gap-2 text-xs">
+                  <span className="truncate">{r.email ?? r.user_id}</span>
+                  <Badge variant={r.status === 'approved' ? 'success' : r.status === 'denied' ? 'destructive' : 'outline'} className="ml-auto">
+                    {r.status}
+                  </Badge>
+                  {r.status !== 'approved' && (
+                    <Button size="sm" variant="outline" onClick={() => decide(r.id, 'approve')}>Approve</Button>
+                  )}
+                  {r.status !== 'denied' && (
+                    <Button size="sm" variant="ghost" onClick={() => decide(r.id, 'deny')}>Deny</Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

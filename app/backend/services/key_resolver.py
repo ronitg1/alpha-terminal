@@ -51,6 +51,7 @@ __all__ = [
     "resolved_api_keys",
     "provider_keys_for_request",
     "is_shared_data_approved",
+    "is_owner",
     "MissingUserKey",
 ]
 
@@ -86,23 +87,45 @@ def _shared_data_emails() -> set[str]:
     return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
-def is_shared_data_approved(user_id: str, email: str | None, email_verified: bool) -> bool:
-    """Whether this user may use the OWNER's shared Massive/Finnhub keys.
-
-    Approved if: the owner (matched by unspoofable ``OWNER_USER_ID`` sub, or a
-    VERIFIED email equal to ``OWNER_EMAIL``), or a VERIFIED email in the
-    ``SHARED_DATA_EMAILS`` allowlist. An unverified email never qualifies, so an
-    attacker on open signup can't spend the owner's market-data quota by claiming
-    someone else's address."""
+def is_owner(user_id: str, email: str | None, email_verified: bool) -> bool:
+    """Whether this user is the deployment owner — matched by the unspoofable
+    ``OWNER_USER_ID`` sub, or a VERIFIED email equal to ``OWNER_EMAIL``. Used to
+    gate owner-only actions (approving others' access requests)."""
     owner_sub = os.environ.get("OWNER_USER_ID", "").strip()
     if owner_sub and user_id == owner_sub:
         return True
     if not (email and email_verified):
         return False
     owner_email = os.environ.get("OWNER_EMAIL", "").strip().lower()
-    if owner_email and email == owner_email:
+    return bool(owner_email and email == owner_email)
+
+
+def _is_email_db_approved(email: str) -> bool:
+    """Whether the owner has approved an access request for ``email`` (DB grant)."""
+    try:
+        with session_scope() as db:
+            from app.backend.repositories.access_request_repository import AccessRequestRepository
+
+            return AccessRequestRepository(db).is_email_approved(email)
+    except Exception as exc:  # never let an approval-check failure crash a request
+        logger.warning("Access-request approval check failed: %s", exc)
+        return False
+
+
+def is_shared_data_approved(user_id: str, email: str | None, email_verified: bool) -> bool:
+    """Whether this user may use the OWNER's shared Massive/Finnhub keys.
+
+    Approved if: the owner; or a VERIFIED email in the static ``SHARED_DATA_EMAILS``
+    env allowlist; or a VERIFIED email the owner has approved via an access request
+    (DB grant). An unverified email never qualifies, so an attacker on open signup
+    can't spend the owner's market-data quota by claiming someone else's address."""
+    if is_owner(user_id, email, email_verified):
         return True
-    return email in _shared_data_emails()
+    if not (email and email_verified):
+        return False
+    if email in _shared_data_emails():
+        return True
+    return _is_email_db_approved(email)
 
 
 class MissingUserKey(Exception):

@@ -4,6 +4,24 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.7] — 2026-06-29
+
+### Added (Phase 3 — self-service shared-access requests; DORMANT behind AUTH_ENABLED)
+- **"Request free access" flow.** In the API-keys Settings dialog, a user without
+  their own market-data keys can request free use of the owner's shared keys; the
+  owner sees pending requests in the same dialog and approves/denies them. An
+  approved request grants that (verified) email shared-key access, on top of the
+  static `SHARED_DATA_EMAILS` env allowlist — so the owner manages access in-app
+  instead of editing env vars.
+- **Backend:** new `access_requests` table (migration `c3d4e5f6a7b8`),
+  `AccessRequestRepository`, and `/access` routes (`GET /access/me`,
+  `POST /access/request`, owner-only `GET /access/requests` +
+  `POST /access/requests/{id}/{approve|deny}`). `key_resolver.is_shared_data_approved`
+  now also consults DB grants; new `is_owner()` gates the owner routes.
+- **Tests:** +7 (repo upsert/approve/case-insensitive/re-request, DB-grant →
+  shared-approved, is_owner, request→owner-approve→approved round-trip, owner
+  flags, auth required). Suite **351 passing**. All dormant when auth is off.
+
 ## [1.6.6] — 2026-06-29
 
 ### Added (Phase 3 — shared market-data key allowlist; DORMANT behind AUTH_ENABLED)
