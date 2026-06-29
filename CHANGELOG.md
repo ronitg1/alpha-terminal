@@ -4,6 +4,27 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.4] — 2026-06-28
+
+### Added (Phase 3 — auth, step 5 of 7; DORMANT behind AUTH_ENABLED)
+- **First-login provisioning + owner data-claim.** New
+  `app/backend/services/provisioning.py`: the first time an authenticated user is
+  seen, their `users` row is created and they either **claim** the existing
+  `default`-owned data (portfolios, watchlists, settings, theses, P&L, scans, API
+  keys) or get a **generic starter portfolio**. Runs from `get_current_user_id`
+  only under the DB backend; idempotent (in-process cache + row-existence guard);
+  never breaks a request on failure.
+- **Secure owner match.** The claim fires only for the configured owner, by either
+  `OWNER_USER_ID` (the Clerk `sub` — unspoofable, preferred) or `OWNER_EMAIL`
+  matched against a **verified** email (`email_verified` true in the token). An
+  unverified or attacker-supplied email can never claim the owner's data — closes
+  the open-signup takeover/key-theft vector the security review flagged. The claim
+  is inherently one-time (only the owner's `sub` triggers it, only on first login).
+- **Tests:** +9 (starter seeding, verified-email claim, unverified-email refused,
+  `OWNER_USER_ID` claim, non-owner, idempotency, end-to-end claim on first gated
+  request, auth-off no provisioning). Suite **334 passing**. Architect
+  security-reviewed; the blocker (unverified-email claim) fixed here.
+
 ## [1.6.3] — 2026-06-28
 
 ### Added (Phase 3 — auth, step 4 of 7; DORMANT behind AUTH_ENABLED)

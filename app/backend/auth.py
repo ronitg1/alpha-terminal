@@ -204,6 +204,8 @@ class AuthResult:
     user_id: str
     status: str
     detail: str = ""
+    email: str | None = None  # from the token's `email` claim, when present
+    email_verified: bool = False  # from `email_verified`; only a verified email may claim owner data
 
 
 def resolve_auth(authorization: str | None) -> AuthResult:
@@ -234,7 +236,14 @@ def resolve_auth(authorization: str | None) -> AuthResult:
         return AuthResult(
             UNAUTHENTICATED_USER_ID, _STATUS_UNAUTHENTICATED, "Token has no subject (sub) claim"
         )
-    return AuthResult(sub, _STATUS_OK)
+    # `email` / `email_verified` are custom Clerk session-token claims (configure
+    # them in the JWT template). Used only to match the data-claim owner; absence
+    # is fine. The owner data-claim requires email_verified to be true, so an
+    # attacker cannot claim by spoofing an unverified email they don't control.
+    email = claims.get("email")
+    email = email.strip().lower() if isinstance(email, str) and email.strip() else None
+    email_verified = claims.get("email_verified") is True
+    return AuthResult(sub, _STATUS_OK, email=email, email_verified=email_verified)
 
 
 async def get_current_user_id(request: Request) -> str:
@@ -253,7 +262,18 @@ async def get_current_user_id(request: Request) -> str:
     if result is None:
         result = resolve_auth(request.headers.get("Authorization"))
 
-    if result.status in (_STATUS_DISABLED, _STATUS_OK):
+    if result.status == _STATUS_OK:
+        # First-login provisioning (create row, claim owner data or seed starter).
+        # Only under the DB backend; the in-process cache makes this ~free after
+        # the first request. Imported lazily to avoid a module import cycle.
+        from app.backend.services._storage import use_db
+
+        if use_db():
+            from app.backend.services.provisioning import ensure_provisioned
+
+            ensure_provisioned(result.user_id, result.email, result.email_verified)
+        return result.user_id
+    if result.status == _STATUS_DISABLED:
         return result.user_id
     if result.status == _STATUS_MISCONFIGURED:
         # Server-side misconfiguration — fail loudly so it's caught at deploy.
