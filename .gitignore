@@ -51,9 +51,11 @@ ENV/
 Thumbs.db
 
 # ─── Generated graphs (langgraph PNGs etc.) ──────────────────────────────────
-# Ignore all PNGs by default but allow docs/ illustrations.
+# Ignore all PNGs by default but allow docs/ illustrations and the onboarding
+# walkthrough screenshots (committed so they ship to production).
 *.png
 !docs/**/*.png
+!app/frontend/public/onboarding/*.png
 
 # ─── Misc generated files ────────────────────────────────────────────────────
 *.txt

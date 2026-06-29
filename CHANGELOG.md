@@ -4,6 +4,26 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.9] — 2026-06-29
+
+### Added
+- **First-login onboarding walkthrough.** New users see a one-time welcome popup
+  on first login: an 8-slide carousel (overview, Market, Pattern Scanner,
+  Options/Backtest, AI assistant, Portfolio/P&L, and API-key setup) with real
+  screenshots, plus an optional interactive `driver.js` tour that spotlights the
+  live nav. Skippable on every step; auto-shows only once (per-user localStorage
+  flag `alpha-onboarding-v1:<userId>`); replayable anytime via a Help ("?")
+  button in the top-right account controls.
+  - New: `app/frontend/src/components/onboarding/` (`welcome-dialog.tsx`,
+    `use-onboarding.tsx`, `onboarding-steps.tsx`); screenshots in
+    `app/frontend/public/onboarding/`.
+  - `data-tour` attributes added to `left-nav.tsx` / `user-menu.tsx` for the tour.
+  - New dep: `driver.js`. Dormant when `VITE_AUTH_ENABLED` is off.
+- **Screenshot re-capture pipeline.** `npm run capture:onboarding`
+  (`scripts/capture-onboarding.mjs`, puppeteer-core) regenerates the walkthrough
+  images headlessly against an auth-off dev server. `.gitignore` now un-ignores
+  `app/frontend/public/onboarding/*.png` (global `*.png` rule).
+
 ## [1.6.8] — 2026-06-29
 
 ### Fixed
