@@ -10,8 +10,7 @@ from app.backend.models.events import StartEvent, ProgressUpdateEvent, ErrorEven
 from app.backend.services.graph import create_graph, parse_hedge_fund_response, run_graph_async
 from app.backend.services.portfolio import create_portfolio
 from app.backend.services.backtest_service import BacktestService
-from app.backend.context import current_user_id
-from app.backend.services.api_key_service import ApiKeyService
+from app.backend.services.key_resolver import resolved_api_keys
 from src.utils.progress import progress
 from src.utils.analysts import get_agents_list
 
@@ -31,8 +30,9 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
     try:
         # Hydrate API keys from database if not provided
         if not request_data.api_keys:
-            api_key_service = ApiKeyService(db, current_user_id())
-            request_data.api_keys = api_key_service.get_api_keys_dict()
+            # Per-user keys (DeepSeek required, market data shared) — authoritative
+            # dict so get_model never falls back to the owner's DeepSeek env key.
+            request_data.api_keys = resolved_api_keys()
 
         # Create the portfolio
         portfolio = create_portfolio(request_data.initial_cash, request_data.margin_requirement, request_data.tickers, request_data.portfolio_positions)
@@ -176,8 +176,9 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
     try:
         # Hydrate API keys from database if not provided
         if not request_data.api_keys:
-            api_key_service = ApiKeyService(db, current_user_id())
-            request_data.api_keys = api_key_service.get_api_keys_dict()
+            # Per-user keys (DeepSeek required, market data shared) — authoritative
+            # dict so get_model never falls back to the owner's DeepSeek env key.
+            request_data.api_keys = resolved_api_keys()
 
         # Convert model_provider to string if it's an enum
         model_provider = request_data.model_provider

@@ -180,8 +180,14 @@ def run_sleeve(
     end_date: str,
     *,
     show_reasoning: bool = False,
+    api_keys: dict | None = None,
 ) -> list[TickerRow]:
-    """Execute every agent in a sleeve on every ticker and return ranked rows."""
+    """Execute every agent in a sleeve on every ticker and return ranked rows.
+
+    ``api_keys`` is an optional ``{ENV_VAR: key}`` override (e.g.
+    ``{"DEEPSEEK_API_KEY": <user's key>}``) injected into the agent state so the
+    LLM calls use the caller's per-user key (Phase 3 BYOK). When None (the CLI
+    path) the agents fall back to the process env keys, unchanged."""
     if not sleeve["tickers"]:
         logger.info("Sleeve %s has no tickers — skipping.", sleeve_name)
         return []
@@ -195,7 +201,7 @@ def run_sleeve(
             "start_date": end_date,
             "analyst_signals": {},
         },
-        "metadata": {"show_reasoning": show_reasoning},
+        "metadata": {"show_reasoning": show_reasoning, "api_keys": api_keys},
     }
 
     for agent_key in sleeve["agents"]:
@@ -408,6 +414,7 @@ def run_scan(
     ticker_filter: list[str] | None = None,
     watchlist_tickers: list[str] | None = None,
     show_reasoning: bool = False,
+    api_keys: dict | None = None,
 ) -> list[TickerRow]:
     """Run the morning scan over a given portfolio config and return ranked rows.
 
@@ -419,6 +426,8 @@ def run_scan(
     - ``watchlist_tickers``: override the ``opportunistic`` sleeve's tickers with
       this list (applied before the ticker filter, mirroring the CLI).
     - ``ticker_filter``: intersect every selected sleeve's tickers with this list.
+    - ``api_keys``: optional ``{ENV_VAR: key}`` per-user override forwarded to each
+      sleeve (Phase 3 BYOK). None = use process env keys (CLI behavior).
     """
     selected: dict[str, Sleeve] = {
         name: sleeve
@@ -446,7 +455,7 @@ def run_scan(
     all_rows: list[TickerRow] = []
     for sleeve_name, sleeve in selected.items():
         all_rows.extend(
-            run_sleeve(sleeve_name, sleeve, end_date, show_reasoning=show_reasoning)
+            run_sleeve(sleeve_name, sleeve, end_date, show_reasoning=show_reasoning, api_keys=api_keys)
         )
     return all_rows
 

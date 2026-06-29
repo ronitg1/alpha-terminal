@@ -213,6 +213,8 @@ def analyze_transcript(
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
+    from app.backend.services.key_resolver import resolve_key
+
     if len(transcript.strip()) < MIN_TRANSCRIPT_CHARS:
         raise TranscriptError("Transcript is too short to analyze (need 500+ characters).")
 
@@ -232,7 +234,7 @@ def analyze_transcript(
 
     llm = ChatOpenAI(
         model="deepseek-chat",
-        openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+        openai_api_key=(resolve_key("deepseek") or ""),
         openai_api_base="https://api.deepseek.com/v1",
         temperature=0.2,
         max_tokens=3000,

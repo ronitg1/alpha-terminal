@@ -40,7 +40,7 @@ def _capture_run_sleeve(monkeypatch) -> list[tuple[str, list[str]]]:
     testable without invoking any agents/LLM."""
     calls: list[tuple[str, list[str]]] = []
 
-    def fake_run_sleeve(name, sleeve, end_date, *, show_reasoning=False):
+    def fake_run_sleeve(name, sleeve, end_date, *, show_reasoning=False, api_keys=None):
         calls.append((name, list(sleeve["tickers"])))
         return []
 

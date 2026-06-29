@@ -272,6 +272,8 @@ def summarize_article(
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
+    from app.backend.services.key_resolver import resolve_key
+
     book_line = (
         f"RELATED TICKER: {related}"
         + (f" (held in the user's {sleeve} sleeve)" if sleeve else "")
@@ -286,7 +288,7 @@ def summarize_article(
 
     llm = ChatOpenAI(
         model="deepseek-chat",
-        openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+        openai_api_key=(resolve_key("deepseek") or ""),
         openai_api_base="https://api.deepseek.com/v1",
         temperature=0.3,
         max_tokens=500,

@@ -4,6 +4,32 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] — 2026-06-28
+
+### Added (Phase 3 — auth, step 4 of 7; DORMANT behind AUTH_ENABLED)
+- **Per-user key resolver wired into the LLM + data paths.** New
+  `app/backend/services/key_resolver.py` resolves each provider's key as
+  *this user's stored key → else the shared env key*, gated by policy: **DeepSeek
+  requires the user's own key** (no shared fallback when auth is on); **Massive +
+  Finnhub fall back to the shared owner env keys**. When auth is off the resolver
+  returns the env key with no DB hit — fully dormant.
+- **Scan uses the caller's DeepSeek key end-to-end.** `run_sleeve`/`run_scan` take
+  an `api_keys` override that rides into the agent state and through `call_llm`;
+  the SSE scan routes resolve the user's key in-request and pass it into the
+  worker thread. If auth is on and the user hasn't added a DeepSeek key, the scan
+  soft-gates with a clear "add your key in Settings" message (the first-LLM-use
+  prompt). Thesis/news/transcript/chat LLM calls use the resolver too.
+- **Owner-budget leak closed.** `get_model` no longer falls back to the shared
+  `DEEPSEEK_API_KEY` env var when an explicit key dict is supplied — so a logged-in
+  user without their own key can never silently spend the owner's DeepSeek budget
+  (it fails closed). The legacy hedge-fund + backtest paths now build their key
+  dict through the resolver. LLM error logging no longer echoes exception text
+  (which could embed a key).
+- **Tests:** +11 (resolver env/user/policy/isolation, `resolved_api_keys`
+  fail-closed, the `get_model` dict-authoritative guard, scan key injection into
+  agent state + `call_llm`). Suite **325 passing**. Architect security-reviewed;
+  both blockers (the env-fallback leak and the backtest soft-gate) fixed here.
+
 ## [1.6.2] — 2026-06-28
 
 ### Added (Phase 3 — auth, step 3 of 7; DORMANT behind AUTH_ENABLED)

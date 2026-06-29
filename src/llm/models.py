@@ -163,7 +163,15 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             raise ValueError("Anthropic API key not found.  Please make sure ANTHROPIC_API_KEY is set in your .env file or provided via API keys.")
         return ChatAnthropic(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.DEEPSEEK:
-        api_key = (api_keys or {}).get("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+        # When an explicit api_keys dict is supplied (the hosted multi-user path),
+        # it is AUTHORITATIVE — do NOT fall back to the shared os.environ key. That
+        # enforces the BYOK policy: a user without their own DeepSeek key must not
+        # silently spend the owner's env key. Only the CLI / legacy path (api_keys
+        # is None) falls back to the environment.
+        if api_keys is not None:
+            api_key = (api_keys or {}).get("DEEPSEEK_API_KEY")
+        else:
+            api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             print(f"API Key Error: Please make sure DEEPSEEK_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("DeepSeek API key not found.  Please make sure DEEPSEEK_API_KEY is set in your .env file or provided via API keys.")

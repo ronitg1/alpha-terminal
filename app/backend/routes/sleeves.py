@@ -61,6 +61,7 @@ from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
 from app.backend.services._storage import current_user_id, session_scope, use_db
+from app.backend.services.key_resolver import MissingUserKey, require_key, resolve_key, resolved_api_keys
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
 import src.config.portfolio_config as _portfolio_config_module
@@ -85,6 +86,20 @@ def _live_sleeves() -> dict:
 
 def _live_cash_reserve() -> float:
     return sleeve_config_service.get_cash_reserve()
+
+
+def _scan_api_keys_or_error() -> tuple[dict | None, str | None]:
+    """Resolve the per-user DeepSeek key for an LLM scan (Phase 3 BYOK).
+
+    Returns ``(api_keys_dict, None)`` on success or ``(None, message)`` when the
+    user must add their own key first — the "add your DeepSeek key" soft gate at
+    first LLM use. When auth is off the resolver returns the shared env key, so
+    this is transparent for the local/CLI app."""
+    try:
+        deepseek_key = require_key("deepseek")
+    except MissingUserKey:
+        return None, "A DeepSeek API key is required to run a scan. Add yours in Settings."
+    return {"DEEPSEEK_API_KEY": deepseek_key}, None
 
 
 from src.config.watchlist import get_watchlist
@@ -880,6 +895,14 @@ async def run_scan(req: ScanRequest, request: Request):
         disconnect_task: asyncio.Task | None = None
         all_rows: list[TickerRow] = []
 
+        # Resolve the per-user DeepSeek key before doing any work; soft-gate if the
+        # user hasn't added one (Phase 3 BYOK). Resolved here in the request
+        # context, then passed explicitly into the scan worker thread.
+        byok_keys, key_error = _scan_api_keys_or_error()
+        if key_error:
+            yield ErrorEvent(message=key_error).to_sse()
+            return
+
         # Progress handler matches the signature used by src/utils/progress.py:
         #   handler(agent_name, ticker, status, analysis, timestamp)
         # Called from worker thread when an agent invokes progress.update_status.
@@ -906,7 +929,7 @@ async def run_scan(req: ScanRequest, request: Request):
                     logger.info("Skipping sleeve '%s' — no tickers after filtering.", name)
                     continue
                 rows: list[TickerRow] = await asyncio.to_thread(
-                    run_sleeve, name, sleeve, end_date, show_reasoning=False
+                    run_sleeve, name, sleeve, end_date, show_reasoning=False, api_keys=byok_keys
                 )
                 out.extend(rows)
                 # Emit per-sleeve completion so the UI fills in as we go.
@@ -1052,6 +1075,12 @@ async def run_ticker_scan(ticker: str, request: Request):
     async def event_generator():
         progress_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
 
+        # Per-user DeepSeek key + soft gate (Phase 3 BYOK), resolved in-context.
+        byok_keys, key_error = _scan_api_keys_or_error()
+        if key_error:
+            yield ErrorEvent(message=key_error).to_sse()
+            return
+
         def progress_handler(agent_name, ticker_, status, analysis, timestamp):
             progress_queue.put_nowait(
                 ProgressUpdateEvent(
@@ -1068,7 +1097,7 @@ async def run_ticker_scan(ticker: str, request: Request):
         disconnect_task: asyncio.Task | None = None
         try:
             scan_task = asyncio.create_task(
-                asyncio.to_thread(run_sleeve, sleeve_name, sleeve, end_date, show_reasoning=False)
+                asyncio.to_thread(run_sleeve, sleeve_name, sleeve, end_date, show_reasoning=False, api_keys=byok_keys)
             )
             disconnect_task = asyncio.create_task(_detect_disconnect())
             yield StartEvent().to_sse()
@@ -1601,7 +1630,7 @@ async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
         try:
             llm = ChatOpenAI(
                 model="deepseek-chat",
-                openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+                openai_api_key=(resolve_key("deepseek") or ""),
                 openai_api_base="https://api.deepseek.com/v1",
                 temperature=0.3,
                 max_tokens=220,
@@ -2055,7 +2084,7 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
 
             llm = ChatOpenAI(
                 model="deepseek-chat",
-                openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+                openai_api_key=(resolve_key("deepseek") or ""),
                 openai_api_base="https://api.deepseek.com/v1",
                 temperature=0.4,
                 max_tokens=600,
@@ -2895,13 +2924,10 @@ class _RequestShim:
     """
 
     def __init__(self, model_name: str, model_provider: str):
-        self.api_keys: dict[str, str] = {
-            "FINANCIAL_DATASETS_API_KEY": os.environ.get("FINANCIAL_DATASETS_API_KEY", ""),
-            "MASSIVE_API_KEY": os.environ.get("MASSIVE_API_KEY", ""),
-            "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
-            "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
-            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
-        }
+        # Per-user-aware key dict (DeepSeek required, market data shared). The dict
+        # is authoritative for get_model, so a user without a DeepSeek key fails
+        # closed rather than spending the owner's env key.
+        self.api_keys: dict[str, str] = resolved_api_keys()
         self.model_name = model_name
         self.model_provider = model_provider
         # Some agents look here for per-agent model overrides; none = use global.
@@ -3548,7 +3574,7 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
 
     llm = ChatOpenAI(
         model="deepseek-chat",
-        openai_api_key=_os.environ.get("DEEPSEEK_API_KEY", ""),
+        openai_api_key=(resolve_key("deepseek") or ""),
         openai_api_base="https://api.deepseek.com/v1",
         temperature=0.3,
         max_tokens=max_tokens,

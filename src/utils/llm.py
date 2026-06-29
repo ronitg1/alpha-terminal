@@ -1,10 +1,13 @@
 """Helper functions for LLM"""
 
 import json
+import logging
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
 from src.graph.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def call_llm(
@@ -40,12 +43,17 @@ def call_llm(
         model_name = "deepseek-reasoner"
         model_provider = "DeepSeek"
 
-    # Extract API keys from state if available
+    # Extract API keys from state if available. Two shapes are supported:
+    #   - metadata["request"].api_keys  (legacy hedge-fund path: a request model)
+    #   - metadata["api_keys"]          (a plain {ENV_VAR: key} dict — how the
+    #                                    morning scan injects the per-user BYOK key)
     api_keys = None
     if state:
         request = state.get("metadata", {}).get("request")
         if request and hasattr(request, 'api_keys'):
             api_keys = request.api_keys
+        elif state.get("metadata", {}).get("api_keys"):
+            api_keys = state["metadata"]["api_keys"]
 
     model_info = get_model_info(model_name, model_provider)
     llm = get_model(model_name, model_provider, api_keys)
@@ -76,7 +84,10 @@ def call_llm(
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
 
             if attempt == max_retries - 1:
-                print(f"Error in LLM call after {max_retries} attempts: {e}")
+                # Log only the exception TYPE, not str(e): provider client errors
+                # can embed request context (and, with per-user BYOK keys in play,
+                # potentially the key) — keep secrets out of logs.
+                logger.warning("LLM call failed after %d attempts: %s", max_retries, type(e).__name__)
                 # Use default_factory if provided, otherwise create a basic default
                 if default_factory:
                     return default_factory()
