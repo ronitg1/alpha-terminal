@@ -161,11 +161,34 @@ async function main() {
     await sleep(2500);
     await shoot(page, '03-market.png');
 
-    // 04 patterns — Screening / Pattern Scanner
+    // 04 patterns — Screening / Pattern Scanner, with a real (small, fast)
+    // custom scan so the slide shows detected patterns instead of an empty form.
     await clickNav(page, 'Screening');
     await sleep(800);
     await clickByText(page, 'Pattern Scanner');
-    await sleep(2000);
+    await sleep(1500);
+    await clickByText(page, 'Custom');
+    try {
+      await page.waitForSelector('textarea[placeholder^="AAPL"]', { timeout: 8000 });
+      await page.type(
+        'textarea[placeholder^="AAPL"]',
+        'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO AMD NFLX CRM ORCL',
+      );
+      await sleep(300);
+      await page.evaluate(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) =>
+          b.textContent.trim().startsWith('Run Scan'),
+        );
+        btn?.click();
+      });
+      // Results render the "Quick Stats" / "Total Signals" panel once rows exist.
+      await page.waitForFunction(() => document.body.innerText.includes('Total Signals'), {
+        timeout: 90_000,
+      });
+      await sleep(1500);
+    } catch {
+      console.warn('  scan produced no results in time — capturing the scanner form');
+    }
     await shoot(page, '04-patterns.png');
 
     // 05 screening — Options Screener

@@ -280,11 +280,20 @@ export function LeftNav() {
   const [quotesLoading, setQuotesLoading] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // All tickers we want prices for
+  // Only fetch prices for tickers that are actually on screen — i.e. inside an
+  // EXPANDED watchlist/sleeve, plus the sectors when that group is open.
+  // Requesting every ticker across all watchlists (hundreds) blew past the
+  // backend's 150-per-request cap, so anything past the first 150 came back
+  // blank ("—") forever. Scoping to visible rows keeps each request small and
+  // the API client chunks at 150 as a safety net (see sleeves-api.getQuotes).
   const allTickers = [
-    ...watchlists.flatMap((wl) => wl.tickers.map((e) => e.ticker)),
-    ...(config?.sleeves.flatMap((s) => s.tickers) ?? []),
-    ...SECTOR_ETFS.map((s) => s.ticker),
+    ...watchlists
+      .filter((wl) => expandedWatchlists.has(wl.name))
+      .flatMap((wl) => wl.tickers.map((e) => e.ticker)),
+    ...(config?.sleeves
+      .filter((s) => expandedSleeves.has(s.name))
+      .flatMap((s) => s.tickers) ?? []),
+    ...(sectorsOpen ? SECTOR_ETFS.map((s) => s.ticker) : []),
   ];
   const uniqueTickers = [...new Set(allTickers)];
 

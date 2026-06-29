@@ -75,6 +75,10 @@ class UserSettings(Base):
 
     user_id = Column(String(255), primary_key=True)
     cash_reserve_pct = Column(Float, nullable=False, default=DEFAULT_CASH_RESERVE_PCT)
+    # Whether the user has finished (or skipped) the first-login onboarding
+    # walkthrough. Server-side source of truth so it's once-per-account forever,
+    # surviving a browser/localStorage clear or a new device.
+    onboarding_completed = Column(Boolean, nullable=False, default=False, server_default=func.false())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

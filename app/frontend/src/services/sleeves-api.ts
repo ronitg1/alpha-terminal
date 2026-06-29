@@ -199,10 +199,29 @@ export const sleevesApi = {
   putPortfolioSettings: (settings: PortfolioSettings) =>
     putJSON<{ settings: PortfolioSettings }>('/sleeves/portfolio/settings', { settings }),
 
-  getQuotes: (tickers: string[]) =>
-    getJSON<{ quotes: Record<string, Quote> }>(
-      `/sleeves/quotes?tickers=${tickers.map(encodeURIComponent).join(',')}`,
-    ),
+  // Chunk at the backend's 150-ticker cap so a large request never silently
+  // drops the tail. Chunks fetch concurrently and merge into one map.
+  getQuotes: async (tickers: string[]): Promise<{ quotes: Record<string, Quote> }> => {
+    const CHUNK = 150;
+    if (tickers.length === 0) return { quotes: {} };
+    if (tickers.length <= CHUNK) {
+      return getJSON<{ quotes: Record<string, Quote> }>(
+        `/sleeves/quotes?tickers=${tickers.map(encodeURIComponent).join(',')}`,
+      );
+    }
+    const chunks: string[][] = [];
+    for (let i = 0; i < tickers.length; i += CHUNK) chunks.push(tickers.slice(i, i + CHUNK));
+    const results = await Promise.all(
+      chunks.map((c) =>
+        getJSON<{ quotes: Record<string, Quote> }>(
+          `/sleeves/quotes?tickers=${c.map(encodeURIComponent).join(',')}`,
+        ),
+      ),
+    );
+    const quotes: Record<string, Quote> = {};
+    for (const r of results) Object.assign(quotes, r.quotes);
+    return { quotes };
+  },
 };
 
 // ─── SSE streaming helper (used by backtest endpoints) ─────────────────────

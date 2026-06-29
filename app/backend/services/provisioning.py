@@ -160,7 +160,13 @@ def _claim_default_data(db, user_id: str) -> int:
 
 def _seed_starter(db, user_id: str) -> None:
     """Give a new user a usable starting point."""
-    db.add(UserSettings(user_id=user_id, cash_reserve_pct=DEFAULT_CASH_RESERVE_PCT))
+    db.add(
+        UserSettings(
+            user_id=user_id,
+            cash_reserve_pct=DEFAULT_CASH_RESERVE_PCT,
+            onboarding_completed=False,  # new users see the walkthrough once
+        )
+    )
     db.add(
         Portfolio(
             user_id=user_id,

@@ -54,6 +54,10 @@ class PortfolioRepository:
         row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
         return row.cash_reserve_pct if row else DEFAULT_CASH_RESERVE_PCT
 
+    def get_onboarding_completed(self) -> bool:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        return bool(row.onboarding_completed) if row else False
+
     # ─── mutations ──────────────────────────────────────────────────────────
 
     def _apply(self, p: Portfolio, sleeve: dict[str, Any]) -> None:
@@ -122,3 +126,13 @@ class PortfolioRepository:
             row.cash_reserve_pct = pct
         self.db.commit()
         return pct
+
+    def set_onboarding_completed(self, flag: bool) -> bool:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        if row is None:
+            row = UserSettings(user_id=self.user_id, onboarding_completed=flag)
+            self.db.add(row)
+        else:
+            row.onboarding_completed = flag
+        self.db.commit()
+        return flag

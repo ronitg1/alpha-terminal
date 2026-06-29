@@ -27,6 +27,7 @@ from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import pnl_service
 from app.backend.services import watchlist_service
+from app.backend.services import user_settings_service
 from app.backend.routes import sleeves as sleeves_routes
 
 
@@ -669,3 +670,41 @@ def test_legacy_watchlist_file_read_shape_matches_db(db_backend, monkeypatch):
         assert set(file_entries[0].keys()) == set(db_entry.keys()) == {"ticker", "comment"}
     else:
         assert set(db_entry.keys()) == {"ticker", "comment"}
+
+
+# ─── user_settings_service (onboarding flag) ─────────────────────────────────
+
+def _exercise_onboarding() -> dict:
+    """Read/flip/read the onboarding flag and capture every observable result."""
+    out: dict = {}
+    out["initial"] = user_settings_service.get_onboarding_completed()
+    out["after_set"] = user_settings_service.set_onboarding_completed(True)
+    out["read_after_set"] = user_settings_service.get_onboarding_completed()
+    out["after_clear"] = user_settings_service.set_onboarding_completed(False)
+    out["read_after_clear"] = user_settings_service.get_onboarding_completed()
+    return out
+
+
+def test_onboarding_db_backend(db_backend):
+    result = _exercise_onboarding()
+    assert result["initial"] is False
+    assert result["after_set"] is True
+    assert result["read_after_set"] is True
+    assert result["after_clear"] is False
+    assert result["read_after_clear"] is False
+
+
+def test_onboarding_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    """Both backends start "not onboarded" and observe identical results across
+    the full read/set/clear sequence."""
+    db_result = _exercise_onboarding()
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(user_settings_service, "_DATA_PATH", tmp_path / "onboarding.json")
+    file_result = _exercise_onboarding()
+
+    assert db_result == file_result
+    # And the file write actually persisted the final state.
+    monkeypatch.setattr(user_settings_service, "_DATA_PATH", tmp_path / "onboarding.json")
+    user_settings_service.set_onboarding_completed(True)
+    assert user_settings_service.get_onboarding_completed() is True

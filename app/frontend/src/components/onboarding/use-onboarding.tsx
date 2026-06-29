@@ -2,12 +2,12 @@
  * Onboarding provider — owns first-login detection, the "already seen it" flag,
  * and the interactive tour.
  *
- * First-login detection is frontend-only: we store a flag in localStorage,
- * namespaced by the Clerk user id, so it is per-account on a given browser. This
- * deliberately avoids a backend/DB change (zero risk to the live schema). The
- * one trade-off: clearing browser data, or signing in on a brand-new browser,
- * shows the welcome once more. A backend onboarding flag would make it
- * bulletproof-per-account — left as a follow-up.
+ * First-login detection is backed by a per-user server flag
+ * (`GET /auth/me -> onboarding_completed`, set via `POST /auth/onboarding-complete`),
+ * so it's truly once-per-account: it survives a localStorage clear or a sign-in
+ * on a new device. A localStorage flag (namespaced by Clerk user id) is kept as
+ * a fast-path cache — it avoids a flash of the popup before `/auth/me` resolves
+ * and as an offline fallback if the backend call fails.
  *
  * The interactive tour uses driver.js, which spotlights the real UI elements
  * tagged with `data-tour` attributes, so it cannot drift from the layout.
@@ -24,6 +24,7 @@ import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 
 import { AUTH_ENABLED } from '@/config/auth';
+import { authApi } from '@/services/auth-api';
 import { WelcomeDialog } from './welcome-dialog';
 import { TOUR_STEPS } from './onboarding-steps';
 
@@ -57,6 +58,14 @@ function markOnboardingSeen(): void {
   }
 }
 
+/** Record completion in BOTH the local cache and the server source of truth. */
+function persistOnboardingComplete(): void {
+  markOnboardingSeen();
+  void authApi.markOnboardingComplete().catch(() => {
+    /* backend unreachable — the localStorage cache still suppresses re-open */
+  });
+}
+
 interface OnboardingContextType {
   /** Open the welcome walkthrough popup (used by the Help button). */
   openWelcome: () => void;
@@ -70,20 +79,31 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [welcomeOpen, setWelcomeOpen] = useState(false);
 
   // Auto-open on first login only. Clerk may attach `window.Clerk.user`
-  // slightly after mount, so poll briefly for the user id before deciding.
+  // slightly after mount, so poll briefly for the user id, then ask the backend
+  // (source of truth). The localStorage cache short-circuits the network call
+  // and is the fallback if the backend is unreachable.
   useEffect(() => {
     if (!AUTH_ENABLED) return;
     let cancelled = false;
     let tries = 0;
-    const check = () => {
+    const check = async () => {
       if (cancelled) return;
-      if (clerkUserId()) {
-        if (!hasSeenOnboarding()) setWelcomeOpen(true);
+      if (!clerkUserId()) {
+        if (tries++ < 20) setTimeout(check, 250); // up to ~5s for Clerk to attach
         return;
       }
-      if (tries++ < 20) setTimeout(check, 250); // up to ~5s
+      if (hasSeenOnboarding()) return; // already done on this browser — skip the call
+      try {
+        const me = await authApi.getMe();
+        if (cancelled) return;
+        if (me.onboarding_completed) markOnboardingSeen(); // cache the server truth
+        else setWelcomeOpen(true);
+      } catch {
+        // Backend unreachable / older API: fall back to localStorage-only.
+        if (!cancelled && !hasSeenOnboarding()) setWelcomeOpen(true);
+      }
     };
-    check();
+    void check();
     return () => {
       cancelled = true;
     };
@@ -98,14 +118,14 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       prevBtnText: 'Back',
       doneBtnText: 'Done',
       steps: TOUR_STEPS,
-      onDestroyed: () => markOnboardingSeen(),
+      onDestroyed: () => persistOnboardingComplete(),
     });
     // Let the welcome dialog finish closing before the spotlight paints.
     setTimeout(() => d.drive(), 250);
   }, []);
 
   const closeWelcome = useCallback(() => {
-    markOnboardingSeen();
+    persistOnboardingComplete();
     setWelcomeOpen(false);
   }, []);
 

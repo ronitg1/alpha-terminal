@@ -4,6 +4,30 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-06-29
+
+### Added
+- **Onboarding flag is now per-account (server-side).** The first-login
+  walkthrough's "seen" state moved from browser localStorage to a per-user
+  `user_settings.onboarding_completed` column, so it shows exactly once per
+  account — surviving a browser/localStorage clear or a new device. `GET /auth/me`
+  now returns `onboarding_completed`; `POST /auth/onboarding-complete` records it.
+  localStorage is kept as a fast-path cache and offline fallback.
+  - New: Alembic migration `d4e5f6a7b8c9_add_onboarding_completed`,
+    `user_settings_service.py` (dual file/DB backend), `auth-api.ts` (frontend).
+  - Threaded through both storage backends + provisioning seed; `+2` cutover tests.
+
+### Fixed
+- **Sidebar prices/sparklines now populate for every visible ticker.** The left
+  rail requested quotes for *all* tickers across every watchlist (hundreds) in one
+  call, blowing past the backend's 150-per-request cap so anything past the first
+  150 stayed blank. Now it fetches only the tickers in expanded groups, and the
+  API client chunks requests at 150 as a safety net.
+
+### Changed
+- Onboarding walkthrough slide 4 (Pattern Scanner) now shows a real scan with
+  detected patterns instead of the empty form (capture script runs a small scan).
+
 ## [1.6.9] — 2026-06-29
 
 ### Added

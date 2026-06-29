@@ -98,7 +98,11 @@ def _build_jwks(public_key, kid):
 def test_auth_off_returns_default_without_token():
     resp = client.get("/auth/me")
     assert resp.status_code == 200
-    assert resp.json() == {"user_id": DEFAULT_USER_ID, "auth_enabled": False}
+    body = resp.json()
+    assert body["user_id"] == DEFAULT_USER_ID
+    assert body["auth_enabled"] is False
+    # /auth/me also carries the per-user onboarding flag (value depends on store).
+    assert isinstance(body["onboarding_completed"], bool)
 
 
 def test_auth_off_ignores_any_authorization_header():
@@ -147,7 +151,9 @@ def test_auth_on_valid_token_returns_sub(monkeypatch, use_fake_jwks, rsa_keypair
     resp = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"user_id": "user_xyz789", "auth_enabled": True}
+    assert body["user_id"] == "user_xyz789"
+    assert body["auth_enabled"] is True
+    assert isinstance(body["onboarding_completed"], bool)
 
 
 def test_auth_on_expired_token_401(monkeypatch, use_fake_jwks, rsa_keypair):
