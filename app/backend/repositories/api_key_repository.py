@@ -1,131 +1,99 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import List, Optional
-from datetime import datetime
+"""User-scoped, encrypted-at-rest repository for provider API keys (BYOK).
 
+Every method is scoped to a single ``user_id`` (Phase 3), mirroring the other
+multi-tenant repositories. Secrets are encrypted with Fernet on write and
+decrypted on read (see ``app/backend/crypto.py``); the plaintext key never
+touches the database and is only ever returned by the explicit ``*_decrypted``
+methods used by the per-user key resolver — never by the API-key REST routes,
+which return metadata only.
+"""
+from __future__ import annotations
+
+from typing import List, Optional
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.backend import crypto
+from app.backend.context import DEFAULT_USER_ID
 from app.backend.database.models import ApiKey
 
 
 class ApiKeyRepository:
-    """Repository for API key database operations"""
-    
-    def __init__(self, db: Session):
+    """CRUD for one user's provider API keys."""
+
+    def __init__(self, db: Session, user_id: str = DEFAULT_USER_ID):
         self.db = db
+        self.user_id = user_id
 
-    def create_or_update_api_key(
-        self, 
-        provider: str, 
-        key_value: str, 
-        description: str = None, 
-        is_active: bool = True
+    def _scoped(self):
+        return self.db.query(ApiKey).filter(ApiKey.user_id == self.user_id)
+
+    def set_key(
+        self,
+        provider: str,
+        key_value: str,
+        description: Optional[str] = None,
+        is_active: bool = True,
     ) -> ApiKey:
-        """Create a new API key or update existing one"""
-        # Check if API key already exists for this provider
-        existing_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
-        
-        if existing_key:
-            # Update existing key
-            existing_key.key_value = key_value
-            existing_key.description = description
-            existing_key.is_active = is_active
-            existing_key.updated_at = func.now()
-            self.db.commit()
-            self.db.refresh(existing_key)
-            return existing_key
+        """Create or replace this user's key for ``provider`` (encrypts at rest)."""
+        encrypted = crypto.encrypt(key_value)
+        row = self._scoped().filter(ApiKey.provider == provider).first()
+        if row is not None:
+            row.key_value = encrypted
+            row.description = description
+            row.is_active = is_active
+            row.updated_at = func.now()
         else:
-            # Create new key
-            api_key = ApiKey(
+            row = ApiKey(
+                user_id=self.user_id,
                 provider=provider,
-                key_value=key_value,
+                key_value=encrypted,
                 description=description,
-                is_active=is_active
+                is_active=is_active,
             )
-            self.db.add(api_key)
-            self.db.commit()
-            self.db.refresh(api_key)
-            return api_key
+            self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
 
-    def get_api_key_by_provider(self, provider: str) -> Optional[ApiKey]:
-        """Get API key by provider name"""
-        return self.db.query(ApiKey).filter(
-            ApiKey.provider == provider,
-            ApiKey.is_active == True
-        ).first()
+    def get_row(self, provider: str, *, active_only: bool = True) -> Optional[ApiKey]:
+        """The raw row (encrypted value) for ``provider``, or None."""
+        q = self._scoped().filter(ApiKey.provider == provider)
+        if active_only:
+            q = q.filter(ApiKey.is_active.is_(True))
+        return q.first()
 
-    def get_all_api_keys(self, include_inactive: bool = False) -> List[ApiKey]:
-        """Get all API keys"""
-        query = self.db.query(ApiKey)
+    def get_decrypted(self, provider: str, *, active_only: bool = True) -> Optional[str]:
+        """The decrypted secret for ``provider``, or None if not stored."""
+        row = self.get_row(provider, active_only=active_only)
+        return crypto.decrypt(row.key_value) if row is not None else None
+
+    def list_keys(self, include_inactive: bool = False) -> List[ApiKey]:
+        """All of this user's key rows (encrypted values), ordered by provider."""
+        q = self._scoped()
         if not include_inactive:
-            query = query.filter(ApiKey.is_active == True)
-        return query.order_by(ApiKey.provider).all()
+            q = q.filter(ApiKey.is_active.is_(True))
+        return q.order_by(ApiKey.provider).all()
 
-    def update_api_key(
-        self, 
-        provider: str, 
-        key_value: str = None, 
-        description: str = None, 
-        is_active: bool = None
-    ) -> Optional[ApiKey]:
-        """Update an existing API key"""
-        api_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
-        if not api_key:
-            return None
+    def decrypted_map(self, include_inactive: bool = False) -> dict[str, str]:
+        """{provider: decrypted_key} for this user — for the key resolver."""
+        return {row.provider: crypto.decrypt(row.key_value) for row in self.list_keys(include_inactive)}
 
-        if key_value is not None:
-            api_key.key_value = key_value
-        if description is not None:
-            api_key.description = description
-        if is_active is not None:
-            api_key.is_active = is_active
-        
-        api_key.updated_at = func.now()
-        self.db.commit()
-        self.db.refresh(api_key)
-        return api_key
-
-    def delete_api_key(self, provider: str) -> bool:
-        """Delete an API key by provider"""
-        api_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
-        if not api_key:
+    def delete(self, provider: str) -> bool:
+        """Delete this user's key for ``provider``. True if a row was removed."""
+        row = self._scoped().filter(ApiKey.provider == provider).first()
+        if row is None:
             return False
-        
-        self.db.delete(api_key)
-        self.db.commit()
-        return True
-
-    def deactivate_api_key(self, provider: str) -> bool:
-        """Deactivate an API key instead of deleting it"""
-        api_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
-        if not api_key:
-            return False
-        
-        api_key.is_active = False
-        api_key.updated_at = func.now()
+        self.db.delete(row)
         self.db.commit()
         return True
 
     def update_last_used(self, provider: str) -> bool:
-        """Update the last_used timestamp for an API key"""
-        api_key = self.db.query(ApiKey).filter(
-            ApiKey.provider == provider,
-            ApiKey.is_active == True
-        ).first()
-        if not api_key:
+        """Stamp ``last_used`` for ``provider``. True if a row was updated."""
+        row = self.get_row(provider, active_only=True)
+        if row is None:
             return False
-        
-        api_key.last_used = func.now()
+        row.last_used = func.now()
         self.db.commit()
         return True
-
-    def bulk_create_or_update(self, api_keys_data: List[dict]) -> List[ApiKey]:
-        """Bulk create or update multiple API keys"""
-        results = []
-        for data in api_keys_data:
-            api_key = self.create_or_update_api_key(
-                provider=data['provider'],
-                key_value=data['key_value'],
-                description=data.get('description'),
-                is_active=data.get('is_active', True)
-            )
-            results.append(api_key)
-        return results 

@@ -4,6 +4,33 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] — 2026-06-28
+
+### Added (Phase 3 — auth, step 3 of 7; DORMANT behind AUTH_ENABLED)
+- **BYOK API-key storage — user-scoped + encrypted at rest.** The legacy
+  single-tenant, plaintext `api_keys` table is now per-user (`user_id` column,
+  `UNIQUE(user_id, provider)`) with values **encrypted** via Fernet
+  (`app/backend/crypto.py`, keyed by `API_KEY_ENCRYPTION_KEY`, comma-separated for
+  rotation). New Alembic migration `b2c3d4e5f6a7` reshapes the table (with a guard
+  that halts the deploy rather than dropping a non-empty table).
+- **`/api-keys` routes rebuilt** around the authenticated user: POST (upsert),
+  GET list, GET `{provider}`, DELETE — all scoped to the caller. Keys are
+  **validated with a live provider call before saving** (DeepSeek / Massive /
+  Finnhub), and the plaintext key value is **never returned** to the client
+  (responses are metadata-only). Unknown provider → 400; provider rejects the key
+  → 400; provider unreachable/rate-limited → 503 (so an outage never mislabels a
+  valid key); key over 512 chars → 422.
+- **Boot guard:** the backend refuses to start if `AUTH_ENABLED` is on but
+  `API_KEY_ENCRYPTION_KEY` is unset — a loud deploy-time failure instead of a
+  per-request 500. Dormant when auth is off.
+- **Dependencies:** `cryptography` (added in 1.6.0) now also backs at-rest key
+  encryption.
+- **Tests:** +26 (encryption round-trip/rotation/failure, encrypted-at-rest +
+  per-user repo isolation, validate-on-save status classification, 503-on-outage,
+  never-return-value, oversized-key 422, boot guard). Suite **314 passing**.
+  Architect security-reviewed; both blockers (provider-outage-vs-bad-key, and the
+  missing encryption-key boot guard) and the should-fixes are addressed here.
+
 ## [1.6.1] — 2026-06-27
 
 ### Added (Phase 3 — auth, step 2 of 7; DORMANT behind AUTH_ENABLED)

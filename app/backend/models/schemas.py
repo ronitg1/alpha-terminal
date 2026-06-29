@@ -240,39 +240,21 @@ class FlowRunSummaryResponse(BaseModel):
         from_attributes = True
 
 
-# API Key schemas
+# API Key schemas (BYOK — Phase 3). NOTE: there is deliberately NO response model
+# that includes ``key_value``; the routes return ``ApiKeySummaryResponse`` only, so
+# a stored secret is never echoed back to a client.
 class ApiKeyCreateRequest(BaseModel):
-    """Request to create or update an API key"""
+    """Request to create or replace the current user's key for a provider."""
     provider: str = Field(..., min_length=1, max_length=100)
-    key_value: str = Field(..., min_length=1)
+    # Cap the length so a caller can't push a multi-MB blob through the live
+    # provider validation call and into storage. Real keys are well under this.
+    key_value: str = Field(..., min_length=1, max_length=512)
     description: Optional[str] = None
     is_active: bool = True
 
 
-class ApiKeyUpdateRequest(BaseModel):
-    """Request to update an existing API key"""
-    key_value: Optional[str] = Field(None, min_length=1)
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class ApiKeyResponse(BaseModel):
-    """Complete API key response"""
-    id: int
-    provider: str
-    key_value: str
-    is_active: bool
-    description: Optional[str]
-    created_at: datetime
-    updated_at: Optional[datetime]
-    last_used: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-
 class ApiKeySummaryResponse(BaseModel):
-    """API key response without the actual key value"""
+    """API key metadata WITHOUT the key value (the only API-key response model)."""
     id: int
     provider: str
     is_active: bool
@@ -280,12 +262,7 @@ class ApiKeySummaryResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     last_used: Optional[datetime]
-    has_key: bool = True  # Indicates if a key is set
+    has_key: bool = True  # A row only exists when a key is stored.
 
     class Config:
         from_attributes = True
-
-
-class ApiKeyBulkUpdateRequest(BaseModel):
-    """Request to update multiple API keys at once"""
-    api_keys: List[ApiKeyCreateRequest]

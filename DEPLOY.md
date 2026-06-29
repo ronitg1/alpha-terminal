@@ -65,6 +65,7 @@ backend. Done with Phase 1.
 | `FINNHUB_API_KEY` | optional | Market News + insider/ratio fallback. |
 | `FINANCIAL_DATASETS_API_KEY` | only if `DATA_PROVIDER=fds` | Alt market data. |
 | `ALLOWED_ORIGINS` | yes (prod) | Comma-separated frontend origins. Defaults to localhost for dev. |
+| `API_KEY_ENCRYPTION_KEY` | yes (when `AUTH_ENABLED`) | Fernet key encrypting users' stored BYOK keys at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separate multiple keys to rotate (first encrypts, all decrypt). **Set this in the env BEFORE the deploy that turns auth on** — the backend refuses to boot with `AUTH_ENABLED` on and this unset. |
 | `DATABASE_URL` | auto | Set by Railway Postgres. Unset → local SQLite. |
 | `SKIP_OLLAMA_CHECK` | recommended | Set to `1` on the server — skips the local-model probe so startup is fast. |
 | `LOG_LEVEL` | no | Logging verbosity. |

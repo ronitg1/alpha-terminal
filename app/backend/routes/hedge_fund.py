@@ -10,6 +10,7 @@ from app.backend.models.events import StartEvent, ProgressUpdateEvent, ErrorEven
 from app.backend.services.graph import create_graph, parse_hedge_fund_response, run_graph_async
 from app.backend.services.portfolio import create_portfolio
 from app.backend.services.backtest_service import BacktestService
+from app.backend.context import current_user_id
 from app.backend.services.api_key_service import ApiKeyService
 from src.utils.progress import progress
 from src.utils.analysts import get_agents_list
@@ -30,7 +31,7 @@ async def run(request_data: HedgeFundRequest, request: Request, db: Session = De
     try:
         # Hydrate API keys from database if not provided
         if not request_data.api_keys:
-            api_key_service = ApiKeyService(db)
+            api_key_service = ApiKeyService(db, current_user_id())
             request_data.api_keys = api_key_service.get_api_keys_dict()
 
         # Create the portfolio
@@ -175,7 +176,7 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
     try:
         # Hydrate API keys from database if not provided
         if not request_data.api_keys:
-            api_key_service = ApiKeyService(db)
+            api_key_service = ApiKeyService(db, current_user_id())
             request_data.api_keys = api_key_service.get_api_keys_dict()
 
         # Convert model_provider to string if it's an enum

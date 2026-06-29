@@ -22,7 +22,8 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Startup checks: required API keys, then Ollama availability."""
+    """Startup checks: auth/encryption invariant, required API keys, then Ollama."""
+    _check_auth_encryption()
     _check_required_keys()
     # The Ollama probe is for local-model users; on a cloud box with no Ollama
     # it just wastes startup time on a connection attempt. Skip it when
@@ -56,9 +57,30 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.6.1",
+    version="1.6.2",
     lifespan=_lifespan,
 )
+
+
+def _check_auth_encryption() -> None:
+    """Refuse to boot if auth is on but secret encryption isn't configured.
+
+    With ``AUTH_ENABLED`` on, users store their own provider keys (BYOK), which
+    are encrypted at rest with ``API_KEY_ENCRYPTION_KEY``. If that key is missing,
+    every key save would 500 at request time — so fail loudly at startup instead
+    (the repo convention: validate config at boot, not two hours into a request).
+    Dormant when auth is off, so local and the current cloud deploy are unaffected.
+    """
+    from app.backend.auth import auth_enabled
+    from app.backend.crypto import encryption_configured
+
+    if auth_enabled() and not encryption_configured():
+        raise RuntimeError(
+            "AUTH_ENABLED is on but API_KEY_ENCRYPTION_KEY is not set. Per-user API "
+            "keys cannot be encrypted/stored. Set API_KEY_ENCRYPTION_KEY (generate one "
+            "with `python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`) "
+            "before enabling auth."
+        )
 
 
 def _check_required_keys() -> None:

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
 from .connection import Base
 
@@ -95,21 +95,34 @@ class HedgeFundFlowRunCycle(Base):
 
 
 class ApiKey(Base):
-    """Table to store API keys for various services"""
+    """A per-user provider API key (BYOK). One row per (user_id, provider).
+
+    ``key_value`` holds the Fernet-**encrypted** secret, never plaintext (see
+    ``app/backend/crypto.py`` and ``ApiKeyRepository``). Phase 3 added the
+    ``user_id`` scope; before that the table was single-tenant with a globally
+    unique ``provider``."""
     __tablename__ = "api_keys"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
+    # Owner. Scopes the key to one account; until Clerk auth is flipped on this
+    # is DEFAULT_USER_ID, matching the rest of the multi-tenant schema.
+    user_id = Column(String(255), nullable=False, index=True)
+
     # API key details
-    provider = Column(String(100), nullable=False, unique=True, index=True)  # e.g., "ANTHROPIC_API_KEY"
-    key_value = Column(Text, nullable=False)  # The actual API key (encrypted in production)
+    provider = Column(String(100), nullable=False, index=True)  # canonical: "deepseek" | "massive" | "finnhub"
+    key_value = Column(Text, nullable=False)  # Fernet-encrypted secret (never plaintext)
     is_active = Column(Boolean, default=True)  # Enable/disable without deletion
-    
+
     # Optional metadata
     description = Column(Text, nullable=True)  # Human-readable description
     last_used = Column(DateTime(timezone=True), nullable=True)  # Track usage
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_apikey_user_provider"),
+    )
 
 
  

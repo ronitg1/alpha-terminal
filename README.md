@@ -8,13 +8,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-288%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-314%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.5 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester (now runnable off any portfolio or watchlist), the intraday-capable Pattern Scanner with its own options backtest + optimizer, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (288 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.5 — stable.** The six tabs (Market, Screening, Portfolio, P&L, News, Calls), the options screener + realistic backtester (now runnable off any portfolio or watchlist), the intraday-capable Pattern Scanner with its own options backtest + optimizer, the P&L tracker with Fidelity import, and the Finnhub fundamentals integration are feature-complete and tested (314 passing). See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -397,7 +397,7 @@ alpha-terminal/
 │           ├── contexts/                sleeves + dashboard state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 288 tests, pytest
+├── tests/                   ← 314 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
