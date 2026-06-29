@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] — 2026-06-29
+
+### Fixed
+- **Provider API keys are trimmed before use.** A stray leading/trailing space in
+  an env var (easy to introduce when pasting a secret into a hosting dashboard)
+  was sent verbatim and 401'd, silently hiding data — e.g. the Market tab's whole
+  "Financials & analyst data" (Finnhub) card vanishing. `key_context` now strips
+  Massive/Finnhub/FDS keys at the single point every client reads through. +1 test.
+  - Note: this is defense-in-depth; the card disappears entirely when the key is
+    simply *unset* in the environment — set `FINNHUB_API_KEY` in the deploy env.
+
 ## [1.7.0] — 2026-06-29
 
 ### Added

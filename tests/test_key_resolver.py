@@ -65,6 +65,15 @@ def test_auth_off_returns_env_for_all_providers():
     assert key_resolver.resolve_key("finnhub") == "env-finnhub"
 
 
+def test_key_context_strips_whitespace_from_env_key(monkeypatch):
+    """A stray leading/trailing space in an env key (easy to paste into a hosting
+    dashboard) must not reach the client and 401 — getters return it stripped."""
+    from src.tools import key_context
+
+    monkeypatch.setenv("FINNHUB_API_KEY", "  spaced-key  ")
+    assert key_context.finnhub_api_key() == "spaced-key"
+
+
 # ─── auth ON ─────────────────────────────────────────────────────────────────
 
 

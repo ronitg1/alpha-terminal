@@ -44,22 +44,26 @@ _finnhub_key: ContextVar[str] = ContextVar("finnhub_api_key", default=_UNSET)
 _fds_key: ContextVar[str] = ContextVar("financial_datasets_api_key", default=_UNSET)
 
 
+# Keys are always returned stripped: a stray leading/trailing space (easy to
+# introduce when pasting a secret into a hosting dashboard's env var) would
+# otherwise be sent verbatim and 401, silently hiding data. Trimming here is the
+# single choke point every client reads through.
 def massive_api_key() -> str:
     """The Massive/Polygon key for the current request (bound value, else env)."""
     v = _massive_key.get()
-    return os.environ.get("MASSIVE_API_KEY", "") if v == _UNSET else v
+    return (os.environ.get("MASSIVE_API_KEY", "") if v == _UNSET else v).strip()
 
 
 def finnhub_api_key() -> str:
     """The Finnhub key for the current request (bound value, else env)."""
     v = _finnhub_key.get()
-    return os.environ.get("FINNHUB_API_KEY", "") if v == _UNSET else v
+    return (os.environ.get("FINNHUB_API_KEY", "") if v == _UNSET else v).strip()
 
 
 def financial_datasets_api_key() -> str:
     """The financialdatasets.ai key for the current request (bound value, else env)."""
     v = _fds_key.get()
-    return os.environ.get("FINANCIAL_DATASETS_API_KEY", "") if v == _UNSET else v
+    return (os.environ.get("FINANCIAL_DATASETS_API_KEY", "") if v == _UNSET else v).strip()
 
 
 def set_provider_keys(*, massive: str | None, finnhub: str | None, financial_datasets: str | None) -> list[Token]:
