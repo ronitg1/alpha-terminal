@@ -213,10 +213,15 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             </div>
           )}
 
-          {/* Owner-only: review pending access requests. */}
-          {access?.is_owner && requests.length > 0 && (
+          {/* Owner-only: review access requests (always shown to the owner). */}
+          {access?.is_owner && (
             <div className="space-y-2 rounded-md border border-border p-3">
               <p className="text-sm font-medium">Access requests</p>
+              {requests.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No requests yet. When someone asks for shared market-data access, they'll appear here to approve.
+                </p>
+              )}
               {requests.map((r) => (
                 <div key={r.id} className="flex items-center gap-2 text-xs">
                   <span className="truncate">{r.email ?? r.user_id}</span>
