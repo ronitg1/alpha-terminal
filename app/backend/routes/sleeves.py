@@ -62,6 +62,7 @@ from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
 from app.backend.services._storage import current_user_id, session_scope, use_db
 from app.backend.services.key_resolver import MissingUserKey, require_key, resolve_key, resolved_api_keys
+from src.tools.key_context import massive_api_key
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
 import src.config.portfolio_config as _portfolio_config_module
@@ -89,16 +90,20 @@ def _live_cash_reserve() -> float:
 
 
 def _scan_api_keys_or_error() -> tuple[dict | None, str | None]:
-    """Resolve the per-user DeepSeek key for an LLM scan (Phase 3 BYOK).
+    """Resolve the keys a scan needs (Phase 3 BYOK), or a soft-gate message.
 
-    Returns ``(api_keys_dict, None)`` on success or ``(None, message)`` when the
-    user must add their own key first — the "add your DeepSeek key" soft gate at
-    first LLM use. When auth is off the resolver returns the shared env key, so
-    this is transparent for the local/CLI app."""
+    A scan needs DeepSeek (LLM, always per-user) and Massive/Polygon market data.
+    The Massive key is bound on the request by the middleware (this user's key, or
+    the shared key if approved); a non-approved user without their own key gets ""
+    here and is told to add one. Returns ``({"DEEPSEEK_API_KEY": ...}, None)`` on
+    success or ``(None, message)``. When auth is off both resolve to the shared env
+    keys, so this is transparent for the local/CLI app."""
     try:
         deepseek_key = require_key("deepseek")
     except MissingUserKey:
         return None, "A DeepSeek API key is required to run a scan. Add yours in Settings."
+    if not massive_api_key():
+        return None, "A Massive/Polygon market-data key is required to run a scan. Add yours in Settings."
     return {"DEEPSEEK_API_KEY": deepseek_key}, None
 
 

@@ -41,6 +41,10 @@ __all__ = [
     "current_user_id",
     "set_current_user_id",
     "reset_current_user_id",
+    "current_user_email",
+    "current_user_email_verified",
+    "set_current_user_identity",
+    "reset_current_user_identity",
 ]
 
 # A sentinel owner id that no Clerk-issued account can hold (Clerk ids look like
@@ -67,3 +71,37 @@ def set_current_user_id(user_id: str) -> Token[str]:
 def reset_current_user_id(token: Token[str]) -> None:
     """Undo a :func:`set_current_user_id`, restoring the previous binding."""
     _current_user_id.reset(token)
+
+
+# The current request's email + whether it is verified — used to decide shared
+# data-key access (the Massive/Finnhub allowlist). Default empty/false so a
+# non-request call site is never treated as approved.
+_current_user_email: ContextVar[str | None] = ContextVar("current_user_email", default=None)
+_current_user_email_verified: ContextVar[bool] = ContextVar("current_user_email_verified", default=False)
+
+
+def current_user_email() -> str | None:
+    """The current request's (normalized) email, or None."""
+    return _current_user_email.get()
+
+
+def current_user_email_verified() -> bool:
+    """Whether the current request's email is verified."""
+    return _current_user_email_verified.get()
+
+
+def set_current_user_identity(user_id: str, email: str | None, email_verified: bool) -> list[Token]:
+    """Bind user id + email + verified for the request. Returns tokens for
+    :func:`reset_current_user_identity`."""
+    return [
+        _current_user_id.set(user_id),
+        _current_user_email.set(email),
+        _current_user_email_verified.set(email_verified),
+    ]
+
+
+def reset_current_user_identity(tokens: list[Token]) -> None:
+    """Undo :func:`set_current_user_identity`."""
+    _current_user_id.reset(tokens[0])
+    _current_user_email.reset(tokens[1])
+    _current_user_email_verified.reset(tokens[2])

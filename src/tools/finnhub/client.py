@@ -32,6 +32,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from src.tools.key_context import finnhub_api_key
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://finnhub.io/api/v1"
@@ -108,7 +110,8 @@ class FinnhubClient:
         base_url: str | None = None,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.api_key = api_key or os.environ.get("FINNHUB_API_KEY", "")
+        # Per-request key (per-user BYOK / approved-shared) when bound; else env.
+        self.api_key = api_key or finnhub_api_key()
         if not self.api_key:
             raise FinnhubError(0, "FINNHUB_API_KEY not set", base_url or DEFAULT_BASE_URL)
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
@@ -234,25 +237,25 @@ class FinnhubClient:
 
 
 def is_finnhub_configured() -> bool:
-    """True when a Finnhub key is present, so callers can branch cheaply."""
-    return bool(os.environ.get("FINNHUB_API_KEY", "").strip())
-
-
-_CLIENT: FinnhubClient | None = None
+    """True when a Finnhub key is available for the CURRENT request (per-user key,
+    or the shared key if approved). Reads the request-scoped key context, NOT the
+    raw env, so a non-approved user correctly sees no Finnhub."""
+    return bool(finnhub_api_key().strip())
 
 
 def get_finnhub_client() -> FinnhubClient | None:
-    """Return a process-wide Finnhub client, or None when no key is configured.
+    """Return a Finnhub client for the current request, or None when no key is
+    available. Constructed PER CALL (not a process-wide singleton) so each
+    request uses its own resolved key — a shared singleton would pin the first
+    caller's key and leak it to everyone else. The rate limiter is a module
+    global, so throttling is unaffected by per-call construction.
 
     Callers use the None return to fall back to their existing behavior, so
     Finnhub is strictly additive — the app is fully functional without it.
     """
-    global _CLIENT
     if not is_finnhub_configured():
         return None
-    if _CLIENT is None:
-        try:
-            _CLIENT = FinnhubClient()
-        except FinnhubError:
-            return None
-    return _CLIENT
+    try:
+        return FinnhubClient()
+    except FinnhubError:
+        return None

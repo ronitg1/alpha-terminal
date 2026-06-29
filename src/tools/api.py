@@ -54,6 +54,7 @@ from src.tools.massive import (
     convert_line_items,
     convert_prices,
 )
+from src.tools.key_context import financial_datasets_api_key, massive_api_key
 
 _cache = get_cache()
 _insider_warning_emitted = False
@@ -75,7 +76,7 @@ def _provider() -> str:
     if value in {"fds", "financialdatasets"}:
         return "fds"
     # No explicit choice — fall back to whichever key the user set.
-    if os.environ.get("MASSIVE_API_KEY"):
+    if massive_api_key():
         return "massive"
     return "fds"
 
@@ -99,8 +100,8 @@ def _provider_for(data_type: str) -> str:
     Massive (and likely return ``None``, but better than crashing).
     """
     explicit = (os.environ.get("DATA_PROVIDER") or "").strip().lower()
-    has_massive = bool(os.environ.get("MASSIVE_API_KEY"))
-    has_fds = bool(os.environ.get("FINANCIAL_DATASETS_API_KEY"))
+    has_massive = bool(massive_api_key())
+    has_fds = bool(financial_datasets_api_key())
 
     massive_first = {"prices", "news", "market_cap"}
     fds_first = {"fundamentals", "line_items", "insider_trades"}
@@ -153,7 +154,7 @@ def _make_fds_request(
 
 def _fds_headers(api_key: str | None) -> dict[str, str]:
     headers: dict[str, str] = {}
-    key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
+    key = api_key or financial_datasets_api_key()
     if key:
         headers["X-API-KEY"] = key
     return headers
@@ -174,11 +175,11 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None 
     primary = _provider_for("prices")
     if primary == "massive":
         prices = _massive_prices(ticker, start_date, end_date)
-        if not prices and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        if not prices and financial_datasets_api_key():
             prices = _fds_prices(ticker, start_date, end_date, api_key)
     else:
         prices = _fds_prices(ticker, start_date, end_date, api_key)
-        if not prices and os.environ.get("MASSIVE_API_KEY"):
+        if not prices and massive_api_key():
             prices = _massive_prices(ticker, start_date, end_date)
 
     if not prices:
@@ -233,11 +234,11 @@ def get_financial_metrics(
     primary = _provider_for("fundamentals")
     if primary == "fds":
         metrics = _fds_financial_metrics(ticker, end_date, period, limit, api_key)
-        if not metrics and os.environ.get("MASSIVE_API_KEY"):
+        if not metrics and massive_api_key():
             metrics = _massive_financial_metrics(ticker, end_date, period, limit)
     else:
         metrics = _massive_financial_metrics(ticker, end_date, period, limit)
-        if not metrics and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        if not metrics and financial_datasets_api_key():
             metrics = _fds_financial_metrics(ticker, end_date, period, limit, api_key)
 
     # Last resort: Finnhub's free-tier metric/all. This is what gives the agents
@@ -330,11 +331,11 @@ def search_line_items(
     primary = _provider_for("line_items")
     if primary == "fds":
         items = _fds_line_items(ticker, line_items, end_date, period, limit, api_key)
-        if not items and os.environ.get("MASSIVE_API_KEY"):
+        if not items and massive_api_key():
             items = _massive_line_items(ticker, line_items, end_date, period, limit)
         return items
     items = _massive_line_items(ticker, line_items, end_date, period, limit)
-    if not items and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+    if not items and financial_datasets_api_key():
         items = _fds_line_items(ticker, line_items, end_date, period, limit, api_key)
     return items
 
@@ -431,7 +432,7 @@ def get_insider_trades(
 ) -> list[InsiderTrade]:
     """Form-4-style insider trades. Massive doesn't publish them; route to
     FDS when available, fall back to Finnhub's free tier, else return empty."""
-    if not os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+    if not financial_datasets_api_key():
         # Finnhub free tier publishes Form 4 data — use it as the fallback so
         # the Burry/Sentiment agents see real insider activity.
         finnhub_trades = _get_insider_trades_finnhub(ticker, end_date, start_date)
@@ -502,11 +503,11 @@ def get_company_news(
     primary = _provider_for("news")
     if primary == "massive":
         news = _massive_news(ticker, start_date, end_date, limit)
-        if not news and os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        if not news and financial_datasets_api_key():
             news = _fds_news(ticker, start_date, end_date, limit, api_key)
     else:
         news = _fds_news(ticker, start_date, end_date, limit, api_key)
-        if not news and os.environ.get("MASSIVE_API_KEY"):
+        if not news and massive_api_key():
             news = _massive_news(ticker, start_date, end_date, limit)
 
     if not news:
@@ -578,7 +579,7 @@ def get_market_cap(ticker: str, end_date: str, api_key: str | None = None) -> fl
         # Try the primary provider first, fall back to the other if it returns
         # None. Massive's ticker-reference endpoint covers the full US
         # universe; FDS company facts have spotty coverage for smaller names.
-        if primary == "massive" and os.environ.get("MASSIVE_API_KEY"):
+        if primary == "massive" and massive_api_key():
             try:
                 details = _massive_client().get_ticker_details(ticker)
                 facts = convert_company_facts(details)
@@ -588,7 +589,7 @@ def get_market_cap(ticker: str, end_date: str, api_key: str | None = None) -> fl
             except MassiveError as exc:
                 logger.warning("Massive get_market_cap failed for %s: %s", ticker, exc)
 
-        if os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        if financial_datasets_api_key():
             headers = _fds_headers(api_key)
             url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
             response = _make_fds_request(url, headers)
@@ -602,7 +603,7 @@ def get_market_cap(ticker: str, end_date: str, api_key: str | None = None) -> fl
 
         # Final fallback: try Massive even if primary was FDS, in case it
         # wasn't tried above.
-        if primary != "massive" and os.environ.get("MASSIVE_API_KEY"):
+        if primary != "massive" and massive_api_key():
             try:
                 details = _massive_client().get_ticker_details(ticker)
                 facts = convert_company_facts(details)

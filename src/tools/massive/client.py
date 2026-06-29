@@ -28,6 +28,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from src.tools.key_context import massive_api_key
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.polygon.io"
@@ -62,7 +64,8 @@ class MassiveClient:
         base_url: str | None = None,
         timeout: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.api_key = api_key or os.environ.get("MASSIVE_API_KEY", "")
+        # Per-request key (per-user BYOK / approved-shared) when bound; else env.
+        self.api_key = api_key or massive_api_key()
         if not self.api_key:
             raise MassiveError(0, "MASSIVE_API_KEY not set", base_url or DEFAULT_BASE_URL)
         self.base_url = (base_url or os.environ.get("MASSIVE_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")

@@ -26,6 +26,9 @@ def _env(monkeypatch):
     monkeypatch.setenv("MASSIVE_API_KEY", "env-massive")
     monkeypatch.setenv("FINNHUB_API_KEY", "env-finnhub")
     monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    monkeypatch.delenv("OWNER_USER_ID", raising=False)
+    monkeypatch.delenv("OWNER_EMAIL", raising=False)
+    monkeypatch.delenv("SHARED_DATA_EMAILS", raising=False)
     yield
 
 
@@ -45,12 +48,12 @@ def as_user():
     """Bind a current user for the duration of a test."""
     tokens = []
 
-    def _set(uid):
-        tokens.append(ctx.set_current_user_id(uid))
+    def _set(uid, email=None, email_verified=False):
+        tokens.append(ctx.set_current_user_identity(uid, email, email_verified))
 
     yield _set
     for t in reversed(tokens):
-        ctx.reset_current_user_id(t)
+        ctx.reset_current_user_identity(t)
 
 
 # ─── auth OFF: always the shared env key (dormant, no DB) ─────────────────────
@@ -82,19 +85,42 @@ def test_auth_on_deepseek_uses_stored_user_key(monkeypatch, db, as_user):
     assert key_resolver.resolve_key("deepseek") == "alice-deepseek"
 
 
-def test_auth_on_massive_falls_back_to_shared_env(monkeypatch, db, as_user):
+def test_auth_on_massive_no_fallback_for_unapproved(monkeypatch, db, as_user):
     monkeypatch.setenv("AUTH_ENABLED", "1")
-    as_user("user_a")
-    # No stored massive key -> shared env fallback is allowed.
+    as_user("user_a", email="nobody@example.com", email_verified=True)
+    # Not on the allowlist -> NO shared fallback; must bring their own.
+    assert key_resolver.resolve_key("massive") is None
+    assert key_resolver.resolve_key("finnhub") is None
+
+
+def test_auth_on_massive_shared_for_allowlisted_email(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("SHARED_DATA_EMAILS", "friend@example.com, other@example.com")
+    as_user("user_a", email="friend@example.com", email_verified=True)
     assert key_resolver.resolve_key("massive") == "env-massive"
     assert key_resolver.resolve_key("finnhub") == "env-finnhub"
+
+
+def test_auth_on_shared_requires_verified_email(monkeypatch, db, as_user):
+    # An UNVERIFIED allowlisted email must NOT get the shared key (anti-spoof).
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("SHARED_DATA_EMAILS", "friend@example.com")
+    as_user("user_a", email="friend@example.com", email_verified=False)
+    assert key_resolver.resolve_key("massive") is None
+
+
+def test_auth_on_owner_gets_shared_by_user_id(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("OWNER_USER_ID", "user_owner")
+    as_user("user_owner")  # no email needed — sub match
+    assert key_resolver.resolve_key("massive") == "env-massive"
 
 
 def test_auth_on_massive_prefers_user_key(monkeypatch, db, as_user):
     monkeypatch.setenv("AUTH_ENABLED", "1")
     with db() as s:
         ApiKeyRepository(s, "user_a").set_key("massive", "alice-massive")
-    as_user("user_a")
+    as_user("user_a")  # not approved, but has own key -> uses it
     assert key_resolver.resolve_key("massive") == "alice-massive"
 
 
@@ -105,6 +131,51 @@ def test_auth_on_isolates_users(monkeypatch, db, as_user):
         ApiKeyRepository(s, "user_b").set_key("deepseek", "b-key")
     as_user("user_b")
     assert key_resolver.resolve_key("deepseek") == "b-key"
+
+
+# ─── provider_keys_for_request (the middleware batch helper) ─────────────────
+
+
+def test_provider_keys_for_request_unapproved_returns_none(monkeypatch, db):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    massive, finnhub, fds = key_resolver.provider_keys_for_request("user_a", "nobody@example.com", True)
+    assert massive is None and finnhub is None and fds is None
+
+
+def test_provider_keys_for_request_approved_returns_env(monkeypatch, db):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("SHARED_DATA_EMAILS", "friend@example.com")
+    monkeypatch.setenv("FINANCIAL_DATASETS_API_KEY", "env-fds")
+    massive, finnhub, fds = key_resolver.provider_keys_for_request("user_a", "friend@example.com", True)
+    assert massive == "env-massive" and finnhub == "env-finnhub" and fds == "env-fds"
+
+
+def test_provider_keys_for_request_prefers_stored(monkeypatch, db):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    with db() as s:
+        ApiKeyRepository(s, "user_a").set_key("massive", "alice-massive")
+    massive, finnhub, fds = key_resolver.provider_keys_for_request("user_a", "nobody@example.com", True)
+    assert massive == "alice-massive"   # own key used even though unapproved
+    assert finnhub is None               # none stored, not approved
+    assert fds is None                   # FDS is shared-only; unapproved -> none
+
+
+def test_key_context_binding_and_default(monkeypatch):
+    from src.tools import key_context
+
+    monkeypatch.setenv("MASSIVE_API_KEY", "env-m")
+    monkeypatch.setenv("FINNHUB_API_KEY", "env-f")
+    # Unset -> env.
+    assert key_context.massive_api_key() == "env-m"
+    # Bound to a value -> value; bound to None -> "" (explicit no key, no env).
+    tokens = key_context.set_provider_keys(massive="user-m", finnhub=None, financial_datasets=None)
+    try:
+        assert key_context.massive_api_key() == "user-m"
+        assert key_context.finnhub_api_key() == ""   # NOT env-f
+        assert key_context.financial_datasets_api_key() == ""
+    finally:
+        key_context.reset_provider_keys(tokens)
+    assert key_context.massive_api_key() == "env-m"  # restored
 
 
 # ─── scan injection: metadata api_keys reach get_model via call_llm ───────────
@@ -139,12 +210,23 @@ def test_resolved_api_keys_auth_off_uses_env():
     assert d["FINNHUB_API_KEY"] == "env-finnhub"
 
 
-def test_resolved_api_keys_auth_on_missing_deepseek_is_blank(monkeypatch, db, as_user):
+def test_resolved_api_keys_auth_on_unapproved_all_blank(monkeypatch, db, as_user):
     monkeypatch.setenv("AUTH_ENABLED", "1")
+    as_user("user_a", email="nobody@example.com", email_verified=True)
+    d = key_resolver.resolved_api_keys()
+    assert d["DEEPSEEK_API_KEY"] == ""   # never shared
+    assert d["MASSIVE_API_KEY"] == ""    # not approved -> no shared fallback
+    assert d["FINNHUB_API_KEY"] == ""
+
+
+def test_resolved_api_keys_auth_on_approved_gets_shared_data(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("OWNER_USER_ID", "user_a")
     as_user("user_a")
     d = key_resolver.resolved_api_keys()
-    assert d["DEEPSEEK_API_KEY"] == ""           # fail-closed: get_model won't env-fallback
-    assert d["MASSIVE_API_KEY"] == "env-massive"  # shared fallback still applies
+    assert d["DEEPSEEK_API_KEY"] == ""            # DeepSeek still per-user only
+    assert d["MASSIVE_API_KEY"] == "env-massive"  # approved -> shared market data
+    assert d["FINNHUB_API_KEY"] == "env-finnhub"
 
 
 def test_get_model_dict_is_authoritative_no_env_fallback(monkeypatch):

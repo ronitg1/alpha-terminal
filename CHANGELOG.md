@@ -4,6 +4,32 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.6] — 2026-06-29
+
+### Added (Phase 3 — shared market-data key allowlist; DORMANT behind AUTH_ENABLED)
+- **Approved-emails allowlist for the owner's shared market-data keys.** When auth
+  is on: the owner plus any **verified** email in `SHARED_DATA_EMAILS` use the
+  owner's shared Massive/Finnhub/FDS keys; every other account must bring their
+  own Massive/Finnhub key (or market data/news won't load, and a scan soft-gates
+  with "add your Massive key"). DeepSeek stays per-user for everyone. An
+  unverified email never qualifies (anti-spoof).
+- **Market-data clients are now per-request keyed.** New dependency-free
+  `src/tools/key_context.py` binds the resolved Massive/Finnhub/FDS key for the
+  request (set once by the middleware, propagated into the scan worker thread);
+  the Massive/Finnhub clients, `src/tools/api.py` provider routing + FDS fallback,
+  and `pattern_data.py` all read it instead of `os.environ`. Dormant when auth is
+  off or under the file backend — the clients fall back to the shared env keys,
+  unchanged.
+- **Fixed two key-leak paths** (found in security review, would have let a
+  non-approved user spend the owner's keys once auth is on): the Finnhub client
+  was a process-wide singleton that pinned the first caller's key — now built
+  per-request; and `api.py`'s FDS fallback + routing read `os.environ` directly,
+  bypassing the allowlist — now routed through the request key context.
+- **Tests:** +allowlist/approval cases, `provider_keys_for_request`, key-context
+  binding, Finnhub per-request + bound-empty-blocks-shared-key. Suite **344
+  passing**. Architect security-reviewed; both blockers fixed.
+- **New env:** `SHARED_DATA_EMAILS` (see DEPLOY.md).
+
 ## [1.6.5] — 2026-06-28
 
 ### Added (Phase 3 — auth, step 6 of 7; DORMANT behind VITE_AUTH_ENABLED)

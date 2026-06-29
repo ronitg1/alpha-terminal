@@ -33,7 +33,11 @@ import logging
 import os
 
 from app.backend.auth import auth_enabled
-from app.backend.context import current_user_id
+from app.backend.context import (
+    current_user_email,
+    current_user_email_verified,
+    current_user_id,
+)
 from app.backend.crypto import DecryptionError, EncryptionNotConfigured
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.services._storage import session_scope
@@ -41,22 +45,64 @@ from app.backend.services.api_key_validation import DEEPSEEK, FINNHUB, MASSIVE
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["resolve_key", "require_key", "resolved_api_keys", "MissingUserKey"]
+__all__ = [
+    "resolve_key",
+    "require_key",
+    "resolved_api_keys",
+    "provider_keys_for_request",
+    "is_shared_data_approved",
+    "MissingUserKey",
+]
+
+# financialdatasets.ai — legacy market-data fallback. Not a per-user BYOK
+# provider (users can't add it via /api-keys); it's owner-shared, so approved
+# users get the env key and everyone else gets nothing.
+FINANCIAL_DATASETS = "financial_datasets"
 
 # Provider -> shared (owner/env) API key variable.
 _ENV_VAR = {
     DEEPSEEK: "DEEPSEEK_API_KEY",
     MASSIVE: "MASSIVE_API_KEY",
     FINNHUB: "FINNHUB_API_KEY",
+    FINANCIAL_DATASETS: "FINANCIAL_DATASETS_API_KEY",
 }
 
-# Provider -> may fall back to the shared env key when auth is on. Flip a value
-# to False to make that provider require a per-user key (no shared fallback).
+# Provider -> may fall back to the shared env key when auth is on AND the user is
+# approved for shared keys (see is_shared_data_approved). DeepSeek never shares
+# (every user brings their own, usage-billed). Massive/Finnhub share only for the
+# owner + an approved-emails allowlist; everyone else must bring their own.
 _SHARED_FALLBACK = {
     DEEPSEEK: False,
     MASSIVE: True,
     FINNHUB: True,
+    FINANCIAL_DATASETS: True,
 }
+
+
+def _shared_data_emails() -> set[str]:
+    """The approved-emails allowlist for the shared Massive/Finnhub keys, from
+    ``SHARED_DATA_EMAILS`` (comma-separated), normalized lowercase."""
+    raw = os.environ.get("SHARED_DATA_EMAILS", "")
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
+def is_shared_data_approved(user_id: str, email: str | None, email_verified: bool) -> bool:
+    """Whether this user may use the OWNER's shared Massive/Finnhub keys.
+
+    Approved if: the owner (matched by unspoofable ``OWNER_USER_ID`` sub, or a
+    VERIFIED email equal to ``OWNER_EMAIL``), or a VERIFIED email in the
+    ``SHARED_DATA_EMAILS`` allowlist. An unverified email never qualifies, so an
+    attacker on open signup can't spend the owner's market-data quota by claiming
+    someone else's address."""
+    owner_sub = os.environ.get("OWNER_USER_ID", "").strip()
+    if owner_sub and user_id == owner_sub:
+        return True
+    if not (email and email_verified):
+        return False
+    owner_email = os.environ.get("OWNER_EMAIL", "").strip().lower()
+    if owner_email and email == owner_email:
+        return True
+    return email in _shared_data_emails()
 
 
 class MissingUserKey(Exception):
@@ -93,7 +139,9 @@ def resolve_key(provider: str) -> str | None:
         user_key = _user_key(provider)
         if user_key:
             return user_key
-        if _SHARED_FALLBACK.get(provider, False):
+        if _SHARED_FALLBACK.get(provider, False) and is_shared_data_approved(
+            current_user_id(), current_user_email(), current_user_email_verified()
+        ):
             return _env_key(provider)
         return None
     # Auth off: single-tenant — always the shared env key (dormant, no DB hit).
@@ -109,6 +157,34 @@ def require_key(provider: str) -> str:
     return key
 
 
+def provider_keys_for_request(
+    user_id: str, email: str | None, email_verified: bool
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve (massive, finnhub, financial_datasets) for one request in a single
+    DB read, applying the approved-emails policy. Called by the middleware to bind
+    the per-request market-data keys (``src/tools/key_context``) so the data
+    clients — including those in the scan worker thread — use the right key
+    without an N+1 of per-call lookups. ``None`` for a provider means "no key
+    available" (a non-approved user who hasn't supplied their own). FDS has no
+    per-user BYOK, so it is env-if-approved else None."""
+    stored: dict[str, str] = {}
+    try:
+        with session_scope() as db:
+            stored = ApiKeyRepository(db, user_id).decrypted_map()
+    except (DecryptionError, EncryptionNotConfigured) as exc:
+        logger.warning("Could not read stored market-data keys for %s: %s", user_id, exc)
+        stored = {}
+    approved = is_shared_data_approved(user_id, email, email_verified)
+
+    def pick(provider: str) -> str | None:
+        if stored.get(provider):
+            return stored[provider]
+        return _env_key(provider) if approved else None
+
+    fds = _env_key(FINANCIAL_DATASETS) if approved else None
+    return pick(MASSIVE), pick(FINNHUB), fds
+
+
 def resolved_api_keys() -> dict[str, str]:
     """The ``{ENV_VAR: key}`` dict for graph/agent callers (legacy hedge-fund +
     backtest) that pass an ``api_keys`` map to ``call_llm``/``get_model``.
@@ -118,11 +194,14 @@ def resolved_api_keys() -> dict[str, str]:
     ``DATA_PROVIDER=fds`` and the legacy non-DeepSeek LLMs keep working. A missing
     required key resolves to ``""`` so ``get_model`` fails *closed* (it does not
     fall back to the shared env key when an explicit dict is supplied)."""
+    # Market-data slots go through resolve_key (per-user / approved-shared) so a
+    # non-approved user's graph/backtest run can't reach the owner's shared keys
+    # via this dict either. "" when unavailable -> fails closed downstream.
     return {
         "DEEPSEEK_API_KEY": resolve_key(DEEPSEEK) or "",
         "MASSIVE_API_KEY": resolve_key(MASSIVE) or "",
         "FINNHUB_API_KEY": resolve_key(FINNHUB) or "",
-        "FINANCIAL_DATASETS_API_KEY": os.environ.get("FINANCIAL_DATASETS_API_KEY", ""),
+        "FINANCIAL_DATASETS_API_KEY": resolve_key(FINANCIAL_DATASETS) or "",
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
     }

@@ -68,6 +68,7 @@ backend. Done with Phase 1.
 | `API_KEY_ENCRYPTION_KEY` | yes (when `AUTH_ENABLED`) | Fernet key encrypting users' stored BYOK keys at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separate multiple keys to rotate (first encrypts, all decrypt). **Set this in the env BEFORE the deploy that turns auth on** — the backend refuses to boot with `AUTH_ENABLED` on and this unset. |
 | `OWNER_USER_ID` | no | The owner's Clerk user id (`sub`). On first login this account claims the pre-auth `default` data. Unspoofable — preferred. Bootstrap: enable auth, log in once, read the id from the logs / `users` table, set this var. |
 | `OWNER_EMAIL` | no | Alternative to `OWNER_USER_ID`: the account whose **verified** email matches claims the `default` data. Requires the Clerk JWT template to emit `email` + `email_verified`; an unverified email never claims. |
+| `SHARED_DATA_EMAILS` | no | Comma-separated **verified** emails approved to use the owner's shared Massive/Finnhub/FDS market-data keys. The owner (`OWNER_USER_ID`/`OWNER_EMAIL`) is always approved. Everyone else must add their own Massive/Finnhub key in Settings. |
 | `DATABASE_URL` | auto | Set by Railway Postgres. Unset → local SQLite. |
 | `SKIP_OLLAMA_CHECK` | recommended | Set to `1` on the server — skips the local-model probe so startup is fast. |
 | `LOG_LEVEL` | no | Logging verbosity. |

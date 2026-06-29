@@ -20,25 +20,38 @@ import src.tools.finnhub.client as finnhub_client
 
 def test_not_configured_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
-    finnhub_client._CLIENT = None  # reset the process-wide cache
     assert is_finnhub_configured() is False
     assert get_finnhub_client() is None
 
 
 def test_configured_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FINNHUB_API_KEY", "test-key-123")
-    finnhub_client._CLIENT = None
     assert is_finnhub_configured() is True
     client = get_finnhub_client()
     assert isinstance(client, FinnhubClient)
-    # The cache returns the same instance.
-    assert get_finnhub_client() is client
+    # Constructed per call (no process-wide singleton) so each request uses its
+    # own resolved key — a fresh instance every time.
+    assert get_finnhub_client() is not client
 
 
 def test_client_constructor_requires_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     with pytest.raises(FinnhubError):
         FinnhubClient(api_key="")
+
+
+def test_bound_empty_context_blocks_shared_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Even with the owner's env key set, a request whose context binds an empty
+    Finnhub key (a non-approved user) must get NO Finnhub client — no leak."""
+    from src.tools import key_context
+
+    monkeypatch.setenv("FINNHUB_API_KEY", "owner-shared-key")
+    tokens = key_context.set_provider_keys(massive=None, finnhub=None, financial_datasets=None)
+    try:
+        assert is_finnhub_configured() is False
+        assert get_finnhub_client() is None
+    finally:
+        key_context.reset_provider_keys(tokens)
 
 
 def test_token_bucket_bursts_then_throttles() -> None:

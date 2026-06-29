@@ -15,11 +15,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from src.tools.key_context import massive_api_key
+
 logger = logging.getLogger(__name__)
 
 _EASTERN = ZoneInfo("America/New_York")
 
-_MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY", "")
 _BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io")
 _CACHE_TTL = 900  # 15 minutes
 
@@ -180,8 +181,9 @@ async def _fetch_from_api(
         f"/{multiplier}/{timespan}/{from_date}/{to_date}"
     )
     # The key travels in a header, never the URL: query-param auth leaks the
-    # secret into httpx INFO logs and HTTPStatusError messages.
-    headers = {"Authorization": f"Bearer {_MASSIVE_API_KEY}"}
+    # secret into httpx INFO logs and HTTPStatusError messages. Resolved per
+    # request (per-user / approved-shared), not the raw env key.
+    headers = {"Authorization": f"Bearer {massive_api_key()}"}
     params: dict | None = {
         "adjusted": "true",
         "sort": "asc",

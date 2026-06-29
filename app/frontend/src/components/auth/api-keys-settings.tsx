@@ -22,8 +22,8 @@ type Provider = 'deepseek' | 'massive' | 'finnhub';
 
 const PROVIDERS: { id: Provider; label: string; required: boolean; help: string }[] = [
   { id: 'deepseek', label: 'DeepSeek', required: true, help: 'Required — powers AI scans, theses, and chat (billed to your key).' },
-  { id: 'massive', label: 'Massive (Polygon)', required: false, help: 'Optional — market data. Falls back to the shared key.' },
-  { id: 'finnhub', label: 'Finnhub', required: false, help: 'Optional — news & fundamentals. Falls back to the shared key.' },
+  { id: 'massive', label: 'Massive (Polygon)', required: false, help: 'Market data. Approved accounts use the shared key; otherwise add your own.' },
+  { id: 'finnhub', label: 'Finnhub', required: false, help: 'News & fundamentals. Approved accounts use the shared key; otherwise add your own.' },
 ];
 
 interface KeySummary { provider: string; has_key: boolean }
