@@ -136,10 +136,14 @@ def test_auth_on_isolates_users(monkeypatch, db, as_user):
 # ─── provider_keys_for_request (the middleware batch helper) ─────────────────
 
 
-def test_provider_keys_for_request_unapproved_returns_none(monkeypatch, db):
+def test_provider_keys_for_request_unapproved_gated(monkeypatch, db):
+    # Unapproved users: Massive/FDS are gated (None), but Finnhub is always
+    # shared (free-tier public data) so it still returns the env key.
     monkeypatch.setenv("AUTH_ENABLED", "1")
     massive, finnhub, fds = key_resolver.provider_keys_for_request("user_a", "nobody@example.com", True)
-    assert massive is None and finnhub is None and fds is None
+    assert massive is None
+    assert finnhub == "env-finnhub"
+    assert fds is None
 
 
 def test_provider_keys_for_request_approved_returns_env(monkeypatch, db):
@@ -155,9 +159,9 @@ def test_provider_keys_for_request_prefers_stored(monkeypatch, db):
     with db() as s:
         ApiKeyRepository(s, "user_a").set_key("massive", "alice-massive")
     massive, finnhub, fds = key_resolver.provider_keys_for_request("user_a", "nobody@example.com", True)
-    assert massive == "alice-massive"   # own key used even though unapproved
-    assert finnhub is None               # none stored, not approved
-    assert fds is None                   # FDS is shared-only; unapproved -> none
+    assert massive == "alice-massive"     # own key used even though unapproved
+    assert finnhub == "env-finnhub"       # Finnhub is always shared (free-tier)
+    assert fds is None                    # FDS is shared-only; unapproved -> none
 
 
 def test_key_context_binding_and_default(monkeypatch):

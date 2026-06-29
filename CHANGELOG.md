@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.8] — 2026-06-29
+
+### Fixed
+- **Finnhub stock-detail data always shows for all signed-in users.** Finnhub is
+  free-tier public data; the approval gate (which controls the paid Massive
+  subscription) no longer also blocks Finnhub. Every authenticated user now gets
+  the shared Finnhub key via the request-scoped context, so the "Financials &
+  analyst data" panel renders for any stock clicked in the sidebar.
+- **"Using shared key" indicator in API-keys Settings.** Massive and Finnhub now
+  show a "Using shared key" badge instead of "Not set" when the user is approved
+  to use the owner's shared keys (or is the owner). Gives users clear confirmation
+  that they're covered without having to add their own key.
+- **HANDOFF.md** refreshed to reflect Phase 3 completion and v1.6.8 state.
+
 ## [1.6.7] — 2026-06-29
 
 ### Added (Phase 3 — self-service shared-access requests; DORMANT behind AUTH_ENABLED)

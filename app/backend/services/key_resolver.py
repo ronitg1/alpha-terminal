@@ -204,8 +204,13 @@ def provider_keys_for_request(
             return stored[provider]
         return _env_key(provider) if approved else None
 
+    # Finnhub is free-tier public data; always fall back to the shared env key
+    # for any authenticated user regardless of the approval gate (which applies
+    # to the paid Massive subscription). A user with a stored Finnhub key uses
+    # their own; everyone else uses the owner's free key.
+    finnhub_key = stored.get(FINNHUB) or _env_key(FINNHUB)
     fds = _env_key(FINANCIAL_DATASETS) if approved else None
-    return pick(MASSIVE), pick(FINNHUB), fds
+    return pick(MASSIVE), finnhub_key, fds
 
 
 def resolved_api_keys() -> dict[str, str]:

@@ -152,6 +152,13 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
         <div className="space-y-5">
           {PROVIDERS.map((p) => {
             const isSet = present.has(p.id);
+            // Finnhub is free-tier: all signed-in users use the shared key by default.
+            // Massive is approved-only: shared only when access.shared_data_approved.
+            const usingShared =
+              !isSet &&
+              !p.required &&
+              access != null &&
+              (p.id === 'finnhub' || (p.id === 'massive' && access.shared_data_approved));
             return (
               <div key={p.id} className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -159,6 +166,8 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
                   {p.required && <Badge variant="secondary">Required</Badge>}
                   {isSet ? (
                     <Badge className="ml-auto" variant="success">Set</Badge>
+                  ) : usingShared ? (
+                    <Badge className="ml-auto" variant="secondary">Using shared key</Badge>
                   ) : (
                     <Badge className="ml-auto" variant="outline">Not set</Badge>
                   )}
