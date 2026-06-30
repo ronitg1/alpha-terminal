@@ -207,13 +207,9 @@ def _parse_analysis(raw: dict[str, Any]) -> dict[str, Any]:
 def analyze_transcript(
     *, ticker: str, transcript: str, current_thesis: str | None = None, report_date: str | None = None
 ) -> dict[str, Any]:
-    """Run the single-shot LLM analysis over a transcript and return the schema."""
-    import os as _os
-
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
-    from app.backend.services.key_resolver import resolve_key
+    from app.backend.services.llm_preferences import create_selected_chat_model
 
     if len(transcript.strip()) < MIN_TRANSCRIPT_CHARS:
         raise TranscriptError("Transcript is too short to analyze (need 500+ characters).")
@@ -226,19 +222,13 @@ def analyze_transcript(
         (current_thesis or "(no thesis on record)").strip(),
         "",
         "TRANSCRIPT:",
-        transcript[:60000],  # cap to keep within context budget
+        transcript[:60000],
         "",
         "Produce the structured JSON analysis now.",
     ]
     user = "\n".join(user_lines)
 
-    llm = ChatOpenAI(
-        model="deepseek-chat",
-        openai_api_key=(resolve_key("deepseek") or ""),
-        openai_api_base="https://api.deepseek.com/v1",
-        temperature=0.2,
-        max_tokens=3000,
-    )
+    llm = create_selected_chat_model(temperature=0.2, max_tokens=3000)
     try:
         resp = llm.invoke(
             [SystemMessage(content=_TRANSCRIPT_SYSTEM), HumanMessage(content=user)]

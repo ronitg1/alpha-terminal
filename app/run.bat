@@ -151,7 +151,8 @@ if not exist "..\.env" (
         echo %WARNING% No .env file found. Creating from .env.example...
         copy "..\.env.example" "..\.env"
         echo %WARNING% Please edit ..\.env to add your API keys:
-        echo %WARNING%   - DEEPSEEK_API_KEY=your-deepseek-api-key   ^(required - LLM^)
+        echo %WARNING%   - DEEPSEEK_API_KEY=your-deepseek-api-key   ^(default LLM^)
+        echo %WARNING%   - OPENROUTER_API_KEY=your-openrouter-key   ^(optional LLM alternative^)
         echo %WARNING%   - MASSIVE_API_KEY=your-polygon-api-key     ^(required - market data^)
         echo %WARNING%   - FINNHUB_API_KEY=your-finnhub-api-key     ^(optional - news, fundamentals fallback^)
         echo.

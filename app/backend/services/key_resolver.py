@@ -6,8 +6,8 @@ For each provider, the key for the *current request's* user is resolved as:
 
 then a per-provider **policy** decides whether the shared env fallback is allowed:
 
-- ``deepseek`` (LLM, usage-billed) — **no** shared fallback when auth is on: each
-  user must bring their own key so they pay their own LLM spend.
+- ``deepseek`` / ``openrouter`` (LLM, usage-billed) — **no** shared fallback when
+  auth is on: each user must bring their own key so they pay their own LLM spend.
 - ``massive`` (Polygon market data) and ``finnhub`` (news) — **shared** fallback
   to the owner's env keys; users don't need to provide these today.
 
@@ -41,7 +41,7 @@ from app.backend.context import (
 from app.backend.crypto import DecryptionError, EncryptionNotConfigured
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.services._storage import session_scope
-from app.backend.services.api_key_validation import DEEPSEEK, FINNHUB, MASSIVE
+from app.backend.services.api_key_validation import DEEPSEEK, FINNHUB, MASSIVE, OPENROUTER
 
 logger = logging.getLogger(__name__)
 
@@ -63,17 +63,15 @@ FINANCIAL_DATASETS = "financial_datasets"
 # Provider -> shared (owner/env) API key variable.
 _ENV_VAR = {
     DEEPSEEK: "DEEPSEEK_API_KEY",
+    OPENROUTER: "OPENROUTER_API_KEY",
     MASSIVE: "MASSIVE_API_KEY",
     FINNHUB: "FINNHUB_API_KEY",
     FINANCIAL_DATASETS: "FINANCIAL_DATASETS_API_KEY",
 }
 
-# Provider -> may fall back to the shared env key when auth is on AND the user is
-# approved for shared keys (see is_shared_data_approved). DeepSeek never shares
-# (every user brings their own, usage-billed). Massive/Finnhub share only for the
-# owner + an approved-emails allowlist; everyone else must bring their own.
 _SHARED_FALLBACK = {
     DEEPSEEK: False,
+    OPENROUTER: False,
     MASSIVE: True,
     FINNHUB: True,
     FINANCIAL_DATASETS: True,
@@ -130,8 +128,8 @@ def is_shared_data_approved(user_id: str, email: str | None, email_verified: boo
 
 class MissingUserKey(Exception):
     """A required per-user key isn't available (auth on, user hasn't added it and
-    the provider has no shared fallback). Drives the "add your DeepSeek key"
-    soft gate at first LLM use."""
+    the provider has no shared fallback). Drives the settings soft gate at first
+    paid-provider use."""
 
     def __init__(self, provider: str):
         self.provider = provider
@@ -217,7 +215,7 @@ def resolved_api_keys() -> dict[str, str]:
     """The ``{ENV_VAR: key}`` dict for graph/agent callers (legacy hedge-fund +
     backtest) that pass an ``api_keys`` map to ``call_llm``/``get_model``.
 
-    DeepSeek/Massive/Finnhub go through :func:`resolve_key` (per-user with the
+    DeepSeek/OpenRouter/Massive/Finnhub go through :func:`resolve_key` (per-user with the
     policy fallback); the remaining provider slots stay env pass-through so
     ``DATA_PROVIDER=fds`` and the legacy non-DeepSeek LLMs keep working. A missing
     required key resolves to ``""`` so ``get_model`` fails *closed* (it does not
@@ -227,6 +225,7 @@ def resolved_api_keys() -> dict[str, str]:
     # via this dict either. "" when unavailable -> fails closed downstream.
     return {
         "DEEPSEEK_API_KEY": resolve_key(DEEPSEEK) or "",
+        "OPENROUTER_API_KEY": resolve_key(OPENROUTER) or "",
         "MASSIVE_API_KEY": resolve_key(MASSIVE) or "",
         "FINNHUB_API_KEY": resolve_key(FINNHUB) or "",
         "FINANCIAL_DATASETS_API_KEY": resolve_key(FINANCIAL_DATASETS) or "",

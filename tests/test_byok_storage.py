@@ -205,6 +205,14 @@ def test_route_never_returns_key_value(db_session):
     assert all("key_value" not in row for row in listed)
 
 
+def test_route_accepts_openrouter_provider(db_session):
+    resp = client.post("/api-keys/", json={"provider": "openrouter", "key_value": "or-secret"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "openrouter"
+    assert "key_value" not in body
+
+
 def test_route_stores_encrypted(db_session):
     client.post("/api-keys/", json={"provider": "massive", "key_value": "poly-123"})
     db = db_session()

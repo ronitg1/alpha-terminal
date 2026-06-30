@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.backend.database.app_models import (
     DEFAULT_CASH_RESERVE_PCT,
+    DEFAULT_LLM_MODEL_NAME,
+    DEFAULT_LLM_MODEL_PROVIDER,
     DEFAULT_USER_ID,
     Portfolio,
     UserSettings,
@@ -57,6 +59,20 @@ class PortfolioRepository:
     def get_onboarding_completed(self) -> bool:
         row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
         return bool(row.onboarding_completed) if row else False
+
+    def get_llm_preference(self) -> dict[str, Any]:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        if row is None:
+            return {
+                "model_provider": DEFAULT_LLM_MODEL_PROVIDER,
+                "model_name": DEFAULT_LLM_MODEL_NAME,
+                "preference_saved": False,
+            }
+        return {
+            "model_provider": row.llm_model_provider or DEFAULT_LLM_MODEL_PROVIDER,
+            "model_name": row.llm_model_name or DEFAULT_LLM_MODEL_NAME,
+            "preference_saved": bool(row.llm_preference_saved),
+        }
 
     # ─── mutations ──────────────────────────────────────────────────────────
 
@@ -136,3 +152,24 @@ class PortfolioRepository:
             row.onboarding_completed = flag
         self.db.commit()
         return flag
+
+    def set_llm_preference(self, model_provider: str, model_name: str) -> dict[str, Any]:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        if row is None:
+            row = UserSettings(
+                user_id=self.user_id,
+                llm_model_provider=model_provider,
+                llm_model_name=model_name,
+                llm_preference_saved=True,
+            )
+            self.db.add(row)
+        else:
+            row.llm_model_provider = model_provider
+            row.llm_model_name = model_name
+            row.llm_preference_saved = True
+        self.db.commit()
+        return {
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "preference_saved": True,
+        }

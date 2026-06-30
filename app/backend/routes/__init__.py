@@ -16,6 +16,7 @@ from app.backend.routes.patterns import router as patterns_router
 from app.backend.routes.news import router as news_router
 from app.backend.routes.transcripts import router as transcripts_router
 from app.backend.routes.pnl import router as pnl_router
+from app.backend.routes.user_settings import router as user_settings_router
 
 # Main API router
 api_router = APIRouter()
@@ -42,6 +43,7 @@ api_router.include_router(language_models_router, tags=["language-models"])
 # use the legacy single-tenant tables (no user_id column) — they are globally
 # shared across users until step 3 migrates them. Tracked in HANDOFF.
 api_router.include_router(api_keys_router, tags=["api-keys"], dependencies=_AUTH)
+api_router.include_router(user_settings_router, tags=["user-settings"], dependencies=_AUTH)
 api_router.include_router(sleeves_router, tags=["sleeves"], dependencies=_AUTH)
 api_router.include_router(patterns_router, tags=["patterns"], dependencies=_AUTH)
 api_router.include_router(news_router, tags=["news"], dependencies=_AUTH)

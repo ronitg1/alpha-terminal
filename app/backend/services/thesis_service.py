@@ -24,6 +24,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from app.backend.services.llm_preferences import state_for_selected_model
 from src.utils.llm import call_llm
 
 logger = logging.getLogger(__name__)
@@ -308,7 +309,7 @@ def synthesize_portfolio_thesis(
         prompt=prompt,
         pydantic_model=ThesisOutput,
         agent_name="portfolio_thesis",
-        state=None,
+        state=state_for_selected_model(),
         default_factory=lambda: _default_portfolio(portfolio_rollup),
     )
 
@@ -344,7 +345,7 @@ def synthesize_sleeve_thesis(
         prompt=prompt,
         pydantic_model=ThesisOutput,
         agent_name=f"sleeve_thesis:{sleeve_name}",
-        state=None,
+        state=state_for_selected_model(),
         default_factory=lambda: _default_sleeve(sleeve_name),
     )
     payload = {

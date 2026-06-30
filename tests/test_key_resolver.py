@@ -23,6 +23,7 @@ from app.backend.services import key_resolver
 def _env(monkeypatch):
     monkeypatch.setenv("API_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("DEEPSEEK_API_KEY", "env-deepseek")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter")
     monkeypatch.setenv("MASSIVE_API_KEY", "env-massive")
     monkeypatch.setenv("FINNHUB_API_KEY", "env-finnhub")
     monkeypatch.delenv("AUTH_ENABLED", raising=False)
@@ -61,6 +62,7 @@ def as_user():
 
 def test_auth_off_returns_env_for_all_providers():
     assert key_resolver.resolve_key("deepseek") == "env-deepseek"
+    assert key_resolver.resolve_key("openrouter") == "env-openrouter"
     assert key_resolver.resolve_key("massive") == "env-massive"
     assert key_resolver.resolve_key("finnhub") == "env-finnhub"
 
@@ -86,12 +88,28 @@ def test_auth_on_deepseek_requires_user_key(monkeypatch, db, as_user):
         key_resolver.require_key("deepseek")
 
 
+def test_auth_on_openrouter_requires_user_key(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    as_user("user_a")
+    assert key_resolver.resolve_key("openrouter") is None
+    with pytest.raises(key_resolver.MissingUserKey):
+        key_resolver.require_key("openrouter")
+
+
 def test_auth_on_deepseek_uses_stored_user_key(monkeypatch, db, as_user):
     monkeypatch.setenv("AUTH_ENABLED", "1")
     with db() as s:
         ApiKeyRepository(s, "user_a").set_key("deepseek", "alice-deepseek")
     as_user("user_a")
     assert key_resolver.resolve_key("deepseek") == "alice-deepseek"
+
+
+def test_auth_on_openrouter_uses_stored_user_key(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    with db() as s:
+        ApiKeyRepository(s, "user_a").set_key("openrouter", "alice-openrouter")
+    as_user("user_a")
+    assert key_resolver.resolve_key("openrouter") == "alice-openrouter"
 
 
 def test_auth_on_massive_no_fallback_for_unapproved(monkeypatch, db, as_user):
@@ -219,6 +237,7 @@ def test_call_llm_uses_metadata_api_keys(monkeypatch):
 def test_resolved_api_keys_auth_off_uses_env():
     d = key_resolver.resolved_api_keys()
     assert d["DEEPSEEK_API_KEY"] == "env-deepseek"
+    assert d["OPENROUTER_API_KEY"] == "env-openrouter"
     assert d["MASSIVE_API_KEY"] == "env-massive"
     assert d["FINNHUB_API_KEY"] == "env-finnhub"
 
@@ -228,6 +247,7 @@ def test_resolved_api_keys_auth_on_unapproved_all_blank(monkeypatch, db, as_user
     as_user("user_a", email="nobody@example.com", email_verified=True)
     d = key_resolver.resolved_api_keys()
     assert d["DEEPSEEK_API_KEY"] == ""   # never shared
+    assert d["OPENROUTER_API_KEY"] == ""
     assert d["MASSIVE_API_KEY"] == ""    # not approved -> no shared fallback
     assert d["FINNHUB_API_KEY"] == ""
 
@@ -238,6 +258,7 @@ def test_resolved_api_keys_auth_on_approved_gets_shared_data(monkeypatch, db, as
     as_user("user_a")
     d = key_resolver.resolved_api_keys()
     assert d["DEEPSEEK_API_KEY"] == ""            # DeepSeek still per-user only
+    assert d["OPENROUTER_API_KEY"] == ""
     assert d["MASSIVE_API_KEY"] == "env-massive"  # approved -> shared market data
     assert d["FINNHUB_API_KEY"] == "env-finnhub"
 
@@ -259,9 +280,46 @@ def test_get_model_dict_is_authoritative_no_env_fallback(monkeypatch):
     model = m.get_model("deepseek-chat", m.ModelProvider.DEEPSEEK, api_keys=None)
     assert model is not None
 
-    # A supplied user key is honored.
-    user_model = m.get_model("deepseek-chat", m.ModelProvider.DEEPSEEK, api_keys={"DEEPSEEK_API_KEY": "USER-KEY"})
-    assert user_model is not None
+
+def test_get_openrouter_model_dict_is_authoritative_no_env_fallback(monkeypatch):
+    from src.llm import models as m
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "OWNER-ENV-KEY")
+
+    with pytest.raises(ValueError):
+        m.get_model("openai/gpt-5.2", m.ModelProvider.OPENROUTER, api_keys={"OPENROUTER_API_KEY": ""})
+    with pytest.raises(ValueError):
+        m.get_model("openai/gpt-5.2", m.ModelProvider.OPENROUTER, api_keys={})
+
+    model = m.get_model("openai/gpt-5.2", m.ModelProvider.OPENROUTER, api_keys=None)
+    assert model is not None
+
+
+def test_openrouter_model_preference_runtime_config(monkeypatch, db, as_user):
+    from app.backend.services import llm_preferences
+
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    monkeypatch.setenv("MASSIVE_API_KEY", "env-massive")
+    monkeypatch.setenv("OWNER_USER_ID", "user_a")
+    as_user("user_a")
+
+    pref = llm_preferences.set_model_preference("OpenRouter", "anthropic/claude-sonnet-4.5")
+    assert pref.model_provider == "OpenRouter"
+    assert pref.model_name == "anthropic/claude-sonnet-4.5"
+
+    config, error = llm_preferences.runtime_config_for_scan()
+    assert config is None
+    assert error and "OpenRouter API key" in error
+
+    with db() as s:
+        ApiKeyRepository(s, "user_a").set_key("openrouter", "alice-openrouter")
+
+    config, error = llm_preferences.runtime_config_for_scan()
+    assert error is None
+    assert config is not None
+    assert config.api_keys["OPENROUTER_API_KEY"] == "alice-openrouter"
+    assert config.model_provider == "OpenRouter"
+    assert config.model_name == "anthropic/claude-sonnet-4.5"
 
 
 def test_run_sleeve_threads_api_keys_into_state(monkeypatch):

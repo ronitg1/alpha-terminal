@@ -192,14 +192,20 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             base_url=base_url,
         )
     elif model_provider == ModelProvider.OPENROUTER:
-        api_key = (api_keys or {}).get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+        if api_keys is not None:
+            api_key = (api_keys or {}).get("OPENROUTER_API_KEY")
+        else:
+            api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             print(f"API Key Error: Please make sure OPENROUTER_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("OpenRouter API key not found. Please make sure OPENROUTER_API_KEY is set in your .env file or provided via API keys.")
         
-        # Get optional site URL and name for headers
-        site_url = os.getenv("YOUR_SITE_URL", "https://github.com/virattt/ai-hedge-fund")
-        site_name = os.getenv("YOUR_SITE_NAME", "AI Hedge Fund")
+        site_url = (
+            os.getenv("OPENROUTER_SITE_URL")
+            or os.getenv("YOUR_SITE_URL")
+            or "https://github.com/ronitg1/alpha-terminal-cloud"
+        )
+        site_name = os.getenv("OPENROUTER_APP_NAME") or os.getenv("YOUR_SITE_NAME") or "Alpha Terminal"
         
         return ChatOpenAI(
             model=model_name,
@@ -208,7 +214,7 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             model_kwargs={
                 "extra_headers": {
                     "HTTP-Referer": site_url,
-                    "X-Title": site_name,
+                    "X-OpenRouter-Title": site_name,
                 }
             }
         )

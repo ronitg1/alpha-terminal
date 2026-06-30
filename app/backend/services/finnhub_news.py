@@ -265,14 +265,11 @@ _NEWS_SUMMARIZE_SYSTEM = (
 def summarize_article(
     *, title: str, description: str, related: str | None, sleeve: str | None
 ) -> dict[str, Any]:
-    """3-bullet summary + relevance, grounded in the user's sleeve context."""
     import json as _json
-    import os as _os
 
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
-    from app.backend.services.key_resolver import resolve_key
+    from app.backend.services.llm_preferences import create_selected_chat_model
 
     book_line = (
         f"RELATED TICKER: {related}"
@@ -286,13 +283,7 @@ def summarize_article(
     user_lines.append("\nProduce the JSON summary now.")
     user = "\n".join(user_lines)
 
-    llm = ChatOpenAI(
-        model="deepseek-chat",
-        openai_api_key=(resolve_key("deepseek") or ""),
-        openai_api_base="https://api.deepseek.com/v1",
-        temperature=0.3,
-        max_tokens=500,
-    )
+    llm = create_selected_chat_model(temperature=0.3, max_tokens=500)
     try:
         resp = llm.invoke(
             [SystemMessage(content=_NEWS_SUMMARIZE_SYSTEM), HumanMessage(content=user)]
@@ -311,7 +302,7 @@ def summarize_article(
     except Exception as exc:  # noqa: BLE001
         logger.warning("News summarize failed: %s", exc)
         return {
-            "summary": ["Could not generate a summary — check the DeepSeek connection."],
+            "summary": ["Could not generate a summary - check the LLM connection."],
             "relevance": "low",
             "relevanceReason": "",
         }

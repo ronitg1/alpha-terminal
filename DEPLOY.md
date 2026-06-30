@@ -61,7 +61,10 @@ backend. Done with Phase 1.
 | `MASSIVE_API_KEY` | yes* | Polygon/Massive market data. |
 | `MASSIVE_BASE_URL` | no | Defaults to `https://api.polygon.io`. |
 | `DATA_PROVIDER` | recommended | `massive` (default path) or `fds`. |
-| `DEEPSEEK_API_KEY` | yes | LLM agents, theses, chat. |
+| `DEEPSEEK_API_KEY` | yes* | Default LLM agents, theses, chat. |
+| `OPENROUTER_API_KEY` | optional LLM alternative | OpenRouter key for single-tenant/local fallback and Settings-selected models. |
+| `OPENROUTER_SITE_URL` | no | Optional OpenRouter attribution header. |
+| `OPENROUTER_APP_NAME` | no | Optional OpenRouter attribution header. |
 | `FINNHUB_API_KEY` | optional | Market News + insider/ratio fallback. |
 | `FINANCIAL_DATASETS_API_KEY` | only if `DATA_PROVIDER=fds` | Alt market data. |
 | `ALLOWED_ORIGINS` | yes (prod) | Comma-separated frontend origins. Defaults to localhost for dev. |
@@ -80,7 +83,7 @@ live, so the Postgres schema is always current. (Locally with SQLite the app
 still auto-creates tables, no Alembic needed.) Health checks hit `/health` (a
 trivial no-dependency route).
 
-\* Either `MASSIVE_API_KEY` or `FINANCIAL_DATASETS_API_KEY` must be set.
+\* Either `DEEPSEEK_API_KEY` or a saved per-user OpenRouter key/model must exist for LLM features. Either `MASSIVE_API_KEY` or `FINANCIAL_DATASETS_API_KEY` must be set for market data.
 
 ### Frontend (Vercel)
 

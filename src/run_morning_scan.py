@@ -181,6 +181,8 @@ def run_sleeve(
     *,
     show_reasoning: bool = False,
     api_keys: dict | None = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
 ) -> list[TickerRow]:
     """Execute every agent in a sleeve on every ticker and return ranked rows.
 
@@ -193,6 +195,11 @@ def run_sleeve(
         return []
 
     # Build a minimal AgentState the agents can read.
+    metadata = {"show_reasoning": show_reasoning, "api_keys": api_keys}
+    if model_name and model_provider:
+        metadata["model_name"] = model_name
+        metadata["model_provider"] = model_provider
+
     state = {
         "messages": [],
         "data": {
@@ -201,7 +208,7 @@ def run_sleeve(
             "start_date": end_date,
             "analyst_signals": {},
         },
-        "metadata": {"show_reasoning": show_reasoning, "api_keys": api_keys},
+        "metadata": metadata,
     }
 
     for agent_key in sleeve["agents"]:

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 
 from app.backend.models.schemas import ErrorResponse
+from app.backend.services.openrouter_models import get_openrouter_models
 from app.backend.services.ollama_service import OllamaService
 from src.llm.models import get_models_list
 
@@ -26,6 +27,7 @@ async def get_language_models():
         # Add available Ollama models (handles all checking internally)
         ollama_models = await ollama_service.get_available_models()
         models.extend(ollama_models)
+        models.extend(await get_openrouter_models())
         
         return {"models": models}
     except Exception as e:
@@ -42,6 +44,7 @@ async def get_language_model_providers():
     """Get the list of available model providers with their models grouped."""
     try:
         models = get_models_list()
+        models.extend(await get_openrouter_models())
         
         # Group models by provider
         providers = {}
@@ -56,7 +59,7 @@ async def get_language_model_providers():
                 "display_name": model["display_name"],
                 "model_name": model["model_name"]
             })
-        
+
         return {"providers": list(providers.values())}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve providers: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve providers: {str(e)}")
