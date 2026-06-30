@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] — 2026-06-30
+
+### Changed
+- **Pattern Scanner results redesigned for mobile.** On phones the results now
+  render as a clean stacked **card list** (ticker, date + freshness, confidence,
+  pattern pill, win-rate, description, full-width "View contract") grouped by
+  Today/Yesterday — instead of a cramped, overflowing data table. The table is
+  unchanged on desktop (md+). The filter bar (Sort/When/Min-conf/Bias chips) now
+  stacks full-width and wraps on phones instead of running off the right edge,
+  and the header ticker/pattern filters share the row width. The Screening
+  sub-tabs scroll horizontally rather than wrapping. Verified zero overflow at
+  375px with 106 results rendered.
+
 ## [1.7.3] — 2026-06-30
 
 ### Fixed

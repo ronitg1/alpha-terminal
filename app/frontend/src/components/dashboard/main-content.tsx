@@ -67,15 +67,15 @@ function ScreeningSection() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Sub-tab nav */}
-      <div className="flex items-center gap-1 border-b border-border px-6 pt-4 pb-0 flex-shrink-0">
+      {/* Sub-tab nav — scrolls horizontally on a narrow screen instead of wrapping */}
+      <div className="flex items-center gap-1 border-b border-border px-3 sm:px-6 pt-4 pb-0 flex-shrink-0 overflow-x-auto">
         {SUB_TABS.map(({ id, label }) => (
           <button
             key={id}
             type="button"
             onClick={() => setScreeningSubTab(id)}
             className={cn(
-              'px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors',
+              'px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap flex-shrink-0',
               screeningSubTab === id
                 ? 'border-foreground text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground',

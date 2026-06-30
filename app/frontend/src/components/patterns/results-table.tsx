@@ -110,8 +110,11 @@ function Chip({
 }
 
 function ChipGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  // On phones each group takes the full width (max-md:w-full) so its chips wrap
+  // within the screen instead of running off the right edge; on desktop the
+  // group is content-width and the groups sit inline.
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1 max-md:w-full">
       <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-0.5">{label}</span>
       {children}
     </div>
@@ -265,23 +268,23 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl flex flex-col overflow-hidden max-md:overflow-visible">
-      {/* Header + text filters */}
-      <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-800">
+      {/* Header + text filters — stacks on phones; filters share the width */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 px-3 sm:px-4 py-3 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-bold text-white">Results</h2>
           <span className="bg-gray-800 text-gray-400 text-xs px-2 py-0.5 rounded-full">
             {filtered.length}
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
           <input
-            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-indigo-500 w-24"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-indigo-500 min-w-0 flex-1 sm:flex-none sm:w-24"
             placeholder="Ticker…"
             value={filterTicker}
             onChange={(e) => setFilterTicker(e.target.value)}
           />
           <input
-            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-indigo-500 w-36"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-indigo-500 min-w-0 flex-1 sm:flex-none sm:w-36"
             placeholder="Pattern…"
             value={filterPattern}
             onChange={(e) => setFilterPattern(e.target.value)}
@@ -290,7 +293,7 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
       </div>
 
       {/* Sort + filter chips */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 border-b border-gray-800 bg-gray-900/60">
+      <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-2 px-3 sm:px-4 py-2.5 border-b border-gray-800 bg-gray-900/60">
         <ChipGroup label="Sort">
           <Chip active={sortMode === 'fresh'} onClick={() => setSortMode('fresh')}>Today&apos;s plays</Chip>
           <Chip active={sortMode === 'confidence'} onClick={() => { setSortMode('confidence'); setSortAsc(false); }}>Confidence</Chip>
@@ -327,7 +330,98 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
         ) : sorted.length === 0 ? (
           <div className="py-12 text-center text-gray-500 text-sm">No matches for current filters</div>
         ) : (
-          <table className="w-full text-sm border-collapse">
+          <>
+            {/* Mobile: stacked cards — a multi-column table is unreadable at phone
+                width, so each result is a self-contained card here. */}
+            <div className="md:hidden p-3 space-y-2">
+              {(() => {
+                let mb = '';
+                return sorted.map((r, idx) => {
+                  const bullish = BULLISH_PATTERNS.has(r.pattern);
+                  const accent = bullish
+                    ? 'border-l-emerald-500'
+                    : BEARISH_PATTERNS.has(r.pattern)
+                      ? 'border-l-red-500'
+                      : 'border-l-amber-500';
+                  const rowKey = `${r.ticker}:${r.pattern}:${idx}`;
+                  const stats = winRates.get(`${r.ticker}:${r.pattern}`);
+                  const open = contractRow === rowKey;
+                  const days = daysAgo(r.end_date);
+
+                  let head: React.ReactNode = null;
+                  if (sortMode === 'fresh') {
+                    const b = bucketOf(days);
+                    if (b.key !== mb) {
+                      mb = b.key;
+                      head = (
+                        <div className="px-1 pt-3 first:pt-0">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400/90">{b.label}</span>
+                          <span className="text-[10px] text-gray-600 ml-2">· {bucketCounts[b.key]} signal{bucketCounts[b.key] === 1 ? '' : 's'}</span>
+                        </div>
+                      );
+                    }
+                  }
+
+                  return (
+                    <React.Fragment key={`m-${rowKey}`}>
+                      {head}
+                      <div
+                        onClick={() => onRowClick(r)}
+                        className={`rounded-lg border border-gray-800 border-l-2 ${accent} bg-gray-900/60 p-3 cursor-pointer active:bg-gray-800/40 transition-colors`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono font-bold text-white text-sm">{r.ticker}</span>
+                            <span className="text-[11px] font-mono text-gray-500 truncate">{r.end_date.replace('T', ' ').slice(0, 16)}</span>
+                            {days <= 1 && (
+                              <span className="text-[9px] font-bold uppercase text-indigo-400 flex-shrink-0">{days <= 0 ? 'new' : '1d'}</span>
+                            )}
+                          </div>
+                          <ConfidenceBadge confidence={r.confidence} />
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${bullish ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : 'bg-red-900/30 text-red-400 border-red-800'}`}>
+                            {bullish ? '▲' : '▼'} {r.pattern}
+                          </span>
+                          <WinRateBadge stats={stats} />
+                        </div>
+                        {r.description && (
+                          <p className="mt-2 text-xs text-gray-500 line-clamp-2">{r.description}</p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setContractRow((prev) => (prev === rowKey ? null : rowKey));
+                          }}
+                          className={`mt-2 w-full text-xs px-2 py-1.5 rounded border transition-colors ${
+                            open
+                              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+                              : 'bg-gray-800 border-gray-700 text-gray-400'
+                          }`}
+                        >
+                          {open ? 'Hide contract' : 'View contract'}
+                        </button>
+                        {open && (
+                          <div className="mt-2 -mx-3" onClick={(e) => e.stopPropagation()}>
+                            <ContractPanel
+                              ticker={r.ticker}
+                              pattern={r.pattern}
+                              timeframe={timeframe}
+                              bullish={bullish}
+                              onClose={() => setContractRow(null)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </React.Fragment>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Desktop: full table */}
+            <table className="hidden md:table w-full text-sm border-collapse">
             <thead className="sticky top-0 bg-gray-900 z-10">
               <tr>
                 {COLS.map((col) => (
@@ -431,6 +525,7 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
               })}
             </tbody>
           </table>
+          </>
         )}
       </div>
 
