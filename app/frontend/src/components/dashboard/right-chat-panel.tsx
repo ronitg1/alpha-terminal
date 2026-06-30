@@ -195,7 +195,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
   const suggestions = getSuggestions(selectedTicker, section);
 
   return (
-    <div className="flex flex-col h-full w-80 border-l border-border bg-background flex-shrink-0">
+    <div className="flex flex-col bg-background h-full w-full md:w-80 md:border-l md:border-border md:flex-shrink-0 max-md:fixed max-md:inset-0 max-md:z-50 max-md:safe-top">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <Bot className="h-4 w-4 text-primary flex-shrink-0" />
@@ -248,7 +248,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
       </div>
 
       {/* Input */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 safe-bottom">
         {messages.length > 0 && (
           <button
             type="button"

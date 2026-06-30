@@ -15,7 +15,7 @@ export function UserMenu() {
   const { openWelcome } = useOnboarding();
   if (!AUTH_ENABLED) return null;
   return (
-    <div className="fixed right-3 top-2 z-50 flex items-center gap-1.5">
+    <div className="fixed right-3 top-[calc(env(safe-area-inset-top)+0.5rem)] z-30 flex items-center gap-1.5">
       <Button
         variant="ghost"
         size="icon"

@@ -4,6 +4,22 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] — 2026-06-30
+
+### Added
+- **Mobile / iOS support.** The dashboard is now usable on phones. Desktop keeps
+  the exact 3-pane layout (md+); on small screens the left nav collapses to a
+  slide-in drawer (☰ in a new thin top bar), the AI chat panel becomes a
+  full-screen overlay, and the center content goes full-width.
+  - iOS specifics: `viewport-fit=cover` + safe-area insets (notch / home
+    indicator), `100dvh` height so the Safari toolbar never hides content,
+    no tap-highlight flash, locked text-size-adjust, web-app-capable meta.
+  - Fixed mobile horizontal-overflow: the Pattern Scanner's fixed `320px+content`
+    grid now stacks; portfolio rows trim the allocation % / shrink the price
+    column on phones. Verified zero horizontal overflow at 375px across Market,
+    Screening, Portfolio, and P&L.
+  - Page title / home-screen name set to "Alpha Terminal".
+
 ## [1.7.1] — 2026-06-29
 
 ### Fixed

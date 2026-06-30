@@ -257,7 +257,7 @@ function WatchlistEditor({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-export function LeftNav() {
+export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { section, setSection, selectedTicker, setSelectedTicker, chatOpen, toggleChat } = useDashboard();
   const { config, watchlists, updateNamedWatchlist, createNamedWatchlist, deleteNamedWatchlist } = useSleevesContext();
 
@@ -383,7 +383,7 @@ export function LeftNav() {
           <button
             key={id}
             type="button"
-            onClick={() => setSection(id)}
+            onClick={() => { setSection(id); onNavigate?.(); }}
             className={cn(
               'flex flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium transition-colors',
               section === id
@@ -420,7 +420,7 @@ export function LeftNav() {
             </button>
             <button
               type="button"
-              onClick={() => { setSection('market'); setSelectedTicker(null); }}
+              onClick={() => { setSection('market'); setSelectedTicker(null); onNavigate?.(); }}
               className="mr-2 text-muted-foreground hover:text-foreground transition-colors"
               title="Manage watchlists"
             >
@@ -550,7 +550,7 @@ export function LeftNav() {
                         label={entry.comment || undefined}
                         quote={quotes[entry.ticker]}
                         selected={selectedTicker === entry.ticker}
-                        onClick={() => { setSelectedTicker(entry.ticker); setSection('market'); }}
+                        onClick={() => { setSelectedTicker(entry.ticker); setSection('market'); onNavigate?.(); }}
                         indent
                       />
                     ))}
@@ -601,7 +601,7 @@ export function LeftNav() {
                         ticker={t}
                         quote={quotes[t]}
                         selected={selectedTicker === t}
-                        onClick={() => { setSelectedTicker(t); setSection('market'); }}
+                        onClick={() => { setSelectedTicker(t); setSection('market'); onNavigate?.(); }}
                         indent
                       />
                     ))}
@@ -628,7 +628,7 @@ export function LeftNav() {
                   label={s.label}
                   quote={quotes[s.ticker]}
                   selected={selectedTicker === s.ticker}
-                  onClick={() => setSelectedTicker(s.ticker)}
+                  onClick={() => { setSelectedTicker(s.ticker); onNavigate?.(); }}
                 />
               ))}
             </div>

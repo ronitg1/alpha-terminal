@@ -797,7 +797,7 @@ function TickerPulseRow({
       <button
         type="button"
         onClick={() => setExpanded((o) => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/20 text-left transition-colors"
+        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 hover:bg-muted/20 text-left transition-colors"
       >
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -814,11 +814,15 @@ function TickerPulseRow({
           )}
         >
           <SignalIcon consensus={row.consensus} />
-          {row.consensus}
+          <span className="hidden sm:inline">{row.consensus}</span>
         </span>
 
         {/* Ticker */}
         <span className="font-mono font-bold text-sm w-16 flex-shrink-0">{row.ticker}</span>
+
+        {/* Mobile spacer — the flex-1 thesis below is hidden on phones, so without
+            this the price wouldn't be pushed to the right edge. */}
+        <div className="flex-1 sm:hidden" />
 
         {/* Thesis snippet */}
         <span className="flex-1 text-xs text-muted-foreground truncate hidden sm:block min-w-0">
@@ -828,15 +832,15 @@ function TickerPulseRow({
         {/* Overall recommendation + conviction */}
         <VerdictPill verdict={deriveVerdict(row)} />
 
-        {/* Allocation */}
+        {/* Allocation — hidden on phones to keep the row within a narrow screen */}
         {allocationPct != null && allocationPct > 0 && (
-          <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
+          <span className="hidden sm:inline-block text-[10px] font-mono text-muted-foreground flex-shrink-0">
             {allocationPct.toFixed(1)}%
           </span>
         )}
 
         {/* Price */}
-        <div className="flex flex-col items-end flex-shrink-0 w-20">
+        <div className="flex flex-col items-end flex-shrink-0 w-16 sm:w-20">
           <span className="font-mono text-sm">{fmtPrice(quote?.last)}</span>
           {quote?.pct_change != null && (
             <span

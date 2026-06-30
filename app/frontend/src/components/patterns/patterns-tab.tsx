@@ -147,9 +147,9 @@ export function PatternsTab() {
           <PatternBacktestPanel />
         </div>
       ) : (
-      <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] gap-4 p-4 overflow-hidden">
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 p-3 md:p-4 overflow-y-auto md:overflow-hidden">
         {/* Left: scanner + stats */}
-        <div className="overflow-y-auto space-y-4 pr-1">
+        <div className="space-y-4 md:overflow-y-auto md:pr-1">
           <ScannerPanel
             onResults={handleResults}
             isScanning={isScanning}

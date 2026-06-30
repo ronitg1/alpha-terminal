@@ -182,6 +182,36 @@
     margin: 0;
   }
 
+  /* Mobile / iOS polish:
+     - text-size-adjust: stop iOS Safari from auto-inflating font sizes.
+     - tap-highlight: remove the grey flash when tapping buttons/links.
+     - overscroll-behavior: kill the rubber-band scroll-chaining on the body
+       so inner scroll areas feel app-like, not page-like. */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  /* Height that tracks the *visible* viewport on iOS Safari (excludes the
+     dynamic address/tool bars), falling back to vh on older browsers. The shell
+     uses .app-vh instead of h-screen so content is never hidden behind the bar. */
+  .app-vh {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* Safe-area helpers for the notch / home indicator (no-ops off iOS). */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   @font-face {
     font-family: "geist";
     font-style: normal;
