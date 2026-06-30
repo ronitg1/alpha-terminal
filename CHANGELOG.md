@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.7] — 2026-06-30
+
+### Changed
+- **Longer cache for daily/weekly price data (faster repeat scans).** Pattern-scan
+  candle data was cached for only 15 minutes regardless of bar size; daily/weekly
+  bars now cache for 1 hour (intraday stays short). The first scan of a ticker
+  warms it for every user until expiry, cutting repeat-scan latency on the shared
+  production server. (A cross-user Redis cache is the planned next step.)
+
 ## [1.7.6] — 2026-06-30
 
 ### Fixed

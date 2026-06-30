@@ -22,7 +22,19 @@ logger = logging.getLogger(__name__)
 _EASTERN = ZoneInfo("America/New_York")
 
 _BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io")
-_CACHE_TTL = 900  # 15 minutes
+
+# Cache TTL by bar size. Daily/weekly bars barely change within a session, so
+# they're cached for an hour: the first scan of a ticker is slow, but every scan
+# after (by ANY user, until expiry) is instant. Intraday bars move faster, so a
+# shorter window. This is the cheap single-process speedup; a shared Redis cache
+# (cross-user, survives deploys) is the next step.
+_CACHE_TTL_BY_TIMESPAN = {"day": 3600, "week": 3600, "hour": 600, "minute": 600}
+_DEFAULT_CACHE_TTL = 900  # 15 minutes
+
+
+def _ttl_for(timespan: str) -> int:
+    return _CACHE_TTL_BY_TIMESPAN.get(timespan, _DEFAULT_CACHE_TTL)
+
 
 _cache: dict[str, tuple[float, list]] = {}
 _semaphore: asyncio.Semaphore | None = None
@@ -46,9 +58,9 @@ def _cache_key(
     return f"{ticker}:{from_date}:{to_date}:{multiplier}{timespan}"
 
 
-def _get_cached(key: str) -> list | None:
+def _get_cached(key: str, ttl: int) -> list | None:
     entry = _cache.get(key)
-    if entry and time.time() - entry[0] < _CACHE_TTL:
+    if entry and time.time() - entry[0] < ttl:
         return entry[1]
     if entry:
         del _cache[key]
@@ -74,7 +86,7 @@ async def fetch_candles(
     one session stay distinct.
     """
     key = _cache_key(ticker, from_date, to_date, timespan, multiplier)
-    cached = _get_cached(key)
+    cached = _get_cached(key, _ttl_for(timespan))
     if cached is not None:
         logger.debug("pattern_data cache hit: %s", ticker)
         return cached
