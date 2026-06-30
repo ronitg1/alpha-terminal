@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.3] — 2026-06-30
+
+### Fixed
+- **Pattern Scanner results were invisible on mobile.** In the stacked
+  single-column mobile layout the results card had no fixed height, so its
+  `flex-1` scroll area collapsed to 0px and rows (and the empty-state message)
+  never showed. The results list now takes natural height on phones and the page
+  scrolls; desktop's internal-scroll behavior is unchanged. Verified: a 6-ticker
+  scan renders its rows on a 375px viewport.
+
 ## [1.7.2] — 2026-06-30
 
 ### Added

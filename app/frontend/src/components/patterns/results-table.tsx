@@ -264,7 +264,7 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
   let lastBucket = '';
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl flex flex-col overflow-hidden">
+    <div className="bg-gray-900 border border-gray-800 rounded-xl flex flex-col overflow-hidden max-md:overflow-visible">
       {/* Header + text filters */}
       <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-800">
         <div className="flex items-center gap-2">
@@ -313,8 +313,10 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
         </ChipGroup>
       </div>
 
-      {/* Table */}
-      <div className="overflow-auto flex-1">
+      {/* Table — fills the card on desktop (scrolls inside); on mobile it takes
+          natural height and the page scrolls, since the card has no fixed height
+          in the stacked single-column layout (a flex-1 child would collapse). */}
+      <div className="overflow-auto flex-1 max-md:flex-none max-md:overflow-visible">
         {results.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-600">
             <svg className="w-12 h-12 mb-3 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1}>
