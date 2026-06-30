@@ -303,7 +303,7 @@ export function OptionChainViewer({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0">
           <ChainTable
             title="Calls"
             subtitle="bet the stock goes up"
@@ -377,14 +377,15 @@ function ChainTable({
   }
 
   return (
-    <div>
+    <div className="min-w-0">
       <div className="flex items-baseline gap-2 mb-1">
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
           {title}
         </div>
         <div className="text-[10px] text-muted-foreground/70">— {subtitle}</div>
       </div>
-      <table className="w-full text-[10px]">
+      <div className="overflow-x-auto">
+      <table className="w-full text-[10px] min-w-[480px]">
         <thead>
           <tr className="text-muted-foreground border-b border-border">
             <Th tip={<><b>Strike</b>: the price at which you can buy (call) or sell (put) the stock if you exercise the option.</>}>
@@ -426,6 +427,7 @@ function ChainTable({
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

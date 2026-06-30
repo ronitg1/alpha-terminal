@@ -295,15 +295,13 @@ export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = '
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 max-md:p-0 bg-black/80 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div
-        className="bg-gray-900 border border-gray-700 rounded-2xl flex flex-col overflow-hidden shadow-2xl"
-        style={{ width: '95vw', maxWidth: '1400px', height: '85vh' }}
-      >
+      {/* Full-screen on phones; centered card on desktop. */}
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl flex flex-col overflow-hidden shadow-2xl w-[95vw] max-w-[1400px] h-[85vh] max-md:w-screen max-md:h-[100dvh] max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:safe-top">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-4">
             <div>
               <h2 className="text-xl font-bold text-white font-mono">{ticker}</h2>
@@ -349,10 +347,10 @@ export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = '
           </div>
         </div>
 
-        {/* Chart area + analysis panel */}
-        <div className="flex-1 flex min-h-0">
-          {/* Charts column */}
-          <div className="flex-1 flex flex-col min-h-0 relative">
+        {/* Chart area + analysis panel — side-by-side on desktop, stacked on phones */}
+        <div className="flex-1 flex flex-col md:flex-row min-h-0">
+          {/* Charts column — fixed height on phones so the canvas has room */}
+          <div className="flex flex-col min-h-0 relative max-md:h-[48vh] max-md:flex-none md:flex-1">
             {(loading || error) && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gray-900">
                 {loading ? (
@@ -377,9 +375,9 @@ export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = '
             <div ref={volRef} style={{ flex: 3 }} className="min-h-0 border-t border-gray-800" />
           </div>
 
-          {/* Signal analysis side panel */}
+          {/* Signal analysis panel — side on desktop, below the chart on phones */}
           {activePattern && (
-            <div className="w-80 flex-shrink-0 border-l border-gray-800 flex flex-col min-h-0">
+            <div className="flex flex-col min-h-0 border-gray-800 max-md:flex-1 max-md:border-t md:w-80 md:flex-shrink-0 md:border-l">
               <div className="px-4 py-3 border-b border-gray-800 flex-shrink-0">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Signal Analysis</p>
               </div>
@@ -395,7 +393,7 @@ export function ChartModal({ ticker, activePattern, activeEndDate, timeframe = '
           const active = chartData.patterns.find((p) => p.pattern === activePattern);
           if (!active || Object.keys(active.key_levels ?? {}).length === 0) return null;
           return (
-            <div className="flex-shrink-0 border-t border-gray-800 px-6 py-3 flex items-center gap-6 bg-gray-900/50">
+            <div className="flex-shrink-0 border-t border-gray-800 px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-1 bg-gray-900/50 safe-bottom">
               <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Key Levels</span>
               {Object.entries(active.key_levels).map(([k, v]) => (
                 <div key={k} className="text-xs">

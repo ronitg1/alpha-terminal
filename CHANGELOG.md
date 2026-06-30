@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.5] — 2026-06-30
+
+### Fixed
+- **Pattern chart modal on mobile.** Tapping a result opened a modal that laid
+  the chart and the 320px analysis panel side-by-side, crushing the chart to a
+  sliver on a phone. The modal is now full-screen on phones with the chart on top
+  (full-width canvas) and the analysis panel stacked below; desktop is unchanged.
+- **Options chain table overflow on mobile.** The calls/puts chain table pushed
+  past the screen edge (a flex/grid `min-width:auto` ancestor wouldn't shrink).
+  Added `min-w-0` on the chain grid/items and wrapped the table in a horizontal
+  scroll container, so it scrolls in place within its card instead of overflowing.
+- Audited every tab at 375–393px: Market, Screening (Scanner/Options/Backtest),
+  Portfolio, P&L, News, Calls all have zero uncontained horizontal overflow.
+
 ## [1.7.4] — 2026-06-30
 
 ### Changed
