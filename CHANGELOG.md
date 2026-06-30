@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.6] — 2026-06-30
+
+### Fixed
+- **iOS "Add to Home Screen" (standalone) rendering.** Changed the standalone
+  status-bar style from `black-translucent` (which renders content *behind* the
+  status bar and looked cramped in the home-screen app) to `black`, which
+  reserves an opaque status bar above the content — better for the dark UI.
+  Plain Safari was already fine; this only affects the installed home-screen app.
+  Note: iOS snapshots the web-app meta tags at install time, so the icon must be
+  removed and re-added to pick up the change.
+
 ## [1.7.5] — 2026-06-30
 
 ### Fixed
