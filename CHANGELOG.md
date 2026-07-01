@@ -4,6 +4,22 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] — 2026-07-01
+
+### Fixed
+- **iOS: Markets panel + movers no longer overflow.** A market-mover with a very
+  long name (microcap ADR descriptions) was set to truncate, but grid/flex items
+  default to `min-width: auto`, so the track expanded to the full name instead —
+  pushing the whole page wider than the screen and clipping the right column of the
+  Markets card. Added `min-w-0` down the chain so names actually truncate, plus
+  `overflow-hidden` on both cards so neither can ever push the page wide again.
+
+### Changed
+- **Market data (indices + movers) cached ~90s.** It's identical for every user and
+  slow to build (crypto/forex spot + Finnhub name warming, ~6–10s cold), so the
+  cards used to sit blank. Now the first caller after expiry pays the cost and
+  everyone else gets an instant hit (verified 6.7s→3ms / 10.4s→3ms).
+
 ## [1.12.0] — 2026-07-01
 
 ### Added

@@ -16,7 +16,7 @@ function fmtLevel(v: number | null): string {
 function MarketsCard({ indices }: { indices: readonly IndexQuote[] }) {
   if (indices.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border/60 bg-card p-4">
+    <div className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Markets</div>
       {/* Compact 2-up on phones (value + % on one line) so 10 instruments don't
           push the user's own numbers off-screen; 4-up from sm. */}
@@ -37,7 +37,7 @@ function MarketsCard({ indices }: { indices: readonly IndexQuote[] }) {
 
 function MoverList({ title, rows, tone }: { title: string; rows: readonly Mover[]; tone: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       <div className={cn('text-[10px] font-medium uppercase', tone)}>{title}</div>
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">—</p>
@@ -61,9 +61,9 @@ function MoverList({ title, rows, tone }: { title: string; rows: readonly Mover[
 function MoversCard({ gainers, losers }: { gainers: readonly Mover[]; losers: readonly Mover[] }) {
   if (gainers.length === 0 && losers.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border/60 bg-card p-4">
+    <div className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Market movers today</div>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+      <div className="mt-3 grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
         <MoverList title="Gainers" rows={gainers} tone="text-emerald-500" />
         <MoverList title="Losers" rows={losers} tone="text-rose-500" />
       </div>

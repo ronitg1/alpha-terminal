@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter
@@ -19,6 +20,22 @@ from fastapi import APIRouter
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+# Market-wide data is identical for every user, and building it is slow (crypto/
+# forex spot aggregates + Finnhub name warming for movers → ~20s cold). Cache each
+# payload process-wide for a short window so only the first caller after expiry
+# pays the cost; everyone else gets an instant hit.
+_MARKET_TTL = 90.0
+_market_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+async def _cached(key: str, builder: Any) -> dict[str, Any]:
+    hit = _market_cache.get(key)
+    if hit is not None and (time.monotonic() - hit[0]) < _MARKET_TTL:
+        return hit[1]
+    payload = await builder()
+    _market_cache[key] = (time.monotonic(), payload)
+    return payload
 
 # (display label, ETF proxy ticker). Equity/bond indices priced off liquid ETF
 # proxies — they track the index and need no index-data entitlement, and their
@@ -87,7 +104,12 @@ def _fetch_spot(label: str, ticker: str) -> dict[str, Any]:
 @router.get("/indices")
 async def get_indices() -> dict[str, Any]:
     """Major indices (ETF proxies) + real crypto/metal spot, each with last /
-    change / % / sparkline. Best-effort — degrades to dashes, never errors."""
+    change / % / sparkline. Best-effort — degrades to dashes, never errors.
+    Cached ~90s process-wide (same for every user)."""
+    return await _cached("indices", _build_indices)
+
+
+async def _build_indices() -> dict[str, Any]:
     from app.backend.routes.sleeves import get_quotes
 
     symbols = ",".join(sym for _, sym in _INDEX_PROXIES)
@@ -160,7 +182,12 @@ def _fetch_movers(direction: str) -> list[dict[str, Any]]:
 
 @router.get("/movers")
 async def get_movers() -> dict[str, Any]:
-    """Top gainers and losers across US stocks (best-effort, time-boxed)."""
+    """Top gainers and losers across US stocks (best-effort, time-boxed).
+    Cached ~90s process-wide (same for every user)."""
+    return await _cached("movers", _build_movers)
+
+
+async def _build_movers() -> dict[str, Any]:
     try:
         gainers, losers = await asyncio.gather(
             asyncio.to_thread(_fetch_movers, "gainers"),
