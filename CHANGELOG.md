@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.10] — 2026-07-01
+
+### Added
+- **"Notable earnings this week" panel on the Market summary.** A curated set of
+  market-moving names plus the watchlist, split into Upcoming (with EPS estimate)
+  and Reported (beat/miss vs estimate + the post-print price reaction — the first
+  session's move). Broader than the watchlist calendar. Backend
+  `GET /market/earnings-week`, cached for the week. Shows an empty note in a quiet
+  week and fills in during earnings season (beat/miss + reaction logic verified
+  against recent prints).
+
 ## [1.12.9] — 2026-07-01
 
 ### Added

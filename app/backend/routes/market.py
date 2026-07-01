@@ -143,6 +143,21 @@ def _profile(sym: str) -> dict[str, Any]:
     return out
 
 
+@router.get("/earnings-week")
+async def get_earnings_week(tickers: str = "") -> dict[str, Any]:
+    """Notable earnings this week (curated market-movers + the watchlist), split into
+    upcoming (with EPS estimate) and reported (beat/miss + post-print reaction).
+    Cached for the week; time-boxed so a cold build can't hang the panel."""
+    watchlist = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    from app.backend.services import earnings_week
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(earnings_week.build_week, watchlist), timeout=40.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Earnings-week build failed/timed out: %s", type(exc).__name__)
+        return {"week_of": None, "upcoming": [], "reported": []}
+
+
 @router.get("/heatmap")
 async def get_heatmap(tickers: str = "") -> dict[str, Any]:
     """Sector heatmap tiles for the given tickers: sector + market cap (Finnhub,

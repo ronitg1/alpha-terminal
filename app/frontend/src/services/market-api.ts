@@ -24,6 +24,27 @@ export interface SymbolMatch {
   readonly type: string;
 }
 
+export interface UpcomingEarning {
+  readonly ticker: string;
+  readonly date: string;
+  readonly hour: string | null;
+  readonly eps_estimate: number | null;
+}
+export interface ReportedEarning {
+  readonly ticker: string;
+  readonly date: string;
+  readonly hour: string | null;
+  readonly eps_actual: number | null;
+  readonly eps_estimate: number | null;
+  readonly surprise_pct: number | null;
+  readonly reaction_pct: number | null;
+}
+export interface EarningsWeek {
+  readonly week_of: string | null;
+  readonly upcoming: UpcomingEarning[];
+  readonly reported: ReportedEarning[];
+}
+
 export interface HeatmapTile {
   readonly ticker: string;
   readonly name: string;
@@ -63,4 +84,6 @@ export const marketApi = {
     // Long timeout: the first (cold-cache) build does per-name Finnhub profile
     // lookups; once warmed (6h cache) it returns in a few seconds.
     req<{ tiles: HeatmapTile[] }>(`/heatmap?tickers=${encodeURIComponent(tickers.join(','))}`, 45_000),
+  getEarningsWeek: (tickers: readonly string[]) =>
+    req<EarningsWeek>(`/earnings-week?tickers=${encodeURIComponent(tickers.join(','))}`, 45_000),
 };
