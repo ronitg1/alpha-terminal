@@ -293,6 +293,54 @@ async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
             p["day_change_pct"] = _round(change_pct)
 
 
+# stock symbol -> (fetched_at_monotonic, (low_52w, high_52w) | None). 52-week
+# range barely moves day to day, so this caches for an hour.
+_WEEK52_TTL = 3600.0
+_week52_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
+
+
+def _fetch_week52(symbol: str) -> tuple[float, float] | None:
+    """(52-week low, 52-week high) from a year of daily bars, or None."""
+    import datetime
+
+    from src.tools.massive.client import MassiveClient
+
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=365)).isoformat()
+    try:
+        data = MassiveClient(timeout=6).get_daily_aggregates(symbol, start, today.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("52-week fetch failed for %s: %s", symbol, type(exc).__name__)
+        return None
+    results = data.get("results") if isinstance(data, dict) else None
+    highs = [r["h"] for r in results or [] if isinstance(r, dict) and r.get("h") is not None]
+    lows = [r["l"] for r in results or [] if isinstance(r, dict) and r.get("l") is not None]
+    if not highs or not lows:
+        return None
+    return min(float(x) for x in lows), max(float(x) for x in highs)
+
+
+async def _annotate_week52(positions: list[dict[str, Any]]) -> None:
+    """Fill 52-week low/high for stock positions (cached, best-effort)."""
+    syms = {p.get("underlying") for p in positions if p.get("kind") == "stock" and p.get("underlying")}
+
+    async def _one(sym: str) -> tuple[str, tuple[float, float] | None]:
+        cached = _week52_cache.get(sym)
+        if cached and (time.monotonic() - cached[0]) < _WEEK52_TTL:
+            return sym, cached[1]
+        res = await asyncio.to_thread(_fetch_week52, sym)
+        _week52_cache[sym] = (time.monotonic(), res)
+        return sym, res
+
+    resolved = dict(await asyncio.gather(*[_one(s) for s in syms])) if syms else {}
+    for p in positions:
+        if p.get("kind") != "stock":
+            continue
+        rng = resolved.get(p.get("underlying"))
+        if rng:
+            p["week52_low"], p["week52_high"] = _round(rng[0]), _round(rng[1])
+
+
 async def _snaptrade_accounts() -> list[dict[str, Any]]:
     """SnapTrade accounts as raw (pre-enrichment) position bundles, or [] when not
     connected. Errors are logged and swallowed so the other source still loads."""
@@ -443,6 +491,10 @@ async def build_overview() -> dict[str, Any]:
         await asyncio.wait_for(_annotate_option_day_change(all_positions), timeout=8.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Option day-change annotation skipped: %s", type(exc).__name__)
+    try:
+        await asyncio.wait_for(_annotate_week52(all_positions), timeout=8.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("52-week annotation skipped: %s", type(exc).__name__)
 
     accounts = [
         _finalize_account(

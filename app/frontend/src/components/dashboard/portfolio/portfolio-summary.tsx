@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { maskMoney, maskSigned, pct, toneClass } from './format';
 import { MarketCards } from './market-cards';
 import { NewsCard } from './news-card';
+import { PortfolioEvents } from './portfolio-events';
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -192,10 +193,10 @@ export function PortfolioSummary({ account, masked = false }: { account: Portfol
         <Movers account={account} masked={masked} />
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
+        <PortfolioEvents account={account} />
         <NewsCard account={account} />
       </div>
       <MarketCards />
-      {/* M3 — Portfolio events + earnings calendar lands next. */}
     </div>
   );
 }
