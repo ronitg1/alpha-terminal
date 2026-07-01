@@ -4,6 +4,12 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.3] — 2026-07-01
+
+### Changed
+- **Market tab always returns to the summary dashboard.** Clicking Market now
+  deselects any open ticker instead of leaving you on the last research card.
+
 ## [1.12.2] — 2026-07-01
 
 ### Added

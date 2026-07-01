@@ -493,7 +493,13 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
           <button
             key={id}
             type="button"
-            onClick={() => { setSection(id); onNavigate?.(); }}
+            onClick={() => {
+              // Clicking Market always returns to the summary dashboard, never a
+              // stale ticker research card.
+              if (id === 'market') setSelectedTicker(null);
+              setSection(id);
+              onNavigate?.();
+            }}
             className={cn(
               'flex flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium transition-colors',
               section === id
