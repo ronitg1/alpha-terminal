@@ -4,6 +4,21 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.9] — 2026-07-01
+
+### Changed (efficiency pass — backend)
+- **Portfolio overview enrichment runs concurrently.** The sector, option-price, and
+  52-week waves are independent (disjoint fields), so they now run under a single 8s
+  budget instead of serializing three timeouts (~3× faster worst case).
+- **Shared HTTP client across the option/52-week fan-out** (reuses the connection
+  pool) instead of a fresh `MassiveClient`/session per contract.
+
+### Fixed
+- **Thesis (and other LLM endpoints) return a clean 402 instead of a 500** when a
+  user has no DeepSeek/OpenRouter key — a global `MissingUserKey` handler soft-gates
+  to Settings.
+- Removed a dead redundant sort in `GET /pnl/positions`.
+
 ## [1.11.8] — 2026-07-01
 
 ### Removed (dead-code cleanup after the rework)

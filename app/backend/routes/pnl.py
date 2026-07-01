@@ -83,7 +83,8 @@ class ClosePayload(BaseModel):
 async def list_positions() -> dict[str, Any]:
     """All tracked positions, open first then closed, newest first within each."""
     positions = pnl_service.get_all()
-    positions.sort(key=lambda p: (p.get("status") != "open", p.get("created_at", "")), reverse=False)
+    # Two stable passes (Python's sort is stable): newest-first, then open-before-
+    # closed. The end result is "open first, newest-first within each group".
     positions.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     positions.sort(key=lambda p: p.get("status") != "open")
     return {"positions": positions}

@@ -11,9 +11,10 @@ connected, one if only one is, and neither → the caller shows a "connect a
 brokerage" prompt (``connected: False``). A failure in one source never blocks the
 other — each is fetched independently and its errors are logged, not raised.
 
-Deliberately NOT here yet (later milestones): 52-week range, market indices,
-market movers, earnings — ``week52_low``/``week52_high`` are emitted as ``None``
-so the frontend column exists but fills in when M3 lands.
+Positions are enriched in-place by three independent, concurrent best-effort waves
+(sector classification, option day-change/price, 52-week range) before account
+totals are finalized. Each wave is time-boxed and degrades to leaving its fields
+unset rather than failing the response.
 """
 from __future__ import annotations
 
@@ -41,6 +42,18 @@ def _pct(part: float | None, whole: float | None) -> float | None:
     if part is None or not whole:
         return None
     return round(part / whole * 100, 2)
+
+
+def _shared_massive_client() -> Any:
+    """One MassiveClient for a fan-out (reuses the connection pool), or None if no
+    key/config is available — the per-item fetches then no-op gracefully. Built in
+    the request context so it captures the per-user key."""
+    from src.tools.massive.client import MassiveClient
+
+    try:
+        return MassiveClient(timeout=6)
+    except Exception:  # noqa: BLE001 — no key bound; enrichment degrades to no-op
+        return None
 
 
 def _enrich_position(pos: dict[str, Any], quote: dict[str, Any] | None) -> dict[str, Any]:
@@ -215,16 +228,15 @@ def _occ_ticker(underlying: str | None, expiration: str | None, option_type: str
     return f"O:{underlying.upper()}{exp}{cp}{strike_millis:08d}"
 
 
-def _fetch_option_snapshot(underlying: str, occ: str) -> tuple[float | None, float | None, float | None] | None:
+def _fetch_option_snapshot(client: Any, underlying: str, occ: str) -> tuple[float | None, float | None, float | None] | None:
     """``(last_price, change_per_share, change_percent)`` for one option contract
     from Polygon's snapshot, or None if nothing usable. The market price is used to
     value the position (brokers — especially Robinhood via SnapTrade — often report
     a stale mark equal to the buy price, which showed a bogus $0 gain). ``day`` is
-    live during market hours and the last close when the market is shut."""
-    from src.tools.massive.client import MassiveClient
-
+    live during market hours and the last close when the market is shut. ``client``
+    is shared across the fan-out so the session/connection pool is reused."""
     try:
-        data = MassiveClient(timeout=6).get_option_contract_snapshot(underlying, occ)
+        data = client.get_option_contract_snapshot(underlying, occ)
     except Exception as exc:  # noqa: BLE001 — best-effort; option may be illiquid/unlisted
         logger.debug("Option snapshot failed for %s: %s", occ, type(exc).__name__)
         return None
@@ -259,12 +271,18 @@ async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
         occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
         if occ and p.get("underlying"):
             wanted[occ] = p["underlying"]
+    if not wanted:
+        return
+    # One shared client (reads the per-request key here, in the request context)
+    # so the fan-out reuses the connection pool instead of a session per contract.
+    # None if no key/config — the per-contract fetch then no-ops gracefully.
+    client = _shared_massive_client()
 
     async def _one(occ: str, underlying: str) -> tuple[str, tuple[float | None, float | None, float | None] | None]:
         cached = _option_change_cache.get(occ)
         if cached and (time.monotonic() - cached[0]) < _OPTION_CHANGE_TTL:
             return occ, cached[1]
-        res = await asyncio.to_thread(_fetch_option_snapshot, underlying, occ)
+        res = await asyncio.to_thread(_fetch_option_snapshot, client, underlying, occ)
         _option_change_cache[occ] = (time.monotonic(), res)
         return occ, res
 
@@ -299,16 +317,15 @@ _WEEK52_TTL = 3600.0
 _week52_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
 
 
-def _fetch_week52(symbol: str) -> tuple[float, float] | None:
-    """(52-week low, 52-week high) from a year of daily bars, or None."""
+def _fetch_week52(client: Any, symbol: str) -> tuple[float, float] | None:
+    """(52-week low, 52-week high) from a year of daily bars, or None. ``client`` is
+    shared across the fan-out to reuse the connection pool."""
     import datetime
-
-    from src.tools.massive.client import MassiveClient
 
     today = datetime.date.today()
     start = (today - datetime.timedelta(days=365)).isoformat()
     try:
-        data = MassiveClient(timeout=6).get_daily_aggregates(symbol, start, today.isoformat())
+        data = client.get_daily_aggregates(symbol, start, today.isoformat())
     except Exception as exc:  # noqa: BLE001
         logger.debug("52-week fetch failed for %s: %s", symbol, type(exc).__name__)
         return None
@@ -323,12 +340,15 @@ def _fetch_week52(symbol: str) -> tuple[float, float] | None:
 async def _annotate_week52(positions: list[dict[str, Any]]) -> None:
     """Fill 52-week low/high for stock positions (cached, best-effort)."""
     syms = {p.get("underlying") for p in positions if p.get("kind") == "stock" and p.get("underlying")}
+    if not syms:
+        return
+    client = _shared_massive_client()
 
     async def _one(sym: str) -> tuple[str, tuple[float, float] | None]:
         cached = _week52_cache.get(sym)
         if cached and (time.monotonic() - cached[0]) < _WEEK52_TTL:
             return sym, cached[1]
-        res = await asyncio.to_thread(_fetch_week52, sym)
+        res = await asyncio.to_thread(_fetch_week52, client, sym)
         _week52_cache[sym] = (time.monotonic(), res)
         return sym, res
 
@@ -481,20 +501,28 @@ async def build_overview() -> dict[str, Any]:
         all_positions.extend(enriched)
 
     # Annotate positions BEFORE finalizing accounts, so the account totals (esp.
-    # today's change) include options' day change. Best-effort + time-boxed: never
-    # let these external lookups hang the response.
+    # today's change) include options' day change. The three waves touch DISJOINT
+    # fields (sector vs option last_price/day_change vs week52_*) with no data
+    # dependency, so they run CONCURRENTLY under one 8s budget instead of
+    # serializing three timeouts. Each guards its own errors so one failing never
+    # cancels the others; whatever finished stays (positions mutate in place).
+    async def _guard(coro: Any, what: str) -> None:
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s annotation skipped: %s", what, type(exc).__name__)
+
     try:
-        await asyncio.wait_for(_annotate_sectors(all_positions), timeout=8.0)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Sector annotation skipped: %s", type(exc).__name__)
-    try:
-        await asyncio.wait_for(_annotate_option_day_change(all_positions), timeout=8.0)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Option day-change annotation skipped: %s", type(exc).__name__)
-    try:
-        await asyncio.wait_for(_annotate_week52(all_positions), timeout=8.0)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("52-week annotation skipped: %s", type(exc).__name__)
+        await asyncio.wait_for(
+            asyncio.gather(
+                _guard(_annotate_sectors(all_positions), "Sector"),
+                _guard(_annotate_option_day_change(all_positions), "Option day-change"),
+                _guard(_annotate_week52(all_positions), "52-week"),
+            ),
+            timeout=8.0,
+        )
+    except Exception as exc:  # noqa: BLE001 — TimeoutError etc.; keep partial work
+        logger.warning("Enrichment phase timed out/failed: %s", type(exc).__name__)
 
     accounts = [
         _finalize_account(

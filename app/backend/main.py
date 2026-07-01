@@ -1,12 +1,14 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
 import os
 
 from app.backend.routes import api_router
 from app.backend.database.connection import engine, _is_sqlite
 from app.backend.database.models import Base
+from app.backend.services.key_resolver import MissingUserKey
 from app.backend.services.ollama_service import ollama_service
 
 # Configure logging
@@ -57,7 +59,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.11.8",
+    version="1.11.9",
     lifespan=_lifespan,
 )
 
@@ -161,6 +163,17 @@ app.add_middleware(
 from app.backend.middleware import UserContextMiddleware  # noqa: E402
 
 app.add_middleware(UserContextMiddleware)
+
+
+@app.exception_handler(MissingUserKey)
+async def _missing_user_key_handler(_request: Request, exc: MissingUserKey) -> JSONResponse:
+    """A required per-user API key isn't set (e.g. DeepSeek for a thesis). Return a
+    clean 402 the frontend can soft-gate to Settings, instead of an unhandled 500.
+    Providers with their own graceful handling (e.g. Robinhood) catch this earlier."""
+    return JSONResponse(
+        status_code=402,
+        content={"detail": f"Add your {exc.provider} API key in Settings to use this feature.", "provider": exc.provider},
+    )
 
 
 @app.get("/health")

@@ -13,11 +13,14 @@ from app.backend.services import portfolio_overview as ov
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Module-level caches (option snapshots, sector buckets) must not leak between
-    tests — a cached None from one test would suppress another's override."""
+def _clear_caches(monkeypatch):
+    """Module-level caches (option snapshots, sector buckets, 52-week) must not leak
+    between tests — a cached None from one test would suppress another's override.
+    Also stub the 52-week fetch so tests never hit the network for it."""
     ov._option_change_cache.clear()
+    ov._week52_cache.clear()
     portfolio_classify._bucket_cache.clear()
+    monkeypatch.setattr(ov, "_fetch_week52", lambda client, sym: None)
     yield
 
 
@@ -63,7 +66,7 @@ def only_snaptrade(monkeypatch):
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     # Keep tests hermetic: no Finnhub sector calls, no Polygon option-bar calls.
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda client, underlying, occ: None)
     yield
 
 
@@ -122,7 +125,7 @@ def test_option_snapshot_price_overrides_stale_broker_mark(monkeypatch):
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
     # Live option price 6.00 (vs the broker's stale 3.75 mark), +0.50 / +8% today.
-    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: (6.0, 0.5, 8.0))
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda client, underlying, occ: (6.0, 0.5, 8.0))
 
     result = anyio.run(ov.build_overview)
     opt = next(p for p in result["accounts"][0]["positions"] if p["kind"] == "option")
@@ -160,7 +163,7 @@ def test_combined_merges_symbols_across_accounts(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda client, underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert len(result["accounts"]) == 2
@@ -189,7 +192,7 @@ def test_robinhood_positions_parsed(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda client, underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert result["connected"] is True
