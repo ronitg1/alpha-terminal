@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.15] — 2026-07-01
+
+### Fixed
+- **ETF/fund company names now populate in the left nav.** Names came from
+  Finnhub's `profile2`, which is empty for most ETFs (VOO, VXUS, SPXL, VIG, AVUV…),
+  so those rows showed only a ticker. When Finnhub returns nothing we now fall back
+  to Polygon's reference endpoint (scoped to the empties only), which has fund
+  names. Stocks were already resolving.
+
 ## [1.11.14] — 2026-07-01
 
 ### Changed

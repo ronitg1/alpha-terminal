@@ -1713,11 +1713,27 @@ async def _warm_company_names(symbols: list[str]) -> None:
 
     async def one(sym: str) -> None:
         async with sem:
+            name = ""
             try:
                 prof = await asyncio.to_thread(client.company_profile, sym)
-                _name_cache[sym] = (prof.get("name") or "").strip()
+                name = (prof.get("name") or "").strip()
             except Exception as exc:  # noqa: BLE001 — best-effort; uncached names retry later
                 logger.debug("Company-name lookup failed for %s: %s", sym, exc)
+            # Finnhub's profile2 covers common stocks but returns nothing for most
+            # ETFs/funds (VOO, VXUS, SPXL…). Fall back to Polygon's reference for
+            # those — scoped to the handful of empties, so the slow endpoint isn't
+            # fanned out across the whole sidebar.
+            if not name:
+                try:
+                    from src.tools.massive.client import MassiveClient
+
+                    det = await asyncio.to_thread(lambda: MassiveClient(timeout=6).get_ticker_details(sym))
+                    res = det.get("results") if isinstance(det, dict) else None
+                    if isinstance(res, dict):
+                        name = (res.get("name") or "").strip()
+                except Exception as exc:  # noqa: BLE001 — leave blank, retry later
+                    logger.debug("ETF name fallback failed for %s: %s", sym, exc)
+            _name_cache[sym] = name
 
     try:
         await asyncio.wait_for(asyncio.gather(*[one(s) for s in missing]), timeout=6.0)
