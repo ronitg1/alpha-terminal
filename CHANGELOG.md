@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.17] — 2026-07-01
+
+### Changed
+- **52-week range visual in Positions.** Redesigned the range bar (Fidelity-style
+  low ─ ● ─ high with the traversed portion tinted and a marker whose colour
+  tracks position — green near the high, red near the low) and added it to the
+  mobile position cards, not just the desktop table. Verified: marker sits at the
+  correct % of range with the right colour.
+- **Markets card is compact on phones.** Each instrument now shows its value and %
+  on one line in a 2-up grid so the 10 indices/commodities don't push your own
+  numbers below the fold.
+- **Market-movers long names no longer overflow.** Microcap names (e.g. long ADR
+  descriptions) now truncate to one line instead of blowing out the card width.
+
 ## [1.11.16] — 2026-07-01
 
 ### Changed

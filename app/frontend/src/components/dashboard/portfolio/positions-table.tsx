@@ -33,19 +33,36 @@ function positionSubtitle(p: PortfolioPosition): string {
   return p.kind === 'option' ? fmtExpiry(p.expiration) : (p.name || '');
 }
 
-function Week52({ p }: { p: PortfolioPosition }) {
-  if (p.week52_low === null || p.week52_high === null || p.last_price === null) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  const span = p.week52_high - p.week52_low;
-  const posPct = span > 0 ? Math.min(100, Math.max(0, ((p.last_price - p.week52_low) / span) * 100)) : 50;
+function hasWeek52(p: PortfolioPosition): boolean {
+  return p.week52_low != null && p.week52_high != null && p.last_price != null;
+}
+
+/**
+ * Fidelity-style 52-week range: low ─── ● ─── high, with a marker at the current
+ * price and the traversed portion tinted. `flex-1` lets it fill a table cell; on a
+ * card it spans the full width. Colour of the marker tracks position in the range
+ * (near the low = red, near the high = green).
+ */
+function Week52Bar({ p, className }: { p: PortfolioPosition; className?: string }) {
+  if (!hasWeek52(p)) return <span className="text-muted-foreground">—</span>;
+  const low = p.week52_low as number;
+  const high = p.week52_high as number;
+  const last = p.last_price as number;
+  const span = high - low;
+  const posPct = span > 0 ? Math.min(100, Math.max(0, ((last - low) / span) * 100)) : 50;
+  const markerTone = posPct >= 66 ? 'bg-emerald-500' : posPct <= 33 ? 'bg-rose-500' : 'bg-primary';
   return (
-    <div className="flex items-center gap-1">
-      <span className="text-[10px] text-muted-foreground">{money(p.week52_low, { compact: true })}</span>
-      <div className="relative h-1 w-14 rounded-full bg-muted">
-        <div className="absolute top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-primary" style={{ left: `calc(${posPct}% - 4px)` }} />
+    <div className={cn('flex items-center gap-1.5', className)}>
+      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{money(low, { compact: true })}</span>
+      <div className="relative h-1 min-w-[3rem] flex-1 rounded-full bg-muted">
+        <div className="absolute inset-y-0 left-0 rounded-full bg-primary/25" style={{ width: `${posPct}%` }} />
+        <div
+          className={cn('absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-background', markerTone)}
+          style={{ left: `${posPct}%` }}
+          title={`${money(last)} · ${posPct.toFixed(0)}% of 52-wk range`}
+        />
       </div>
-      <span className="text-[10px] text-muted-foreground">{money(p.week52_high, { compact: true })}</span>
+      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{money(high, { compact: true })}</span>
     </div>
   );
 }
@@ -109,6 +126,12 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
                 <div>{pct(p.pct_of_account, false)}</div>
               </div>
             </div>
+            {hasWeek52(p) && (
+              <div className="mt-2.5">
+                <div className="mb-1 text-[10px] text-muted-foreground">52-week range</div>
+                <Week52Bar p={p} />
+              </div>
+            )}
           </div>
         ))}
         {/* Mobile subtotal row */}
@@ -160,7 +183,7 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
                 <td className="px-2 py-2 text-right tabular-nums">{num(p.quantity)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{money(p.avg_cost)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{maskMoney(p.cost_basis_total, masked)}</td>
-                <td className="px-2 py-2"><Week52 p={p} /></td>
+                <td className="px-2 py-2"><div className="w-32"><Week52Bar p={p} /></div></td>
               </tr>
             ))}
           </tbody>

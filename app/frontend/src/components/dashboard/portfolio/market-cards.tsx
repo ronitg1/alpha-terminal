@@ -18,12 +18,16 @@ function MarketsCard({ indices }: { indices: readonly IndexQuote[] }) {
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Markets</div>
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+      {/* Compact 2-up on phones (value + % on one line) so 10 instruments don't
+          push the user's own numbers off-screen; 4-up from sm. */}
+      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
         {indices.map((ix) => (
-          <div key={ix.symbol}>
-            <div className="text-[11px] text-muted-foreground">{ix.label}</div>
-            <div className="text-sm font-semibold tabular-nums">{fmtLevel(ix.last)}</div>
-            <div className={cn('text-[11px] tabular-nums', toneClass(ix.change_pct))}>{pct(ix.change_pct)}</div>
+          <div key={ix.symbol} className="min-w-0">
+            <div className="truncate text-[11px] text-muted-foreground">{ix.label}</div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm font-semibold tabular-nums">{fmtLevel(ix.last)}</span>
+              <span className={cn('text-[10px] tabular-nums', toneClass(ix.change_pct))}>{pct(ix.change_pct)}</span>
+            </div>
           </div>
         ))}
       </div>
@@ -40,13 +44,13 @@ function MoverList({ title, rows, tone }: { title: string; rows: readonly Mover[
       ) : (
         rows.map((m) => (
           <div key={m.ticker} className="flex items-center gap-2 text-xs">
-            <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 flex-1 flex-col">
               <span className="font-mono font-medium leading-tight">{m.ticker}</span>
               {m.name && (
-                <span className="truncate text-[10px] leading-tight text-muted-foreground">{m.name}</span>
+                <span className="block truncate text-[10px] leading-tight text-muted-foreground">{m.name}</span>
               )}
             </div>
-            <span className={cn('ml-auto w-16 shrink-0 text-right tabular-nums', toneClass(m.change_pct))}>{pct(m.change_pct)}</span>
+            <span className={cn('w-14 shrink-0 text-right tabular-nums', toneClass(m.change_pct))}>{pct(m.change_pct)}</span>
           </div>
         ))
       )}
