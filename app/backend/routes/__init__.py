@@ -16,6 +16,7 @@ from app.backend.routes.patterns import router as patterns_router
 from app.backend.routes.news import router as news_router
 from app.backend.routes.transcripts import router as transcripts_router
 from app.backend.routes.pnl import router as pnl_router
+from app.backend.routes.robinhood import router as robinhood_router
 
 # Main API router
 api_router = APIRouter()
@@ -47,4 +48,5 @@ api_router.include_router(patterns_router, tags=["patterns"], dependencies=_AUTH
 api_router.include_router(news_router, tags=["news"], dependencies=_AUTH)
 api_router.include_router(transcripts_router, tags=["transcripts"], dependencies=_AUTH)
 api_router.include_router(pnl_router, dependencies=_AUTH)
+api_router.include_router(robinhood_router, tags=["robinhood"], dependencies=_AUTH)
 api_router.include_router(access_router, tags=["access"], dependencies=_AUTH)

@@ -1,8 +1,8 @@
 /**
  * BYOK API-key settings (Phase 3). Lets a signed-in user add/replace/remove
  * their own provider keys. DeepSeek is required (it powers every LLM scan/thesis
- * /chat and is billed per use); Massive (market data) and Finnhub (news) are
- * optional — the app falls back to the shared keys for those.
+ * /chat and is billed per use); Massive (market data), Finnhub (news), and
+ * Robinhood MCP (portfolio pull) are optional.
  *
  * Key values are write-only: the API never returns them, so the UI only shows
  * whether a key is set, never the value.
@@ -18,12 +18,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { API_BASE_URL } from '@/lib/api-base';
 
-type Provider = 'deepseek' | 'massive' | 'finnhub';
+type Provider = 'deepseek' | 'massive' | 'finnhub' | 'robinhood';
 
 const PROVIDERS: { id: Provider; label: string; required: boolean; help: string }[] = [
   { id: 'deepseek', label: 'DeepSeek', required: true, help: 'Required — powers AI scans, theses, and chat (billed to your key).' },
   { id: 'massive', label: 'Massive (Polygon)', required: false, help: 'Market data. Approved accounts use the shared key; otherwise add your own.' },
   { id: 'finnhub', label: 'Finnhub', required: false, help: 'News & fundamentals. Approved accounts use the shared key; otherwise add your own.' },
+  { id: 'robinhood', label: 'Robinhood MCP', required: false, help: 'Optional; pulls a read-only Robinhood portfolio snapshot for now.' },
 ];
 
 interface KeySummary { provider: string; has_key: boolean }
