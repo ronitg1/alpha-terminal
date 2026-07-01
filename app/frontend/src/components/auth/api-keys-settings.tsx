@@ -1,8 +1,9 @@
 /**
  * BYOK API-key settings (Phase 3). Lets a signed-in user add/replace/remove
- * their own provider keys. DeepSeek is required (it powers every LLM scan/thesis
- * /chat and is billed per use); Massive (market data) and Finnhub (news) are
- * optional — the app falls back to the shared keys for those.
+ * their own provider keys. DeepSeek is required by default for LLM scans/thesis
+ * /chat and is billed per use; OpenRouter can replace it when selected. Massive
+ * (market data) and Finnhub (news) are optional — the app falls back to the
+ * shared keys for those.
  *
  * Key values are write-only: the API never returns them, so the UI only shows
  * whether a key is set, never the value.
@@ -19,10 +20,12 @@ import { Input } from '@/components/ui/input';
 import { API_BASE_URL } from '@/lib/api-base';
 import { ScheduledScansSettings } from './scheduled-scans-settings';
 
-type Provider = 'deepseek' | 'massive' | 'finnhub';
+type Provider = 'deepseek' | 'openrouter' | 'massive' | 'finnhub';
+type LlmProvider = 'DeepSeek' | 'OpenRouter';
 
 const PROVIDERS: { id: Provider; label: string; required: boolean; help: string }[] = [
-  { id: 'deepseek', label: 'DeepSeek', required: true, help: 'Required — powers AI scans, theses, and chat (billed to your key).' },
+  { id: 'deepseek', label: 'DeepSeek', required: true, help: 'Default LLM key for AI scans, theses, and chat; not needed when OpenRouter is selected.' },
+  { id: 'openrouter', label: 'OpenRouter', required: false, help: 'Optional; enables OpenRouter model selection and bills LLM usage to your key.' },
   { id: 'massive', label: 'Massive (Polygon)', required: false, help: 'Market data. Approved accounts use the shared key; otherwise add your own.' },
   { id: 'finnhub', label: 'Finnhub', required: false, help: 'News & fundamentals. Approved accounts use the shared key; otherwise add your own.' },
 ];
@@ -30,6 +33,14 @@ const PROVIDERS: { id: Provider; label: string; required: boolean; help: string 
 interface KeySummary { provider: string; has_key: boolean }
 interface AccessInfo { is_owner: boolean; shared_data_approved: boolean; request_status: string | null }
 interface AccessReq { id: number; user_id: string; email: string | null; status: string; note: string | null }
+interface ModelPreference { model_provider: LlmProvider; model_name: string; preference_saved: boolean }
+interface LanguageModel { display_name: string; model_name: string; provider: string }
+
+const DEEPSEEK_MODELS: LanguageModel[] = [
+  { display_name: 'DeepSeek R1 (deepseek-reasoner)', model_name: 'deepseek-reasoner', provider: 'DeepSeek' },
+  { display_name: 'DeepSeek V3 (deepseek-chat)', model_name: 'deepseek-chat', provider: 'DeepSeek' },
+  { display_name: 'DeepSeek V4 Pro (deepseek-v4-pro)', model_name: 'deepseek-v4-pro', provider: 'DeepSeek' },
+];
 
 export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -39,6 +50,10 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [access, setAccess] = useState<AccessInfo | null>(null);
   const [requests, setRequests] = useState<AccessReq[]>([]);
+  const [modelProvider, setModelProvider] = useState<LlmProvider>('DeepSeek');
+  const [modelName, setModelName] = useState('deepseek-reasoner');
+  const [modelBusy, setModelBusy] = useState(false);
+  const [openRouterModels, setOpenRouterModels] = useState<LanguageModel[]>([]);
 
   const loadAccess = useCallback(async () => {
     try {
@@ -93,12 +108,34 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
     }
   }, []);
 
+  const loadModelSettings = useCallback(async () => {
+    try {
+      const prefRes = await fetch(`${API_BASE_URL}/user-settings/model`);
+      if (!prefRes.ok) throw new Error(`HTTP ${prefRes.status}`);
+      const pref: ModelPreference = await prefRes.json();
+      setModelProvider(pref.model_provider);
+      setModelName(pref.model_name);
+    } catch (e) {
+      toast.error(`Could not load model preference: ${e instanceof Error ? e.message : e}`);
+    }
+
+    try {
+      const modelsRes = await fetch(`${API_BASE_URL}/language-models/`);
+      if (!modelsRes.ok) throw new Error(`HTTP ${modelsRes.status}`);
+      const payload: { models: LanguageModel[] } = await modelsRes.json();
+      setOpenRouterModels((payload.models || []).filter((m) => m.provider === 'OpenRouter'));
+    } catch {
+      setOpenRouterModels([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (open) {
       void refresh();
       void loadAccess();
+      void loadModelSettings();
     }
-  }, [open, refresh, loadAccess]);
+  }, [open, refresh, loadAccess, loadModelSettings]);
 
   async function save(provider: Provider) {
     const key = (drafts[provider] ?? '').trim();
@@ -139,10 +176,49 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
     }
   }
 
+  async function saveModelPreference() {
+    const name = modelName.trim();
+    if (!name) return;
+    setModelBusy(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/user-settings/model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_provider: modelProvider, model_name: name }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const detail = typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`;
+        throw new Error(detail);
+      }
+      const pref: ModelPreference = await res.json();
+      setModelProvider(pref.model_provider);
+      setModelName(pref.model_name);
+      toast.success('Model preference saved.');
+    } catch (e) {
+      toast.error(`Couldn't save model preference: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setModelBusy(false);
+    }
+  }
+
+  function onModelProviderChange(next: LlmProvider) {
+    setModelProvider(next);
+    if (next === 'DeepSeek' && !DEEPSEEK_MODELS.some((m) => m.model_name === modelName)) {
+      setModelName('deepseek-reasoner');
+    }
+    if (next === 'OpenRouter' && (!modelName || DEEPSEEK_MODELS.some((m) => m.model_name === modelName))) {
+      setModelName(openRouterModels[0]?.model_name ?? 'openai/gpt-5.2');
+    }
+  }
+
+  const hasOpenRouterKey = present.has('openrouter');
+  const selectedProviderLocked = modelProvider === 'OpenRouter' && !hasOpenRouterKey;
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>API keys</DialogTitle>
           <DialogDescription>
@@ -153,18 +229,24 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
         <div className="space-y-5">
           {PROVIDERS.map((p) => {
             const isSet = present.has(p.id);
+            const isRequired =
+              p.id === 'deepseek'
+                ? modelProvider !== 'OpenRouter'
+                : p.id === 'openrouter'
+                  ? modelProvider === 'OpenRouter'
+                  : p.required;
             // Finnhub is free-tier: all signed-in users use the shared key by default.
             // Massive is approved-only: shared only when access.shared_data_approved.
             const usingShared =
               !isSet &&
-              !p.required &&
+              !isRequired &&
               access != null &&
               (p.id === 'finnhub' || (p.id === 'massive' && access.shared_data_approved));
             return (
               <div key={p.id} className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{p.label}</span>
-                  {p.required && <Badge variant="secondary">Required</Badge>}
+                  {isRequired && <Badge variant="secondary">Required</Badge>}
                   {isSet ? (
                     <Badge className="ml-auto" variant="success">Set</Badge>
                   ) : usingShared ? (
@@ -195,6 +277,67 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             );
           })}
           {loading && <p className="text-xs text-muted-foreground">Loading…</p>}
+
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">LLM model</span>
+              <Badge className="ml-auto" variant={modelProvider === 'OpenRouter' ? 'success' : 'secondary'}>
+                {modelProvider}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              OpenRouter accepts any model id. Saved choices apply to scans, theses, chat, news summaries, and transcript analysis.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-[150px_1fr_auto]">
+              <select
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={modelProvider}
+                onChange={(e) => onModelProviderChange(e.target.value as LlmProvider)}
+                disabled={modelBusy}
+              >
+                <option value="DeepSeek">DeepSeek</option>
+                <option value="OpenRouter">OpenRouter</option>
+              </select>
+              {modelProvider === 'DeepSeek' ? (
+                <select
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  disabled={modelBusy}
+                >
+                  {DEEPSEEK_MODELS.map((m) => (
+                    <option key={m.model_name} value={m.model_name}>{m.display_name}</option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <Input
+                    list="openrouter-model-options"
+                    placeholder="openai/gpt-5.2"
+                    value={modelName}
+                    onChange={(e) => setModelName(e.target.value)}
+                    disabled={modelBusy || !hasOpenRouterKey}
+                  />
+                  <datalist id="openrouter-model-options">
+                    {openRouterModels.slice(0, 500).map((m) => (
+                      <option key={m.model_name} value={m.model_name}>{m.display_name}</option>
+                    ))}
+                  </datalist>
+                </>
+              )}
+              <Button
+                onClick={saveModelPreference}
+                disabled={modelBusy || selectedProviderLocked || !modelName.trim()}
+              >
+                {modelBusy ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+            {selectedProviderLocked && (
+              <p className="text-xs text-muted-foreground">
+                Add and verify an OpenRouter key above before selecting OpenRouter models.
+              </p>
+            )}
+          </div>
 
           {/* Request free access to the owner's shared market-data keys. */}
           {access && !access.is_owner && !access.shared_data_approved && (

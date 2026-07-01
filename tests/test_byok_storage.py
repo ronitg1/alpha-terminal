@@ -39,6 +39,7 @@ def _enc_key(monkeypatch):
     monkeypatch.delenv("AUTH_ENABLED", raising=False)
     monkeypatch.delenv("CLERK_JWKS_URL", raising=False)
     monkeypatch.delenv("CLERK_ISSUER", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     auth_mod._jwks_clients.clear()
     yield
     auth_mod._jwks_clients.clear()
@@ -205,6 +206,14 @@ def test_route_never_returns_key_value(db_session):
     assert all("key_value" not in row for row in listed)
 
 
+def test_route_accepts_openrouter_provider(db_session):
+    resp = client.post("/api-keys/", json={"provider": "openrouter", "key_value": "or-secret"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "openrouter"
+    assert "key_value" not in body
+
+
 def test_route_stores_encrypted(db_session):
     client.post("/api-keys/", json={"provider": "massive", "key_value": "poly-123"})
     db = db_session()
@@ -257,6 +266,55 @@ def test_route_provider_unavailable_returns_503(db_session, monkeypatch):
     monkeypatch.setattr(api_keys_route, "validate_provider_key", _down)
     resp = client.post("/api-keys/", json={"provider": "deepseek", "key_value": "k"})
     assert resp.status_code == 503  # NOT 400 — don't blame the user's key
+
+
+def test_model_preference_route_rejects_openrouter_without_key(tmp_path, monkeypatch):
+    from app.backend.services import llm_preferences
+
+    monkeypatch.setattr(llm_preferences, "_DATA_PATH", tmp_path / "llm_preferences.json")
+
+    resp = client.put(
+        "/user-settings/model",
+        json={"model_provider": "OpenRouter", "model_name": "anthropic/claude-sonnet-4.5"},
+    )
+
+    assert resp.status_code == 400
+    assert "OpenRouter API key" in resp.json()["detail"]
+
+
+def test_model_preference_route_persists_openrouter_when_key_available(tmp_path, monkeypatch):
+    from app.backend.services import llm_preferences
+
+    monkeypatch.setattr(llm_preferences, "_DATA_PATH", tmp_path / "llm_preferences.json")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+
+    saved = client.put(
+        "/user-settings/model",
+        json={"model_provider": "OpenRouter", "model_name": "anthropic/claude-sonnet-4.5"},
+    )
+    loaded = client.get("/user-settings/model")
+
+    assert saved.status_code == 200
+    assert loaded.status_code == 200
+    assert loaded.json() == {
+        "model_provider": "OpenRouter",
+        "model_name": "anthropic/claude-sonnet-4.5",
+        "preference_saved": True,
+    }
+
+
+def test_model_preference_route_rejects_invalid_deepseek_model(tmp_path, monkeypatch):
+    from app.backend.services import llm_preferences
+
+    monkeypatch.setattr(llm_preferences, "_DATA_PATH", tmp_path / "llm_preferences.json")
+
+    resp = client.put(
+        "/user-settings/model",
+        json={"model_provider": "DeepSeek", "model_name": "openai/gpt-5"},
+    )
+
+    assert resp.status_code == 400
+    assert "DeepSeek model" in resp.json()["detail"]
 
 
 def test_route_rejects_oversized_key(db_session):

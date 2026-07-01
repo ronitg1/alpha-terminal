@@ -54,6 +54,8 @@ DEFAULT_USER_ID = "default"
 # src/config/portfolio_config.py). Single source for the DB layer's default so
 # the model, the seed, and the repository fallback don't drift.
 DEFAULT_CASH_RESERVE_PCT = 10.0
+DEFAULT_LLM_MODEL_PROVIDER = "DeepSeek"
+DEFAULT_LLM_MODEL_NAME = "deepseek-reasoner"
 
 
 class User(Base):
@@ -79,6 +81,9 @@ class UserSettings(Base):
     # walkthrough. Server-side source of truth so it's once-per-account forever,
     # surviving a browser/localStorage clear or a new device.
     onboarding_completed = Column(Boolean, nullable=False, default=False, server_default=func.false())
+    llm_model_provider = Column(String(64), nullable=False, default=DEFAULT_LLM_MODEL_PROVIDER, server_default=DEFAULT_LLM_MODEL_PROVIDER)
+    llm_model_name = Column(String(200), nullable=False, default=DEFAULT_LLM_MODEL_NAME, server_default=DEFAULT_LLM_MODEL_NAME)
+    llm_preference_saved = Column(Boolean, nullable=False, default=False, server_default=func.false())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

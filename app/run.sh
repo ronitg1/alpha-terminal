@@ -138,7 +138,8 @@ setup_environment() {
             print_warning "No .env file found. Creating from .env.example..."
             cp "../.env.example" "../.env"
             print_warning "Please edit the .env file in the root directory to add your API keys:"
-            print_warning "  - DEEPSEEK_API_KEY=your-deepseek-api-key   (required — LLM)"
+            print_warning "  - DEEPSEEK_API_KEY=your-deepseek-api-key   (default LLM)"
+            print_warning "  - OPENROUTER_API_KEY=your-openrouter-key   (optional LLM alternative)"
             print_warning "  - MASSIVE_API_KEY=your-polygon-api-key     (required — market data)"
             print_warning "  - FINNHUB_API_KEY=your-finnhub-api-key     (optional — news, fundamentals fallback)"
             echo ""
@@ -376,4 +377,4 @@ if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
 fi
 
 # Run main function
-main 
+main

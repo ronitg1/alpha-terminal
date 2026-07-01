@@ -61,7 +61,14 @@ from app.backend.services import portfolio_settings_service
 from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
 from app.backend.services._storage import current_user_id, session_scope, use_db
-from app.backend.services.key_resolver import MissingUserKey, require_key, resolve_key, resolved_api_keys
+from app.backend.services.key_resolver import resolved_api_keys
+from app.backend.services.llm_preferences import (
+    LLM_USER_ERROR,
+    LlmRuntimeConfig,
+    create_selected_chat_model,
+    llm_exception_summary,
+    runtime_config_for_scan,
+)
 from src.tools.key_context import massive_api_key
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
@@ -89,22 +96,13 @@ def _live_cash_reserve() -> float:
     return sleeve_config_service.get_cash_reserve()
 
 
-def _scan_api_keys_or_error() -> tuple[dict | None, str | None]:
-    """Resolve the keys a scan needs (Phase 3 BYOK), or a soft-gate message.
-
-    A scan needs DeepSeek (LLM, always per-user) and Massive/Polygon market data.
-    The Massive key is bound on the request by the middleware (this user's key, or
-    the shared key if approved); a non-approved user without their own key gets ""
-    here and is told to add one. Returns ``({"DEEPSEEK_API_KEY": ...}, None)`` on
-    success or ``(None, message)``. When auth is off both resolve to the shared env
-    keys, so this is transparent for the local/CLI app."""
-    try:
-        deepseek_key = require_key("deepseek")
-    except MissingUserKey:
-        return None, "A DeepSeek API key is required to run a scan. Add yours in Settings."
+def _scan_api_keys_or_error() -> tuple[LlmRuntimeConfig | None, str | None]:
+    llm_config, key_error = runtime_config_for_scan()
+    if key_error:
+        return None, key_error
     if not massive_api_key():
         return None, "A Massive/Polygon market-data key is required to run a scan. Add yours in Settings."
-    return {"DEEPSEEK_API_KEY": deepseek_key}, None
+    return llm_config, None
 
 
 from src.config.watchlist import get_watchlist
@@ -900,10 +898,7 @@ async def run_scan(req: ScanRequest, request: Request):
         disconnect_task: asyncio.Task | None = None
         all_rows: list[TickerRow] = []
 
-        # Resolve the per-user DeepSeek key before doing any work; soft-gate if the
-        # user hasn't added one (Phase 3 BYOK). Resolved here in the request
-        # context, then passed explicitly into the scan worker thread.
-        byok_keys, key_error = _scan_api_keys_or_error()
+        byok_config, key_error = _scan_api_keys_or_error()
         if key_error:
             yield ErrorEvent(message=key_error).to_sse()
             return
@@ -934,7 +929,14 @@ async def run_scan(req: ScanRequest, request: Request):
                     logger.info("Skipping sleeve '%s' — no tickers after filtering.", name)
                     continue
                 rows: list[TickerRow] = await asyncio.to_thread(
-                    run_sleeve, name, sleeve, end_date, show_reasoning=False, api_keys=byok_keys
+                    run_sleeve,
+                    name,
+                    sleeve,
+                    end_date,
+                    show_reasoning=False,
+                    api_keys=byok_config.api_keys,
+                    model_name=byok_config.model_name,
+                    model_provider=byok_config.model_provider,
                 )
                 out.extend(rows)
                 # Emit per-sleeve completion so the UI fills in as we go.
@@ -1080,8 +1082,7 @@ async def run_ticker_scan(ticker: str, request: Request):
     async def event_generator():
         progress_queue: asyncio.Queue[BaseEvent] = asyncio.Queue()
 
-        # Per-user DeepSeek key + soft gate (Phase 3 BYOK), resolved in-context.
-        byok_keys, key_error = _scan_api_keys_or_error()
+        byok_config, key_error = _scan_api_keys_or_error()
         if key_error:
             yield ErrorEvent(message=key_error).to_sse()
             return
@@ -1102,7 +1103,16 @@ async def run_ticker_scan(ticker: str, request: Request):
         disconnect_task: asyncio.Task | None = None
         try:
             scan_task = asyncio.create_task(
-                asyncio.to_thread(run_sleeve, sleeve_name, sleeve, end_date, show_reasoning=False, api_keys=byok_keys)
+                asyncio.to_thread(
+                    run_sleeve,
+                    sleeve_name,
+                    sleeve,
+                    end_date,
+                    show_reasoning=False,
+                    api_keys=byok_config.api_keys,
+                    model_name=byok_config.model_name,
+                    model_provider=byok_config.model_provider,
+                )
             )
             disconnect_task = asyncio.create_task(_detect_disconnect())
             yield StartEvent().to_sse()
@@ -1626,20 +1636,11 @@ async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
     )
 
     def _call() -> tuple[str, str]:
-        """Returns (thesis, recommended_expiry) strings."""
-        import os as _os
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage, SystemMessage
 
         fallback_rec = f"{target_dtes[1]}d expiry — default recommendation; chain data unavailable."
         try:
-            llm = ChatOpenAI(
-                model="deepseek-chat",
-                openai_api_key=(resolve_key("deepseek") or ""),
-                openai_api_base="https://api.deepseek.com/v1",
-                temperature=0.3,
-                max_tokens=220,
-            )
+            llm = create_selected_chat_model(temperature=0.3, max_tokens=220)
             response = llm.invoke([SystemMessage(content=system_msg), HumanMessage(content=user_msg)])
             raw_text = str(response.content).strip()
 
@@ -1657,7 +1658,7 @@ async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
 
             return thesis_text, recommended
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Options reason LLM call failed: %s", exc)
+            logger.warning("Options reason LLM call failed: %s", llm_exception_summary(exc))
             fallback_thesis = (
                 f"Signal constellation ({req.conviction_pct:.0f}% conviction) favours a "
                 f"{direction.lower()} position. Review the chain for optimal strike and expiry."
@@ -2084,17 +2085,9 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
 
     async def event_gen():
         try:
-            from langchain_openai import ChatOpenAI
             from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-            llm = ChatOpenAI(
-                model="deepseek-chat",
-                openai_api_key=(resolve_key("deepseek") or ""),
-                openai_api_base="https://api.deepseek.com/v1",
-                temperature=0.4,
-                max_tokens=600,
-                streaming=True,
-            )
+            llm = create_selected_chat_model(temperature=0.4, max_tokens=600, streaming=True)
 
             lc_messages = [SystemMessage(content=system_content)]
             for m in messages:
@@ -2110,8 +2103,8 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
             yield "data: [DONE]\n\n"
 
         except Exception as exc:
-            logger.warning("Chat stream error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.warning("Chat stream error: %s", llm_exception_summary(exc))
+            yield f"data: {json.dumps({'error': LLM_USER_ERROR})}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -3548,10 +3541,8 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
     saved agent analysis + Finnhub fundamentals passed in ``context``.
     """
     import json as _json
-    import os as _os
 
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
     if deep:
         system = (
@@ -3577,13 +3568,7 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
         )
         max_tokens = 450
 
-    llm = ChatOpenAI(
-        model="deepseek-chat",
-        openai_api_key=(resolve_key("deepseek") or ""),
-        openai_api_base="https://api.deepseek.com/v1",
-        temperature=0.3,
-        max_tokens=max_tokens,
-    )
+    llm = create_selected_chat_model(temperature=0.3, max_tokens=max_tokens)
     user = f"Ticker: {ticker}\n\n{context}"
     try:
         resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
@@ -3598,12 +3583,12 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
             "full": data.get("full", ""),
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Ticker thesis generation failed for %s: %s", ticker, exc)
+        logger.warning("Ticker thesis generation failed for %s: %s", ticker, llm_exception_summary(exc))
         return {
             "ticker": ticker,
             "depth": "deep" if deep else "quick",
             "bias": "neutral",
-            "condensed": "Could not generate a thesis — check the DeepSeek connection.",
+            "condensed": "Could not generate a thesis - check the LLM connection.",
             "full": "",
         }
 

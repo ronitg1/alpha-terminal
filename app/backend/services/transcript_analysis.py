@@ -207,13 +207,9 @@ def _parse_analysis(raw: dict[str, Any]) -> dict[str, Any]:
 def analyze_transcript(
     *, ticker: str, transcript: str, current_thesis: str | None = None, report_date: str | None = None
 ) -> dict[str, Any]:
-    """Run the single-shot LLM analysis over a transcript and return the schema."""
-    import os as _os
-
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI
 
-    from app.backend.services.key_resolver import resolve_key
+    from app.backend.services.llm_preferences import LLM_USER_ERROR, create_selected_chat_model, llm_exception_summary
 
     if len(transcript.strip()) < MIN_TRANSCRIPT_CHARS:
         raise TranscriptError("Transcript is too short to analyze (need 500+ characters).")
@@ -226,19 +222,13 @@ def analyze_transcript(
         (current_thesis or "(no thesis on record)").strip(),
         "",
         "TRANSCRIPT:",
-        transcript[:60000],  # cap to keep within context budget
+        transcript[:60000],
         "",
         "Produce the structured JSON analysis now.",
     ]
     user = "\n".join(user_lines)
 
-    llm = ChatOpenAI(
-        model="deepseek-chat",
-        openai_api_key=(resolve_key("deepseek") or ""),
-        openai_api_base="https://api.deepseek.com/v1",
-        temperature=0.2,
-        max_tokens=3000,
-    )
+    llm = create_selected_chat_model(temperature=0.2, max_tokens=3000)
     try:
         resp = llm.invoke(
             [SystemMessage(content=_TRANSCRIPT_SYSTEM), HumanMessage(content=user)]
@@ -247,8 +237,8 @@ def analyze_transcript(
         start, end = txt.find("{"), txt.rfind("}")
         raw = json.loads(txt[start : end + 1]) if start >= 0 and end > start else {}
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Transcript analysis failed for %s: %s", ticker, exc)
-        raise TranscriptError(f"Analysis failed: {exc}") from exc
+        logger.warning("Transcript analysis failed for %s: %s", ticker, llm_exception_summary(exc))
+        raise TranscriptError(LLM_USER_ERROR) from exc
 
     result = _parse_analysis(raw)
     result["ticker"] = ticker.upper()

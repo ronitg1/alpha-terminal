@@ -90,11 +90,13 @@ def _check_required_keys() -> None:
     "no edge" / empty data, which looks like a bug to a new user. We warn at
     startup instead so the cause is obvious. We never log the key values.
     """
-    if not os.environ.get("DEEPSEEK_API_KEY", "").strip():
+    has_deepseek = bool(os.environ.get("DEEPSEEK_API_KEY", "").strip())
+    has_openrouter = bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
+    if not has_deepseek and not has_openrouter:
         logger.warning(
-            "DEEPSEEK_API_KEY is not set — the LLM agents cannot run. "
-            "Add it to your .env (see README 'Quick start'). The dashboard will "
-            "load but scans, theses, and chat will fail."
+            "No LLM key found (DEEPSEEK_API_KEY or OPENROUTER_API_KEY). "
+            "Add one to your .env or save a user key in Settings. The dashboard "
+            "will load but scans, theses, and chat will fail until a key exists."
         )
 
     has_massive = bool(os.environ.get("MASSIVE_API_KEY", "").strip())

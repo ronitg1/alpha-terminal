@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 DEEPSEEK = "deepseek"
 MASSIVE = "massive"
 FINNHUB = "finnhub"
-PROVIDERS: frozenset[str] = frozenset({DEEPSEEK, MASSIVE, FINNHUB})
+OPENROUTER = "openrouter"
+PROVIDERS: frozenset[str] = frozenset({DEEPSEEK, MASSIVE, FINNHUB, OPENROUTER})
 
 # How long to wait on a provider's validation endpoint before giving up.
 _TIMEOUT_SECONDS = 10.0
@@ -53,6 +54,8 @@ def validate_provider_key(provider: str, key: str) -> None:
         _check(key, "Massive/Polygon", "https://api.polygon.io/v3/reference/tickers", params={"limit": 1, "apiKey": key})
     elif provider == FINNHUB:
         _check(key, "Finnhub", "https://finnhub.io/api/v1/quote", params={"symbol": "AAPL", "token": key})
+    elif provider == OPENROUTER:
+        _check(key, "OpenRouter", "https://openrouter.ai/api/v1/key", headers={"Authorization": f"Bearer {key}"})
     else:
         raise KeyValidationError(f"Unknown provider '{provider}'.")
 
