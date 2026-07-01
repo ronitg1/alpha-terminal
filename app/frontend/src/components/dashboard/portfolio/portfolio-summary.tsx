@@ -6,8 +6,9 @@
  */
 import type { PortfolioAccount, PortfolioPosition } from '@/types/portfolio';
 import { cn } from '@/lib/utils';
+import { portfolioApi, type PortfolioStats } from '@/services/portfolio-api';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { maskMoney, maskSigned, pct, toneClass } from './format';
 import { MarketCards } from './market-cards';
 import { NewsCard } from './news-card';
@@ -30,17 +31,46 @@ function Totals({ account, masked }: { account: PortfolioAccount; masked: boolea
     .filter((p) => p.sector === 'Cash')
     .reduce((s, p) => s + (p.current_value ?? 0), 0);
   const cashTotal = (account.cash ?? 0) + moneyMarket;
+
+  // Approximate Sharpe: current stock weights x ~1y of daily returns (server
+  // cached). Best-effort — the card renders without it while it loads/fails.
+  const [stats, setStats] = useState<PortfolioStats | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    portfolioApi
+      .getStats()
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [account.id]);
+  const sharpeTitle = stats?.available
+    ? `Approximate: today's stock weights held constant over the past ${stats.days} trading days; ` +
+      `rf ${stats.rf_pct}%. Return ${stats.annualized_return_pct}%/yr, vol ${stats.annualized_vol_pct}%. ` +
+      `Covers ${stats.coverage_pct ?? '—'}% of the account (stocks only).`
+    : 'Not enough price history to estimate yet.';
+
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {account.label}
       </div>
       <div className="mt-1 text-2xl font-bold tabular-nums">{maskMoney(account.total_value, masked)}</div>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Today" value={`${maskSigned(account.day_change, masked)} (${pct(account.day_change_pct)})`} tone={toneClass(account.day_change)} />
         <Stat label="Total gain/loss" value={`${maskSigned(account.total_gain, masked)} (${pct(account.total_gain_pct)})`} tone={toneClass(account.total_gain)} />
         <Stat label="Cash" value={maskMoney(cashTotal, masked)} />
         <Stat label="Positions" value={String(account.positions.length)} />
+        <div title={sharpeTitle}>
+          <Stat
+            label="Sharpe (1y approx)"
+            value={stats?.available && stats.sharpe != null ? stats.sharpe.toFixed(2) : '—'}
+            tone={stats?.available && stats.sharpe != null ? toneClass(stats.sharpe) : undefined}
+          />
+        </div>
       </div>
     </div>
   );

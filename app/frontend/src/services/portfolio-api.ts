@@ -28,6 +28,19 @@ export interface Ownership {
   readonly institutions: string[];
 }
 
+/** GET /portfolio/stats — approximate risk stats for the combined book. */
+export interface PortfolioStats {
+  readonly available: boolean;
+  readonly reason?: string; // no_brokerage | insufficient_history | no_price_data | error
+  readonly sharpe?: number;
+  readonly annualized_return_pct?: number;
+  readonly annualized_vol_pct?: number;
+  readonly rf_pct?: number;
+  readonly days?: number;
+  readonly coverage_pct?: number | null;
+  readonly method?: string;
+}
+
 // Last successful overview, persisted so the tab + left nav render instantly on
 // the next load while a fresh copy fetches in the background (the server also
 // caches; this just kills the client-side blank-screen wait).
@@ -68,6 +81,11 @@ export const portfolioApi = {
     });
     if (!res.ok) return { names: [], institutions: [] };
     return res.json() as Promise<Ownership>;
+  },
+  getStats: async (): Promise<PortfolioStats> => {
+    const res = await fetch(`${BASE}/stats`, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) return { available: false, reason: 'error' };
+    return res.json() as Promise<PortfolioStats>;
   },
   getEarnings: async (tickers: readonly string[], days = 45): Promise<EarningsEvent[]> => {
     if (tickers.length === 0) return [];

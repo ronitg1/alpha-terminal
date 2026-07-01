@@ -28,6 +28,20 @@ async def get_overview(refresh: bool = False) -> dict[str, Any]:
     return await portfolio_overview.build_overview(force=refresh)
 
 
+@router.get("/stats")
+async def get_stats(refresh: bool = False) -> dict[str, Any]:
+    """Approximate portfolio risk stats (annualized Sharpe from current holdings'
+    weights applied to ~1y of daily returns). Cached per user; ``?refresh=true``
+    forces a rebuild. Never errors — ``available: False`` carries a reason."""
+    from app.backend.services import portfolio_stats
+
+    try:
+        return await portfolio_stats.build_stats(force=refresh)
+    except Exception as exc:  # noqa: BLE001 — a stats hiccup must not break the tab
+        logger.warning("Portfolio stats build failed: %s", type(exc).__name__)
+        return {"available": False, "reason": "error"}
+
+
 # Per-symbol earnings results cached for the day so re-opening the Portfolio tab
 # doesn't re-hit Finnhub. Keyed (symbol, iso-date) -> row|None; date bounds the TTL.
 _earnings_cache: dict[tuple[str, str], dict[str, Any] | None] = {}

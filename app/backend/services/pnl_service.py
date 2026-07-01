@@ -50,7 +50,7 @@ import os
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +186,7 @@ def account_snapshot(
                 unrealized += (float(mark) - float(entry)) * qty * mult * d
     cash = starting_cash + open_cf + close_cf
     equity = cash + pos_value
+    sharpe = realized_sharpe(positions, starting_cash=starting_cash)
     return {
         "starting_cash": round(starting_cash, 2),
         "cash": round(cash, 2),
@@ -196,7 +197,68 @@ def account_snapshot(
         "unrealized": round(unrealized, 2),
         "total_pnl": round(equity - starting_cash, 2),
         "total_pnl_pct": round((equity - starting_cash) / starting_cash * 100, 2) if starting_cash else None,
+        "sharpe": sharpe["sharpe"] if sharpe else None,
+        "sharpe_days": sharpe["days"] if sharpe else None,
     }
+
+
+# Gates below which an annualized Sharpe off the realized curve is noise, not
+# signal: fewer trades than this, or a shorter span, returns None ("needs more
+# history" in the UI) instead of a wild number off two lucky closes.
+MIN_SHARPE_TRADE_DATES = 5
+MIN_SHARPE_SPAN_DAYS = 30
+
+
+def realized_sharpe(
+    positions: list[dict[str, Any]],
+    *,
+    starting_cash: float = DEFAULT_STARTING_CASH,
+    rf_annual: float = 0.045,
+) -> dict[str, Any] | None:
+    """Annualized Sharpe of the paper account's REALIZED equity curve, or None.
+
+    No daily account marks are stored, so this walks the closed trades: equity on
+    any weekday = starting cash + realized P&L closed through that day, with flat
+    (zero-return) weekdays between trades kept in the series — the realized book
+    genuinely was flat then. Unrealized P&L is invisible to it, so it understates
+    swings while positions are open; it is labeled approximate in the UI.
+    """
+    pnl_by_day: dict[date, float] = {}
+    for p in positions:
+        if p.get("status") != "closed" or not p.get("exit_date"):
+            continue
+        r = realized_pnl(p)
+        if r is None:
+            continue
+        try:
+            day = date.fromisoformat(str(p["exit_date"])[:10])
+        except ValueError:
+            continue
+        pnl_by_day[day] = pnl_by_day.get(day, 0.0) + r
+    if len(pnl_by_day) < MIN_SHARPE_TRADE_DATES or starting_cash <= 0:
+        return None
+    first, last = min(pnl_by_day), max(pnl_by_day)
+    if (last - first).days < MIN_SHARPE_SPAN_DAYS:
+        return None
+
+    # Daily returns over the weekday grid from the day before the first close.
+    returns: list[float] = []
+    equity = starting_cash
+    day = first
+    while day <= last:
+        if day.weekday() < 5 or day in pnl_by_day:  # weekend closes still count
+            prev = equity
+            equity += pnl_by_day.get(day, 0.0)
+            if prev > 0:
+                returns.append(equity / prev - 1)
+        day += timedelta(days=1)
+
+    from app.backend.services.portfolio_stats import sharpe_from_daily_returns
+
+    stats = sharpe_from_daily_returns(returns, rf_annual=rf_annual, min_days=MIN_SHARPE_SPAN_DAYS)
+    if stats is None:
+        return None
+    return {"sharpe": stats["sharpe"], "days": len(returns)}
 
 
 def instrument_key(position: dict[str, Any]) -> str:

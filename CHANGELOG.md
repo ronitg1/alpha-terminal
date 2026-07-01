@@ -4,6 +4,26 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] — 2026-07-01
+
+### Added
+- **Approximate Sharpe ratio on the Portfolio summary.** New `GET /portfolio/stats`
+  (`app/backend/services/portfolio_stats.py`): applies the CURRENT stock weights to
+  ~1 year of each holding's daily returns (Polygon daily bars, cached 6h per
+  symbol), blends them into a portfolio return series, and reports annualized
+  Sharpe (rf 4.5%), return, and vol. Constant-weight approximation — trades,
+  deposits, options, and cash drag are ignored — and the stat's tooltip says so,
+  including what share of the account it covers (stocks only). Cached per user for
+  30 minutes; days with under 60% weight coverage are dropped rather than
+  zero-filled, and under 60 return days the stat reports "not enough history"
+  instead of a noisy number.
+- **Approximate Sharpe on the Paper Trading account bar.** `account_snapshot` now
+  carries `sharpe`/`sharpe_days`, annualized from the realized (closed-trade)
+  equity curve over a weekday grid. Gated behind 5+ trade dates spanning 30+ days —
+  below that the UI shows "—" with a "needs more closed-trade history" tooltip.
+  Realized-only: open positions' swings don't move it (no daily account marks are
+  stored), so it is labeled approximate.
+
 ## [1.14.4] — 2026-07-01
 
 ### Changed

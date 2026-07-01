@@ -489,6 +489,7 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Recently shipped**
 
+- [x] **1.15** — **approximate Sharpe ratio** on the Portfolio summary (current weights × 1y of daily returns) and the Paper Trading account bar (realized equity curve)
 - [x] **1.14** — finviz-style **S&P 500 treemap heatmap**; notable-mover earnings folded into the **catalyst calendar**; refreshed onboarding walkthrough
 - [x] **1.13** — **13F institutional-ownership tracker** (live SEC EDGAR, quarter-over-quarter fund moves); broker-style **BSM(IV) option marks** for illiquid contracts
 - [x] **1.12** — Market tab rebuilt as a **dashboard** (macro, movers, calendar, news + AI thesis-impact); universal stock search; **thesis valuation football field** (mini-DCF + comps + 52-wk); portfolio overview caching
@@ -497,7 +498,6 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Up next**
 
-- [ ] 📐 **Portfolio risk stats** — approximate Sharpe on the Portfolio summary and the Paper Trading account bar
 - [ ] 🔔 **Price + signal alerts** — threshold + conviction-change notifications
 - [ ] 🧾 **Trade journal** — attach notes/rationale to each idea, linked to its agent thesis
 - [ ] Trailing / peak-drawdown stop-loss mode in the backtester (currently fixed-% from entry)

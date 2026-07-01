@@ -515,11 +515,24 @@ function PaperAccountBar({ account }: { account: PaperAccount }) {
       <div className={cn('text-xs', tone(account.total_pnl))}>
         {fmtMoney(account.total_pnl)} ({fmtPct(account.total_pnl_pct)}) all-time
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Buying power" value={fmtMoney(account.buying_power, false)} />
         <Stat label="Positions value" value={fmtMoney(account.positions_value, false)} />
         <Stat label="Unrealized" value={fmtMoney(account.unrealized)} cls={tone(account.unrealized)} />
         <Stat label="Realized" value={fmtMoney(account.realized)} cls={tone(account.realized)} />
+        <div
+          title={
+            account.sharpe != null
+              ? `Approximate: annualized from ${account.sharpe_days} weekdays of realized (closed-trade) equity; open positions' swings are not included.`
+              : 'Needs more closed-trade history (5+ trade dates over 30+ days).'
+          }
+        >
+          <Stat
+            label="Sharpe (approx)"
+            value={account.sharpe != null ? account.sharpe.toFixed(2) : '—'}
+            cls={account.sharpe != null ? tone(account.sharpe) : undefined}
+          />
+        </div>
       </div>
     </div>
   );

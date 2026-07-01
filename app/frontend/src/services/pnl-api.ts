@@ -20,6 +20,10 @@ export interface PaperAccount {
   readonly unrealized: number;
   readonly total_pnl: number;
   readonly total_pnl_pct: number | null;
+  /** Annualized Sharpe of the realized equity curve; null until there is
+   * enough closed-trade history to be meaningful. */
+  readonly sharpe: number | null;
+  readonly sharpe_days: number | null;
   readonly asof: string;
 }
 
