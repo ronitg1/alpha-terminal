@@ -3562,27 +3562,43 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
 
     if deep:
         system = (
-            "You are a senior buy-side analyst. Using the saved multi-agent signal "
+            "You are a senior buy-side analyst known for intellectual honesty and a "
+            "HIGH bar for conviction. At any given time most stocks are roughly fairly "
+            "valued, so your DEFAULT stance is NEUTRAL — you only earn a bullish or "
+            "bearish call when the evidence is genuinely compelling. A thesis that is "
+            "bullish on everything is worthless; do not cheerlead. Write a rigorous "
+            "trade thesis SPECIFIC to THIS name using the saved multi-agent signal "
             "analysis and the fundamentals provided (growth, margins, earnings "
-            "beat/miss history, analyst consensus, insider flow) plus any recent "
-            "news, write a thorough trade thesis. Lead with the strongest evidence. "
+            "beat/miss history, analyst consensus, insider flow) plus any recent news. "
+            "Hard requirements: (1) weigh VALUATION explicitly — if the good news is "
+            "already priced in, say so and let it temper the call; (2) the Bear case "
+            "must be concrete and specific to this company (real, quantified risks — "
+            "never boilerplate) and strong enough that you would be uncomfortable "
+            "ignoring it; (3) choose bias only if the evidence clearly supports it, "
+            "otherwise say NEUTRAL; (4) give a calibrated conviction (low / medium / "
+            "high) and state exactly what would flip your view. Cite specific numbers. "
             "Respond ONLY with JSON: {\"bias\": \"bullish|bearish|neutral\", "
-            "\"condensed\": \"one-sentence call\", \"full\": \"markdown with these "
-            "sections: **Thesis**, **Bull case**, **Bear case**, **Fundamentals** "
-            "(cite the beat/miss record and growth), **Catalysts & risks**, "
-            "**Verdict**\"}."
+            "\"condensed\": \"one sentence stating the call AND the conviction level\", "
+            "\"full\": \"markdown with these sections: **Thesis**, **Bull case**, "
+            "**Bear case**, **Valuation**, **Fundamentals** (cite the beat/miss record "
+            "and growth), **Catalysts & risks**, **Conviction & what would change my "
+            "mind**, **Verdict**\"}."
         )
-        max_tokens = 1100
+        max_tokens = 1400
     else:
         system = (
-            "You are a buy-side analyst. Using the saved signal analysis and "
-            "fundamentals (growth, earnings beat/miss, analyst consensus, insider "
-            "flow), write a concise trade thesis. Respond ONLY with JSON: "
-            "{\"bias\": \"bullish|bearish|neutral\", \"condensed\": \"one sentence\", "
-            "\"full\": \"2-4 sentences that cite the beat/miss history, growth, and "
-            "analyst consensus\"}."
+            "You are a buy-side analyst with a HIGH bar for conviction. Most names are "
+            "NEUTRAL; you only go bullish or bearish when the evidence is compelling — "
+            "never default to bullish. Using the saved signal analysis and fundamentals "
+            "(growth, earnings beat/miss, analyst consensus, insider flow), write a "
+            "concise take SPECIFIC to this name that weighs valuation and names one "
+            "concrete risk. Respond ONLY with JSON: {\"bias\": "
+            "\"bullish|bearish|neutral\", \"condensed\": \"one sentence stating the call "
+            "and conviction level\", \"full\": \"2-4 sentences citing the beat/miss "
+            "history, growth, valuation, and the single biggest risk — not generic "
+            "optimism\"}."
         )
-        max_tokens = 450
+        max_tokens = 550
 
     llm = create_selected_chat_model(temperature=0.3, max_tokens=max_tokens)
     user = f"Ticker: {ticker}\n\n{context}"

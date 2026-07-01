@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.16] — 2026-07-01
+
+### Changed
+- **Holding theses are no longer "bullish on everything."** The per-ticker thesis
+  prompts (quick + deep) now anchor on a NEUTRAL default with a high bar for
+  conviction, require an explicit valuation check and a concrete, company-specific
+  bear case, and ask for a calibrated conviction level + what would flip the view.
+  The deep memo gains **Valuation** and **Conviction & what would change my mind**
+  sections. Verified: AAPL now returns a differentiated bearish read (insider
+  selling, valuation) and a leveraged ETF correctly comes back neutral.
+
 ## [1.11.15] — 2026-07-01
 
 ### Fixed
