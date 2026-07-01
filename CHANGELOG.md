@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-06-30
+
+### Fixed
+- **Pattern backtest getting "stuck" on a ticker (e.g. INTC) in optimize mode.**
+  A signal-dense, heavily-optioned name fanned out into hundreds of real-option
+  fetches priced in a single silent `await`, so the SSE connection idled and a
+  proxy/browser dropped it — the run appeared frozen on that ticker. Now the
+  backtest heartbeats progress every ~5s while pricing (keeping the stream alive
+  and honoring disconnects), isolates per-ticker pricing failures (one bad name
+  can't abort the run), and caps signals per ticker at 40. The frontend adds a
+  90s stall watchdog that surfaces a clear message instead of hanging. Verified:
+  an optimize + real-pricing run over INTC/AAPL/NVDA streams through and completes.
+
 ## [1.8.0] — 2026-06-30
 
 ### Added
