@@ -16,6 +16,7 @@ from app.backend.routes.patterns import router as patterns_router
 from app.backend.routes.news import router as news_router
 from app.backend.routes.transcripts import router as transcripts_router
 from app.backend.routes.pnl import router as pnl_router
+from app.backend.routes.scheduled import router as scheduled_router
 
 # Main API router
 api_router = APIRouter()
@@ -48,3 +49,7 @@ api_router.include_router(news_router, tags=["news"], dependencies=_AUTH)
 api_router.include_router(transcripts_router, tags=["transcripts"], dependencies=_AUTH)
 api_router.include_router(pnl_router, dependencies=_AUTH)
 api_router.include_router(access_router, tags=["access"], dependencies=_AUTH)
+# Scheduled pre-scans: NOT router-level _AUTH — the user CRUD routes carry their
+# own get_current_user_id dependency, while /scheduled/run-due is reached by the
+# external scheduler and is guarded by the shared CRON_SECRET instead.
+api_router.include_router(scheduled_router, tags=["scheduled"])

@@ -28,6 +28,7 @@ from app.backend.services import thesis_store
 from app.backend.services import pnl_service
 from app.backend.services import watchlist_service
 from app.backend.services import user_settings_service
+from app.backend.services import scan_schedule_service
 from app.backend.routes import sleeves as sleeves_routes
 
 
@@ -708,3 +709,69 @@ def test_onboarding_backends_shape_identical(db_backend, monkeypatch, tmp_path):
     monkeypatch.setattr(user_settings_service, "_DATA_PATH", tmp_path / "onboarding.json")
     user_settings_service.set_onboarding_completed(True)
     assert user_settings_service.get_onboarding_completed() is True
+
+
+# ─── scan_schedule_service (scheduled pre-scans) ─────────────────────────────
+
+def _exercise_schedules() -> dict:
+    """CRUD over a user's scan schedules; capture observable results (no raw ids,
+    which legitimately differ between an autoincrement DB and the file store)."""
+    out: dict = {}
+    out["initial"] = scan_schedule_service.list_schedules()
+    created = scan_schedule_service.add_schedule("08:00", "America/New_York")
+    out["created_time"], out["created_enabled"] = created["time_of_day"], created["enabled"]
+    scan_schedule_service.add_schedule("15:30", "America/New_York")
+    out["count_after_add"] = len(scan_schedule_service.list_schedules())
+    sid = scan_schedule_service.list_schedules()[0]["id"]
+    out["toggled_enabled"] = scan_schedule_service.set_schedule_enabled(sid, False)["enabled"]
+    scan_schedule_service.delete_schedule(sid)
+    out["times_after_delete"] = sorted(s["time_of_day"] for s in scan_schedule_service.list_schedules())
+    return out
+
+
+def test_schedules_db_backend(db_backend):
+    result = _exercise_schedules()
+    assert result["initial"] == []
+    assert result["created_time"] == "08:00"
+    assert result["created_enabled"] is True
+    assert result["count_after_add"] == 2
+    assert result["toggled_enabled"] is False
+    assert result["times_after_delete"] == ["15:30"]
+
+
+def test_schedules_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    db_result = _exercise_schedules()
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(scan_schedule_service, "_SCHED_PATH", tmp_path / "sched.json")
+    file_result = _exercise_schedules()
+    assert db_result == file_result
+
+
+def test_schedule_rejects_bad_time(db_backend):
+    with pytest.raises(ValueError):
+        scan_schedule_service.add_schedule("8am", "America/New_York")
+    with pytest.raises(ValueError):
+        scan_schedule_service.add_schedule("25:00", "America/New_York")
+
+
+def test_prescan_due_logic():
+    """A schedule is due once its local time has passed today and it hasn't run."""
+    import datetime
+    from app.backend.services import prescan_runner
+
+    # 14:00 UTC == 09:00 America/New_York (EDT, summer). An 08:00 ET schedule is due.
+    now = datetime.datetime(2026, 6, 30, 14, 0, tzinfo=datetime.timezone.utc)
+    due, today = prescan_runner._is_due(
+        {"time_of_day": "08:00", "timezone": "America/New_York", "last_run_on": None}, now
+    )
+    assert due is True and today == "2026-06-30"
+    # already ran today -> not due
+    due2, _ = prescan_runner._is_due(
+        {"time_of_day": "08:00", "timezone": "America/New_York", "last_run_on": "2026-06-30"}, now
+    )
+    assert due2 is False
+    # scheduled later than now (16:00 ET) -> not due yet
+    due3, _ = prescan_runner._is_due(
+        {"time_of_day": "16:00", "timezone": "America/New_York", "last_run_on": None}, now
+    )
+    assert due3 is False

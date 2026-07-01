@@ -196,6 +196,37 @@ async def _scan_ticker(
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
 
+async def run_pattern_scan(
+    tickers: list[str],
+    pattern_names: list[str],
+    timeframe: str,
+    lookback_days: int,
+) -> list[dict]:
+    """Core scan used by the /scan route AND the scheduled background pre-scan.
+
+    Fans out one fetch+detect per ticker (bounded by the data-client semaphore),
+    flattens, and sorts by confidence. ``pattern_names`` must already be resolved
+    (non-empty, validated by the caller)."""
+    cfg = _timeframe_cfg(timeframe)
+    from_date, to_date = _date_range(min(lookback_days, cfg["max_lookback_days"]))
+    tasks = [
+        _scan_ticker(
+            ticker.upper().strip(),
+            from_date,
+            to_date,
+            pattern_names,
+            timespan=cfg["timespan"],
+            multiplier=cfg["multiplier"],
+        )
+        for ticker in tickers
+        if ticker.strip()
+    ]
+    nested = await asyncio.gather(*tasks)
+    results = [item for sublist in nested for item in sublist]
+    results.sort(key=lambda x: -x["confidence"])
+    return results
+
+
 @router.post("/scan", response_model=list[ScanResult])
 async def scan(req: ScanRequest) -> list[dict]:
     """Scan a custom list of tickers for chart patterns."""
@@ -207,25 +238,7 @@ async def scan(req: ScanRequest) -> list[dict]:
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown patterns: {unknown}")
 
-    cfg = _timeframe_cfg(req.timeframe)
-    lookback = min(req.lookback_days, cfg["max_lookback_days"])
-    from_date, to_date = _date_range(lookback)
-
-    tasks = [
-        _scan_ticker(
-            ticker.upper().strip(),
-            from_date,
-            to_date,
-            pattern_names,
-            timespan=cfg["timespan"],
-            multiplier=cfg["multiplier"],
-        )
-        for ticker in req.tickers
-    ]
-    nested = await asyncio.gather(*tasks)
-    results = [item for sublist in nested for item in sublist]
-    results.sort(key=lambda x: -x["confidence"])
-    return results
+    return await run_pattern_scan(req.tickers, pattern_names, req.timeframe, req.lookback_days)
 
 
 @router.get("/watchlist/scan", response_model=list[ScanResult])
