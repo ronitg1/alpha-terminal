@@ -194,9 +194,11 @@ def _combine(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
-# OCC contract symbol -> (fetched_at_monotonic, (change_per_share, change_pct) | None).
+# OCC symbol -> (fetched_at_monotonic, (last_price, change_per_share, change_pct) | None).
+# Any of the three inner values may be None; the tuple is None only when the
+# snapshot gave nothing usable.
 _OPTION_CHANGE_TTL = 120.0
-_option_change_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
+_option_change_cache: dict[str, tuple[float, tuple[float | None, float | None, float | None] | None]] = {}
 
 
 def _occ_ticker(underlying: str | None, expiration: str | None, option_type: str | None, strike: Any) -> str | None:
@@ -213,11 +215,12 @@ def _occ_ticker(underlying: str | None, expiration: str | None, option_type: str
     return f"O:{underlying.upper()}{exp}{cp}{strike_millis:08d}"
 
 
-def _fetch_option_day(underlying: str, occ: str) -> tuple[float, float] | None:
-    """``(change_per_share, change_percent)`` today for one option contract, or
-    None. Uses Polygon's option snapshot ``day`` block, which is **live during
-    market hours and the last close when the market is shut** — exactly the
-    "use live, fall back to close" behavior requested."""
+def _fetch_option_snapshot(underlying: str, occ: str) -> tuple[float | None, float | None, float | None] | None:
+    """``(last_price, change_per_share, change_percent)`` for one option contract
+    from Polygon's snapshot, or None if nothing usable. The market price is used to
+    value the position (brokers — especially Robinhood via SnapTrade — often report
+    a stale mark equal to the buy price, which showed a bogus $0 gain). ``day`` is
+    live during market hours and the last close when the market is shut."""
     from src.tools.massive.client import MassiveClient
 
     try:
@@ -226,16 +229,23 @@ def _fetch_option_day(underlying: str, occ: str) -> tuple[float, float] | None:
         logger.debug("Option snapshot failed for %s: %s", occ, type(exc).__name__)
         return None
     results = data.get("results") if isinstance(data, dict) else None
-    day = results.get("day") if isinstance(results, dict) else None
-    if not isinstance(day, dict):
+    if not isinstance(results, dict):
         return None
-    change, change_pct = day.get("change"), day.get("change_percent")
-    if change is None or change_pct is None:
+    day = results.get("day") if isinstance(results.get("day"), dict) else {}
+    last_trade = results.get("last_trade") if isinstance(results.get("last_trade"), dict) else {}
+
+    def _f(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    price = _f(last_trade.get("price")) or _f(day.get("close"))
+    change = _f(day.get("change"))
+    change_pct = _f(day.get("change_percent"))
+    if price is None and change is None and change_pct is None:
         return None
-    try:
-        return float(change), float(change_pct)
-    except (TypeError, ValueError):
-        return None
+    return price, change, change_pct
 
 
 async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
@@ -250,11 +260,11 @@ async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
         if occ and p.get("underlying"):
             wanted[occ] = p["underlying"]
 
-    async def _one(occ: str, underlying: str) -> tuple[str, tuple[float, float] | None]:
+    async def _one(occ: str, underlying: str) -> tuple[str, tuple[float | None, float | None, float | None] | None]:
         cached = _option_change_cache.get(occ)
         if cached and (time.monotonic() - cached[0]) < _OPTION_CHANGE_TTL:
             return occ, cached[1]
-        res = await asyncio.to_thread(_fetch_option_day, underlying, occ)
+        res = await asyncio.to_thread(_fetch_option_snapshot, underlying, occ)
         _option_change_cache[occ] = (time.monotonic(), res)
         return occ, res
 
@@ -263,13 +273,24 @@ async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
         if p.get("kind") != "option":
             continue
         occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
-        day = resolved.get(occ) if occ else None
+        snap = resolved.get(occ) if occ else None
         units = p.get("quantity")
-        if not day or units is None:
+        if not snap or units is None:
             continue
-        change_per_share, change_pct = day
-        p["day_change"] = _round(change_per_share * units * 100)
-        p["day_change_pct"] = _round(change_pct)
+        price, change_per_share, change_pct = snap
+        # Prefer the live market price for value + gain (the broker mark can be a
+        # stale buy-price copy). Cost basis is unchanged (from avg cost).
+        if price is not None:
+            p["last_price"] = _round(price)
+            p["current_value"] = _round(price * units * 100)
+            cost_basis = p.get("cost_basis_total")
+            if cost_basis is not None:
+                p["total_gain"] = _round(p["current_value"] - cost_basis)
+                p["total_gain_pct"] = _pct(p["total_gain"], cost_basis)
+        if change_per_share is not None:
+            p["day_change"] = _round(change_per_share * units * 100)
+        if change_pct is not None:
+            p["day_change_pct"] = _round(change_pct)
 
 
 async def _snaptrade_accounts() -> list[dict[str, Any]]:

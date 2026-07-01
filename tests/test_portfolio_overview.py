@@ -8,7 +8,17 @@ from __future__ import annotations
 import anyio
 import pytest
 
+from app.backend.services import portfolio_classify
 from app.backend.services import portfolio_overview as ov
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    """Module-level caches (option snapshots, sector buckets) must not leak between
+    tests — a cached None from one test would suppress another's override."""
+    ov._option_change_cache.clear()
+    portfolio_classify._bucket_cache.clear()
+    yield
 
 
 def _snaptrade_payload():
@@ -53,7 +63,7 @@ def only_snaptrade(monkeypatch):
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     # Keep tests hermetic: no Finnhub sector calls, no Polygon option-bar calls.
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
     yield
 
 
@@ -100,6 +110,29 @@ def test_single_snaptrade_account_metrics(only_snaptrade):
     assert nvda["pct_of_account"] == pytest.approx(2050 / 3425 * 100, abs=0.01)
 
 
+def test_option_snapshot_price_overrides_stale_broker_mark(monkeypatch):
+    monkeypatch.setattr(ov, "snaptrade_configured", lambda: True)
+    monkeypatch.setattr(ov.snaptrade_connection_service, "get_status", lambda: {"connected": True})
+    monkeypatch.setattr(ov.snaptrade_service, "fetch_portfolio", _snaptrade_payload)
+    monkeypatch.setattr(ov, "resolve_key", lambda provider: None)
+
+    async def _quotes(symbols):
+        return {"NVDA": {"last": 205.0, "prev_close": 200.0, "pct_change": 2.5, "name": "NVIDIA"}}
+
+    monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
+    monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
+    # Live option price 6.00 (vs the broker's stale 3.75 mark), +0.50 / +8% today.
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: (6.0, 0.5, 8.0))
+
+    result = anyio.run(ov.build_overview)
+    opt = next(p for p in result["accounts"][0]["positions"] if p["kind"] == "option")
+    assert opt["last_price"] == 6.0
+    assert opt["current_value"] == 600.0  # 6.00 * 1 * 100 (not the broker's 375)
+    assert opt["total_gain"] == 74.0      # 600 - 526 cost basis
+    assert opt["day_change"] == 50.0      # 0.50 * 1 * 100
+    assert opt["day_change_pct"] == 8.0
+
+
 def test_combined_merges_symbols_across_accounts(monkeypatch):
     def _two_accounts():
         payload = _snaptrade_payload()
@@ -127,7 +160,7 @@ def test_combined_merges_symbols_across_accounts(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert len(result["accounts"]) == 2
@@ -156,7 +189,7 @@ def test_robinhood_positions_parsed(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_snapshot", lambda underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert result["connected"] is True

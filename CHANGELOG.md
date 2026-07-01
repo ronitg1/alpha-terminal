@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.11] — 2026-07-01
+
+### Fixed
+- **Options priced off live market data, not the broker's stale mark.** Some brokers
+  (notably Robinhood via SnapTrade) report an option's price as a copy of the buy
+  price, which showed a bogus $0 gain. Options are now valued from Polygon's option
+  snapshot (last trade / today's close) when available — correct value, total gain,
+  and today's change — falling back to the broker mark only when Polygon has no data.
+
 ## [1.10.10] — 2026-07-01
 
 ### Changed
