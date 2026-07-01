@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -25,8 +26,10 @@ async def get_openrouter_models() -> list[dict[str, Any]]:
             resp = await client.get(_MODELS_URL)
         resp.raise_for_status()
         payload = resp.json()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("OpenRouter model catalog fetch failed: %s", exc)
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        logger.warning("OpenRouter model catalog fetch failed: %s", type(exc).__name__)
+        return []
+    if not isinstance(payload, dict):
         return []
 
     rows: list[dict[str, Any]] = []
@@ -44,10 +47,6 @@ async def get_openrouter_models() -> list[dict[str, Any]]:
                 "model_name": model_id,
                 "provider": "OpenRouter",
                 "context_length": item.get("context_length"),
-                "pricing": item.get("pricing") if isinstance(item.get("pricing"), dict) else None,
-                "supported_parameters": item.get("supported_parameters")
-                if isinstance(item.get("supported_parameters"), list)
-                else [],
             }
         )
 

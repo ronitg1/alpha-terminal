@@ -14,6 +14,7 @@ from app.backend import context as ctx
 from app.backend.database.connection import Base
 import app.backend.database.app_models  # noqa: F401
 import app.backend.database.models  # noqa: F401  (api_keys table)
+from app.backend.repositories.portfolio_repository import PortfolioRepository
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.services import _storage
 from app.backend.services import key_resolver
@@ -303,9 +304,8 @@ def test_openrouter_model_preference_runtime_config(monkeypatch, db, as_user):
     monkeypatch.setenv("OWNER_USER_ID", "user_a")
     as_user("user_a")
 
-    pref = llm_preferences.set_model_preference("OpenRouter", "anthropic/claude-sonnet-4.5")
-    assert pref.model_provider == "OpenRouter"
-    assert pref.model_name == "anthropic/claude-sonnet-4.5"
+    with db() as s:
+        PortfolioRepository(s, "user_a").set_llm_preference("OpenRouter", "anthropic/claude-sonnet-4.5")
 
     config, error = llm_preferences.runtime_config_for_scan()
     assert config is None
@@ -313,6 +313,10 @@ def test_openrouter_model_preference_runtime_config(monkeypatch, db, as_user):
 
     with db() as s:
         ApiKeyRepository(s, "user_a").set_key("openrouter", "alice-openrouter")
+
+    pref = llm_preferences.set_model_preference("OpenRouter", "anthropic/claude-sonnet-4.5")
+    assert pref.model_provider == "OpenRouter"
+    assert pref.model_name == "anthropic/claude-sonnet-4.5"
 
     config, error = llm_preferences.runtime_config_for_scan()
     assert error is None
@@ -330,9 +334,20 @@ def test_run_sleeve_threads_api_keys_into_state(monkeypatch):
 
     def _fake_agent(state, agent_id=None):
         seen["api_keys"] = state["metadata"].get("api_keys")
+        seen["model_name"] = state["metadata"].get("model_name")
+        seen["model_provider"] = state["metadata"].get("model_provider")
 
     monkeypatch.setitem(rms.ANALYST_CONFIG, "alpha_seeker", {"agent_func": _fake_agent, "display_name": "x"})
     sleeve = {"tickers": ["NVDA"], "agents": ["alpha_seeker"], "agent_weights": {"alpha_seeker": 1.0}}
 
-    rms.run_sleeve("test", sleeve, "2026-06-27", api_keys={"DEEPSEEK_API_KEY": "k"})
-    assert seen["api_keys"] == {"DEEPSEEK_API_KEY": "k"}
+    rms.run_sleeve(
+        "test",
+        sleeve,
+        "2026-06-27",
+        api_keys={"OPENROUTER_API_KEY": "k"},
+        model_name="anthropic/claude-sonnet-4.5",
+        model_provider="OpenRouter",
+    )
+    assert seen["api_keys"] == {"OPENROUTER_API_KEY": "k"}
+    assert seen["model_name"] == "anthropic/claude-sonnet-4.5"
+    assert seen["model_provider"] == "OpenRouter"

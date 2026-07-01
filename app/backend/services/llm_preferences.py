@@ -18,6 +18,7 @@ from app.backend.services.key_resolver import MissingUserKey, require_key, resol
 
 DEEPSEEK_PROVIDER = "DeepSeek"
 OPENROUTER_PROVIDER = "OpenRouter"
+LLM_USER_ERROR = "LLM request failed. Check your selected model and API key, then retry."
 ALLOWED_MODEL_PROVIDERS = frozenset({DEEPSEEK_PROVIDER, OPENROUTER_PROVIDER})
 DEEPSEEK_MODELS = frozenset({"deepseek-reasoner", "deepseek-chat", "deepseek-v4-pro"})
 
@@ -77,6 +78,23 @@ def _normalize(model_provider: str, model_name: str, *, saved: bool) -> ModelPre
     return ModelPreference(model_provider=provider, model_name=model, preference_saved=saved)
 
 
+def llm_exception_summary(exc: BaseException) -> str:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return f"{type(exc).__name__} status={status_code}"
+    return type(exc).__name__
+
+
+def _ensure_selectable(pref: ModelPreference) -> None:
+    if pref.model_provider != OPENROUTER_PROVIDER:
+        return
+    try:
+        require_key(OPENROUTER)
+    except MissingUserKey as exc:
+        raise ValueError("Add and verify an OpenRouter API key before selecting OpenRouter models.") from exc
+
+
 def _default_preference() -> ModelPreference:
     return ModelPreference(
         model_provider=DEFAULT_LLM_MODEL_PROVIDER,
@@ -113,6 +131,7 @@ def get_model_preference() -> ModelPreference:
 
 def set_model_preference(model_provider: str, model_name: str) -> ModelPreference:
     pref = _normalize(model_provider, model_name, saved=True)
+    _ensure_selectable(pref)
     if use_db():
         with session_scope() as db:
             PortfolioRepository(db, current_user_id()).set_llm_preference(

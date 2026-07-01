@@ -269,7 +269,7 @@ def summarize_article(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from app.backend.services.llm_preferences import create_selected_chat_model
+    from app.backend.services.llm_preferences import create_selected_chat_model, llm_exception_summary
 
     book_line = (
         f"RELATED TICKER: {related}"
@@ -300,7 +300,7 @@ def summarize_article(
             "relevanceReason": data.get("relevanceReason", ""),
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("News summarize failed: %s", exc)
+        logger.warning("News summarize failed: %s", llm_exception_summary(exc))
         return {
             "summary": ["Could not generate a summary - check the LLM connection."],
             "relevance": "low",

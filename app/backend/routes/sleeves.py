@@ -62,7 +62,13 @@ from app.backend.services import thesis_store
 from app.backend.services import sleeve_config_service
 from app.backend.services._storage import current_user_id, session_scope, use_db
 from app.backend.services.key_resolver import resolved_api_keys
-from app.backend.services.llm_preferences import LlmRuntimeConfig, create_selected_chat_model, runtime_config_for_scan
+from app.backend.services.llm_preferences import (
+    LLM_USER_ERROR,
+    LlmRuntimeConfig,
+    create_selected_chat_model,
+    llm_exception_summary,
+    runtime_config_for_scan,
+)
 from src.tools.key_context import massive_api_key
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
@@ -1652,7 +1658,7 @@ async def get_options_reason(req: _ReasonRequest) -> dict[str, str]:
 
             return thesis_text, recommended
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Options reason LLM call failed: %s", exc)
+            logger.warning("Options reason LLM call failed: %s", llm_exception_summary(exc))
             fallback_thesis = (
                 f"Signal constellation ({req.conviction_pct:.0f}% conviction) favours a "
                 f"{direction.lower()} position. Review the chain for optimal strike and expiry."
@@ -2097,8 +2103,8 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
             yield "data: [DONE]\n\n"
 
         except Exception as exc:
-            logger.warning("Chat stream error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.warning("Chat stream error: %s", llm_exception_summary(exc))
+            yield f"data: {json.dumps({'error': LLM_USER_ERROR})}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -3577,7 +3583,7 @@ def _generate_ticker_thesis(ticker: str, context: str, deep: bool) -> dict[str, 
             "full": data.get("full", ""),
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Ticker thesis generation failed for %s: %s", ticker, exc)
+        logger.warning("Ticker thesis generation failed for %s: %s", ticker, llm_exception_summary(exc))
         return {
             "ticker": ticker,
             "depth": "deep" if deep else "quick",

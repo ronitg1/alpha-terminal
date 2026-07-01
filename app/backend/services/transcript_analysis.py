@@ -209,7 +209,7 @@ def analyze_transcript(
 ) -> dict[str, Any]:
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from app.backend.services.llm_preferences import create_selected_chat_model
+    from app.backend.services.llm_preferences import LLM_USER_ERROR, create_selected_chat_model, llm_exception_summary
 
     if len(transcript.strip()) < MIN_TRANSCRIPT_CHARS:
         raise TranscriptError("Transcript is too short to analyze (need 500+ characters).")
@@ -237,8 +237,8 @@ def analyze_transcript(
         start, end = txt.find("{"), txt.rfind("}")
         raw = json.loads(txt[start : end + 1]) if start >= 0 and end > start else {}
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Transcript analysis failed for %s: %s", ticker, exc)
-        raise TranscriptError(f"Analysis failed: {exc}") from exc
+        logger.warning("Transcript analysis failed for %s: %s", ticker, llm_exception_summary(exc))
+        raise TranscriptError(LLM_USER_ERROR) from exc
 
     result = _parse_analysis(raw)
     result["ticker"] = ticker.upper()
