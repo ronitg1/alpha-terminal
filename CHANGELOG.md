@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.6] — 2026-07-01
+
+### Changed
+- **Catalyst calendar is now an actual month-grid calendar.** Instead of a
+  chronological list, it renders a real month grid with category-colored dot
+  markers on each catalyst day (earnings + Fed/CPI/jobs + IRA/45X/FEOC/ITC), prev/
+  next month navigation, today highlighted, and it opens on the month of the next
+  upcoming catalyst. Tapping a day lists that day's events below (earnings click
+  through to research). 7-column grid stays usable on iOS.
+
 ## [1.12.5] — 2026-07-01
 
 ### Added
