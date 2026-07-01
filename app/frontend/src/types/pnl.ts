@@ -67,10 +67,3 @@ export interface PositionCreatePayload {
   real?: boolean;
   notes?: string;
 }
-
-export interface FidelityImportResult {
-  flavor: 'positions' | 'transactions';
-  imported: number;
-  skipped: number;
-  positions: PnlPosition[];
-}

@@ -13,8 +13,9 @@ Endpoints:
 * ``GET    /pnl/summary``              — realized/unrealized totals, win
   rate, per-underlying rollup, equity curve. Marks included unless
   ``?marks=false``.
-* ``POST   /pnl/import/fidelity``      — upload a Fidelity CSV export
-  (positions or activity flavor); see ``services/fidelity_import``.
+* ``GET    /pnl/account``              — simulated paper-trading account
+  (cash, buying power, equity, P&L).
+* ``POST   /pnl/account/reset``        — clear all paper trades.
 """
 from __future__ import annotations
 
@@ -24,10 +25,10 @@ import logging
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.backend.services import fidelity_import, pnl_service
+from app.backend.services import pnl_service
 from src.tools.massive import MassiveClient, MassiveError, convert_prices
 
 logger = logging.getLogger(__name__)
@@ -266,28 +267,3 @@ async def get_summary(marks: bool = True) -> dict[str, Any]:
     summary["marks"] = mark_meta
     summary["asof"] = _dt.datetime.now().isoformat(timespec="seconds")
     return summary
-
-
-# ─── Fidelity import ─────────────────────────────────────────────────────────
-
-
-@router.post("/import/fidelity")
-async def import_fidelity(file: UploadFile) -> dict[str, Any]:
-    """Upload a Fidelity CSV (positions or activity export) and import fills.
-
-    Idempotent: rows already imported (matching fingerprint) are skipped.
-    The raw file is parsed in memory and never written to disk.
-    """
-    raw = await file.read()
-    if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (5 MB max).")
-    try:
-        text = raw.decode("utf-8-sig")  # Fidelity exports carry a BOM
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File is not UTF-8 text — export as CSV from Fidelity.")
-    try:
-        result = fidelity_import.import_csv(text)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    _marks_cache.clear()
-    return result

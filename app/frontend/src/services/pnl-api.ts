@@ -2,7 +2,6 @@
 
 import { API_BASE_URL } from '@/lib/api-base';
 import type {
-  FidelityImportResult,
   PnlMark,
   PnlPosition,
   PnlSummary,
@@ -64,19 +63,4 @@ export const pnlApi = {
 
   getSummary: (withMarks = true) =>
     _req<PnlSummary>(`/summary?marks=${withMarks}`),
-
-  importFidelity: async (file: File): Promise<FidelityImportResult> => {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch(`${BASE}/import/fidelity`, {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Import failed (${res.status}): ${text.slice(0, 200)}`);
-    }
-    return res.json() as Promise<FidelityImportResult>;
-  },
 };

@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any
 
 from app.backend.models.schemas import ErrorResponse
 from app.backend.services.openrouter_models import get_openrouter_models

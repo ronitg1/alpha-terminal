@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.8] — 2026-07-01
+
+### Removed (dead-code cleanup after the rework)
+- Deleted the orphaned old **sleeve-signal Portfolio view** (`portfolio-section.tsx`),
+  the **Robinhood pull card** + its frontend api/types (the Portfolio overview keeps
+  the Robinhood *backend*), and the now-unused **finnhub-snapshot** component.
+- Removed the **Fidelity CSV import** end to end (route `POST /pnl/import/fidelity`,
+  `fidelity_import` service, its test, and the frontend method/type) — superseded by
+  the SnapTrade brokerage connect.
+- Cleaned unused imports across several backend modules.
+
 ## [1.11.7] — 2026-07-01
 
 ### Fixed
