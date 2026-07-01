@@ -51,7 +51,7 @@ interface Cell { date: Date | null }
 export function CatalystCalendar({ tickers, onTicker }: { tickers: string[]; onTicker: (t: string) => void }) {
   const [items, setItems] = useState<Catalyst[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<Mode>('month');
+  const [mode, setMode] = useState<Mode>('week');
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [selected, setSelected] = useState<string | null>(null);
   const [pinned, setPinned] = useState(false);

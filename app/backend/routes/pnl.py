@@ -160,7 +160,11 @@ def _stock_mark(client: MassiveClient, ticker: str) -> tuple[float | None, str]:
 
 
 def _option_mark(client: MassiveClient, ticker: str, option: dict[str, Any]) -> tuple[float | None, str]:
-    # 1. Chain snapshot filtered to the exact contract — carries live quotes.
+    occ = option.get("contract_ticker") or _occ_ticker(ticker, option)
+    iv: float | None = None
+    day_close: float | None = None
+
+    # 1. Real NBBO mid from the chain snapshot — the true broker mark when it exists.
     try:
         snap = client.get_options_chain(
             ticker,
@@ -175,18 +179,47 @@ def _option_mark(client: MassiveClient, ticker: str, option: dict[str, Any]) -> 
             bid, ask = quote.get("bid"), quote.get("ask")
             if bid and ask and ask > 0:
                 return round((float(bid) + float(ask)) / 2, 4), "mid_quote"
-            trade = row.get("last_trade") or {}
-            if trade.get("price"):
-                return float(trade["price"]), "last_trade"
-            day = row.get("day") or {}
-            if day.get("close"):
-                return float(day["close"]), "day_close"
+            iv = row.get("implied_volatility") or iv
+            d = row.get("day") or {}
+            if d.get("close"):
+                day_close = float(d["close"])
     except MassiveError as exc:
         logger.warning("Chain snapshot mark failed for %s: %s", ticker, exc)
 
-    # 2. Contract daily aggregates — works after hours and for stale chains.
+    # 2. No live NBBO (illiquid / after hours) → theoretical mark from Polygon's own
+    #    implied vol. IV is by definition the vol that reprices the option to its mid,
+    #    so BSM(IV) tracks the broker's mid far better than a possibly-stale last trade
+    #    (which is what a raw day-close would give). Needs the underlying spot.
     try:
-        occ = option.get("contract_ticker") or _occ_ticker(ticker, option)
+        if iv is None:
+            single = client.get_option_contract_snapshot(ticker, occ)
+            res = single.get("results") if isinstance(single, dict) else None
+            if isinstance(res, dict):
+                iv = res.get("implied_volatility")
+                day_close = day_close or (res.get("day") or {}).get("close")
+        if iv and iv > 0:
+            spot, _ = _stock_mark(client, ticker)
+            if spot and spot > 0:
+                from src.backtesting.options_proxy import bsm_price
+
+                exp = _dt.date.fromisoformat(option["expiration"])
+                t_years = max((exp - _dt.date.today()).days, 0) / 365.0
+                px = bsm_price(
+                    spot=float(spot),
+                    strike=float(option["strike"]),
+                    time_to_expiry_years=t_years,
+                    sigma=float(iv),
+                    option_type=option["type"],
+                )
+                if px and px > 0:
+                    return round(px, 4), "theoretical_iv"
+    except Exception as exc:  # noqa: BLE001 — model fallback is best-effort
+        logger.warning("Theoretical option mark failed for %s: %s", ticker, type(exc).__name__)
+
+    # 3. Last-resort: the day close from the snapshot, else contract daily aggregates.
+    if day_close:
+        return day_close, "day_close"
+    try:
         today = _dt.date.today()
         start = (today - _dt.timedelta(days=7)).isoformat()
         aggs = client.get_option_aggregates(occ, start, today.isoformat())

@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] — 2026-07-01
+
+### Fixed
+- **Paper Trading option marks match the broker better.** For illiquid / after-hours
+  contracts (e.g. SHLS $16C) Polygon publishes no live bid/ask, so the mark fell back
+  to the stale last trade ($1.30 vs the broker's $1.25 mid). It now computes a
+  theoretical mark from Polygon's own implied vol via Black-Scholes when there's no
+  NBBO — IV is by definition the vol that reprices to the mid, so this tracks the
+  broker mark (SHLS now ≈$1.29). Liquid contracts still use the real NBBO mid.
+
+### Changed
+- Catalyst calendar now **defaults to the Week view**.
+
 ## [1.13.0] — 2026-07-01
 
 ### Added
