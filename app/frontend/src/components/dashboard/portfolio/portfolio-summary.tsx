@@ -20,6 +20,12 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 function Totals({ account, masked }: { account: PortfolioAccount; masked: boolean }) {
+  // Cash shown at the top = settled cash + money-market positions (SPAXX etc.),
+  // which classify into the "Cash" bucket but are held as positions.
+  const moneyMarket = account.positions
+    .filter((p) => p.sector === 'Cash')
+    .reduce((s, p) => s + (p.current_value ?? 0), 0);
+  const cashTotal = (account.cash ?? 0) + moneyMarket;
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -29,7 +35,7 @@ function Totals({ account, masked }: { account: PortfolioAccount; masked: boolea
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Today" value={`${maskSigned(account.day_change, masked)} (${pct(account.day_change_pct)})`} tone={toneClass(account.day_change)} />
         <Stat label="Total gain/loss" value={`${maskSigned(account.total_gain, masked)} (${pct(account.total_gain_pct)})`} tone={toneClass(account.total_gain)} />
-        <Stat label="Cash" value={maskMoney(account.cash, masked)} />
+        <Stat label="Cash" value={maskMoney(cashTotal, masked)} />
         <Stat label="Positions" value={String(account.positions.length)} />
       </div>
     </div>

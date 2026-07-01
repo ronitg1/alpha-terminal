@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.8] — 2026-07-01
+
+### Changed
+- **Top "Cash" figure now includes money-market positions** (SPAXX etc.), not just
+  settled cash, so it reflects your true cash-equivalent balance.
+- **Position rows are uniform** — every row is the same height with a consistent
+  two-line symbol cell and non-wrapping, middle-aligned columns.
+
+### Added
+- **SPCX (SpaceX) and other aerospace/defense names** map to an "Aerospace &
+  Defense" sector and stay in the Stocks group even when price data is unavailable
+  (newly-IPO'd), instead of falling into "Funds & ETFs".
+
 ## [1.10.7] — 2026-07-01
 
 ### Changed

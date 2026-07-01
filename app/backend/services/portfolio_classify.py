@@ -87,9 +87,14 @@ _TICKER_SECTOR: dict[str, str] = {
     )},
     # Energy
     **{t: "Energy" for t in ("XOM", "CVX", "COP", "SLB", "OXY", "EOG", "MPC", "PSX", "VLO")},
+    # Aerospace & Defense (SPCX = SpaceX — recently IPO'd, may lack price data, but
+    # it's a stock and belongs here rather than in "Funds & ETFs" / "Other").
+    **{t: "Aerospace & Defense" for t in (
+        "SPCX", "BA", "LMT", "RTX", "NOC", "GD", "LHX", "HII", "TDG", "AXON",
+    )},
     # Industrials
     **{t: "Industrials" for t in (
-        "BA", "CAT", "GE", "HON", "UPS", "RTX", "LMT", "DE", "MMM", "UNP", "SON", "EMR",
+        "CAT", "GE", "HON", "UPS", "DE", "MMM", "UNP", "SON", "EMR", "ETN", "PH",
     )},
     # Telecom
     **{t: "Telecom" for t in ("T", "VZ", "TMUS", "CMCSA")},

@@ -24,6 +24,8 @@ def test_curated_map_gives_detailed_sectors():
     assert pc.classify("MSFT") == "Software & Cloud"
     assert pc.classify("XOM") == "Energy"
     assert pc.classify("JPM") == "Financials"
+    # SpaceX (recently IPO'd, may lack price data) still classifies as a stock sector.
+    assert pc.classify("SPCX") == "Aerospace & Defense"
 
 
 def test_unknown_uses_finnhub_industry_then_funds():

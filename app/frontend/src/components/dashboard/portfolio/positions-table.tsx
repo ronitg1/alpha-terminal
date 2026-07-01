@@ -125,14 +125,12 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
           </thead>
           <tbody>
             {positions.map((p, i) => (
-              <tr key={`${p.symbol}-${i}`} className="border-b border-border/40 hover:bg-muted/30">
-                <td className="px-2 py-2">
-                  <div className="font-mono font-semibold">{p.symbol}</div>
-                  {optionTag(p) ? (
-                    <div className="text-[10px] text-muted-foreground">{optionTag(p)}</div>
-                  ) : p.name ? (
-                    <div className="max-w-[160px] truncate text-[10px] text-muted-foreground">{p.name}</div>
-                  ) : null}
+              <tr key={`${p.symbol}-${i}`} className="h-12 border-b border-border/40 hover:bg-muted/30 [&>td]:align-middle [&>td]:whitespace-nowrap">
+                <td className="px-2 py-1">
+                  <div className="font-mono font-semibold leading-tight">{p.symbol}</div>
+                  <div className="h-[13px] max-w-[180px] truncate text-[10px] leading-tight text-muted-foreground">
+                    {optionTag(p) || p.name || ''}
+                  </div>
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums">{money(p.last_price)}</td>
                 <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.day_change))}>{maskSigned(p.day_change, masked)}</td>
