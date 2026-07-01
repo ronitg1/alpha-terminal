@@ -4,6 +4,25 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-07-01
+
+### Added (collaborator PRs, reviewed + integrated)
+- **OpenRouter BYOK + per-user model selection** (PR #1, @mehulrao). Users can add
+  their own OpenRouter key and pick the LLM model (DeepSeek vs any OpenRouter
+  model) in Settings; scans/theses/chat/news/transcripts route through the choice,
+  DeepSeek stays the default. No shared env fallback for OpenRouter (usage-billed);
+  explicit `api_keys` dicts remain authoritative (security invariant preserved).
+  Its Alembic migration was re-chained (id `e5f6a7b8c9d0` collided with the v1.8.0
+  scan_schedules migration) to `f6a7b8c9d0e1` onto the current head.
+- **Robinhood MCP read-only portfolio pull** (PR #2, @mehulrao). Users save their
+  own Robinhood MCP token (BYOK, encrypted); a P&L card pulls a read-only holdings
+  snapshot via `GET /robinhood/portfolio`. No shared fallback with auth on, HTTPS
+  pinned to `agent.robinhood.com`, read-only tool allow-list (trading/order/
+  transfer names blocked with tests), token + account fields redacted.
+
+Both integrated onto current main with conflicts resolved so the two providers
+coexist. 390 tests pass; frontend builds.
+
 ## [1.8.1] — 2026-06-30
 
 ### Fixed
