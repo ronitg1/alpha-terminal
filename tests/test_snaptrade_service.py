@@ -50,6 +50,7 @@ def test_normalize_option_position_collapses_and_scales_by_contract():
         },
         "units": 2,
         "price": 3.5,
+        "average_purchase_price": 300.0,  # per CONTRACT (total premium), not per share
     }
     out = svc.normalize_option_position(pos)
     assert out["kind"] == "option"
@@ -57,6 +58,9 @@ def test_normalize_option_position_collapses_and_scales_by_contract():
     assert out["option_type"] == "CALL"
     assert out["strike"] == 500.0
     assert out["market_value"] == pytest.approx(2 * 3.5 * 100)
+    # avg cost converted to per-share (300 / 100 = 3.0); cost basis uses ×100 like value
+    assert out["avg_cost"] == pytest.approx(3.0)
+    assert out["cost_basis"] == pytest.approx(2 * 3.0 * 100)
 
 
 def test_connect_url_registers_once_then_reuses(monkeypatch):

@@ -35,9 +35,24 @@ export function PositionsTable({ positions, masked = false }: { positions: reado
   if (positions.length === 0) {
     return <p className="p-4 text-sm italic text-muted-foreground">No positions in this account.</p>;
   }
+  const stocks = positions.filter((p) => p.kind !== 'option');
+  const options = positions.filter((p) => p.kind === 'option');
 
   return (
-    <>
+    <div className="space-y-4">
+      {stocks.length > 0 && <PositionsGroup title="Stocks & ETFs" positions={stocks} masked={masked} />}
+      {options.length > 0 && <PositionsGroup title="Options" positions={options} masked={masked} />}
+    </div>
+  );
+}
+
+function PositionsGroup({ title, positions, masked }: { title: string; positions: readonly PortfolioPosition[]; masked: boolean }) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
+        <span className="text-[11px] text-muted-foreground">({positions.length})</span>
+      </div>
       {/* Mobile / iOS: stacked cards */}
       <div className="space-y-2 md:hidden">
         {positions.map((p, i) => (
@@ -119,6 +134,6 @@ export function PositionsTable({ positions, masked = false }: { positions: reado
           </tbody>
         </table>
       </div>
-    </>
+    </div>
   );
 }

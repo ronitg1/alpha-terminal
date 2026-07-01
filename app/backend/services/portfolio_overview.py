@@ -128,10 +128,12 @@ def _finalize_account(
     for cash."""
     invested = sum(p["current_value"] for p in positions if p["current_value"] is not None)
     if total_balance is not None:
-        total_value = total_balance
-        cash = total_balance - invested
-        if -1.0 < cash < 0:  # tiny negative from rounding → clamp to zero
-            cash = 0.0
+        # Cash is the residual (total − invested). The broker's total can lag our
+        # quote-marked position values (or omit an account), which would make the
+        # residual negative — nonsensical for a cash figure. So the total is never
+        # less than the positions shown, and cash is floored at zero.
+        total_value = max(total_balance, invested)
+        cash = total_value - invested
     elif cash is not None:
         total_value = invested + cash
     else:

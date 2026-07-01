@@ -4,7 +4,21 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.10.1] — 2026-07-01
+## [1.10.2] — 2026-07-01
+
+### Fixed
+- **Option cost basis / total gain-loss (the −$1.5M).** SnapTrade returns an
+  option's *average cost per contract* (total premium) but its *last price per
+  share*. The code multiplied the per-contract cost by 100 again, inflating cost
+  basis ~100× (a $17 option showed a $325k basis, −98% "loss"). Average cost is now
+  converted to per-share, so cost basis, total gain/loss $, and % are correct.
+- **Negative cash.** Cash is a residual (total − invested); when the broker's total
+  lagged our quote-marked values it went negative. The account total is now never
+  less than the positions shown and cash is floored at zero.
+
+### Changed
+- **Positions tab is split into "Stocks & ETFs" and "Options" sections**, each with
+  its own count, instead of one mixed list.
 
 ### Fixed
 - **Portfolio total gain/loss.** No longer trusts SnapTrade's `open_pnl` (which it
