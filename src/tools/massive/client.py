@@ -331,6 +331,15 @@ class MassiveClient:
             params["strike_price.lte"] = strike_price_lte
         return self._get(path, params)
 
+    def get_market_movers(self, direction: str = "gainers") -> dict[str, Any]:
+        """Top market movers snapshot. ``direction`` is ``gainers`` or ``losers``.
+
+        Wraps Polygon's ``/v2/snapshot/locale/us/markets/stocks/{direction}`` — each
+        row carries ``ticker``, ``todaysChange``, ``todaysChangePerc``, and a ``day``
+        block with the latest price/volume."""
+        d = "losers" if direction == "losers" else "gainers"
+        return self._get(f"/v2/snapshot/locale/us/markets/stocks/{d}", {})
+
     def get_option_contract_snapshot(self, underlying: str, option_ticker: str) -> dict[str, Any]:
         """Live snapshot for a single option contract.
 

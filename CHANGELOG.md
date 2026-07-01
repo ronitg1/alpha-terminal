@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1] — 2026-07-01
+
+### Added
+- **Markets + Market-movers cards on the Portfolio Summary tab (M2).** New
+  `GET /market/indices` (S&P 500, Nasdaq, Dow, Russell, Gold, Oil, Bitcoin,
+  Treasuries via liquid ETF proxies) and `GET /market/movers` (top gainers/losers
+  from Polygon). Both best-effort; the cards hide if data is unavailable.
+
 ## [1.11.0] — 2026-07-01
 
 ### Changed

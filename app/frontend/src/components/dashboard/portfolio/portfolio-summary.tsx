@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 import { maskMoney, maskSigned, pct, toneClass } from './format';
+import { MarketCards } from './market-cards';
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -189,7 +190,8 @@ export function PortfolioSummary({ account, masked = false }: { account: Portfol
         <Allocation account={account} masked={masked} />
         <Movers account={account} masked={masked} />
       </div>
-      {/* M2/M3 placeholders — Markets, Market movers, Portfolio events land next. */}
+      <MarketCards />
+      {/* M3 — Portfolio events + earnings calendar lands next. */}
     </div>
   );
 }
