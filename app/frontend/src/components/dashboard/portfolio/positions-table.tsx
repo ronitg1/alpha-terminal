@@ -51,15 +51,14 @@ export function PositionsTable({ positions, masked = false }: { positions: reado
 const ETF_BUCKETS = new Set(['Market Index', 'Funds & ETFs', 'Cash']);
 
 function PositionsGroup({ title, positions, masked }: { title: string; positions: readonly PortfolioPosition[]; masked: boolean }) {
-  const subtotalValue = positions.reduce((s, p) => s + (p.current_value ?? 0), 0);
-  const subtotalGain = positions.reduce((s, p) => s + (p.total_gain ?? 0), 0);
+  const subToday = positions.reduce((s, p) => s + (p.day_change ?? 0), 0);
+  const subValue = positions.reduce((s, p) => s + (p.current_value ?? 0), 0);
+  const subGain = positions.reduce((s, p) => s + (p.total_gain ?? 0), 0);
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
         <span className="text-[11px] text-muted-foreground">({positions.length})</span>
-        <span className="ml-auto text-[11px] font-semibold tabular-nums">{maskMoney(subtotalValue, masked)}</span>
-        <span className={cn('text-[11px] tabular-nums', toneClass(subtotalGain))}>{maskSigned(subtotalGain, masked)}</span>
       </div>
       {/* Mobile / iOS: stacked cards */}
       <div className="space-y-2 md:hidden">
@@ -94,6 +93,15 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
             </div>
           </div>
         ))}
+        {/* Mobile subtotal row */}
+        <div className="flex items-center justify-between rounded-lg border-2 border-border bg-muted/40 px-3 py-2 text-xs font-semibold">
+          <span>{title} subtotal</span>
+          <div className="flex items-center gap-3 tabular-nums">
+            <span className={toneClass(subToday)} title="Today">{maskSigned(subToday, masked)}</span>
+            <span className={toneClass(subGain)} title="Total gain/loss">{maskSigned(subGain, masked)}</span>
+            <span title="Value">{maskMoney(subValue, masked)}</span>
+          </div>
+        </div>
       </div>
 
       {/* Desktop: full table (horizontal scroll only as a last resort) */}
@@ -140,6 +148,17 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border bg-muted/40 font-semibold">
+              <td className="px-2 py-2" colSpan={2}>{title} subtotal</td>
+              <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(subToday))}>{maskSigned(subToday, masked)}</td>
+              <td />
+              <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(subGain))}>{maskSigned(subGain, masked)}</td>
+              <td />
+              <td className="px-2 py-2 text-right tabular-nums">{maskMoney(subValue, masked)}</td>
+              <td colSpan={5} />
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

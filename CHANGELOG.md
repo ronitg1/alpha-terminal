@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.7] — 2026-07-01
+
+### Changed
+- **Position subtotals redesigned as a proper aligned total row** (like a brokerage
+  "Account total"): on desktop the subtotal's **Today $**, **Total gain/loss $**, and
+  **Value** line up under their columns in a bold footer; on mobile it's a clean
+  subtotal bar. Section header is now just the name + count.
+
 ## [1.10.6] — 2026-07-01
 
 ### Fixed
