@@ -170,11 +170,23 @@ export function PatternBacktestPanel() {
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // Watchdog: the server heartbeats every ~5s even while pricing a heavy
+    // ticker, so a 90s gap means the connection is effectively dead. Abort and
+    // show a clear message instead of hanging forever on the last progress line.
+    let lastEvent = Date.now();
+    let stalled = false;
+    const watchdog = window.setInterval(() => {
+      if (Date.now() - lastEvent > 90_000) {
+        stalled = true;
+        ctrl.abort();
+      }
+    }, 5_000);
     try {
       await postSse(
         '/patterns/backtest',
         body,
         (event, data) => {
+          lastEvent = Date.now();
           if (event === 'progress') {
             const d = data as { status?: string };
             if (d.status) setProgress(d.status);
@@ -191,13 +203,21 @@ export function PatternBacktestPanel() {
       );
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
-        setStatus('idle');
-        setProgress('Cancelled');
+        if (stalled) {
+          setError(
+            'The backtest stalled (no response for 90s). Very large runs can do this — try fewer tickers, a smaller optimize grid, or BSM pricing.',
+          );
+          setStatus('error');
+        } else {
+          setStatus('idle');
+          setProgress('Cancelled');
+        }
         return;
       }
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');
     } finally {
+      window.clearInterval(watchdog);
       if (abortRef.current === ctrl) abortRef.current = null;
     }
   };

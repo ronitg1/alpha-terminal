@@ -196,6 +196,37 @@ async def _scan_ticker(
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────────
 
+async def run_pattern_scan(
+    tickers: list[str],
+    pattern_names: list[str],
+    timeframe: str,
+    lookback_days: int,
+) -> list[dict]:
+    """Core scan used by the /scan route AND the scheduled background pre-scan.
+
+    Fans out one fetch+detect per ticker (bounded by the data-client semaphore),
+    flattens, and sorts by confidence. ``pattern_names`` must already be resolved
+    (non-empty, validated by the caller)."""
+    cfg = _timeframe_cfg(timeframe)
+    from_date, to_date = _date_range(min(lookback_days, cfg["max_lookback_days"]))
+    tasks = [
+        _scan_ticker(
+            ticker.upper().strip(),
+            from_date,
+            to_date,
+            pattern_names,
+            timespan=cfg["timespan"],
+            multiplier=cfg["multiplier"],
+        )
+        for ticker in tickers
+        if ticker.strip()
+    ]
+    nested = await asyncio.gather(*tasks)
+    results = [item for sublist in nested for item in sublist]
+    results.sort(key=lambda x: -x["confidence"])
+    return results
+
+
 @router.post("/scan", response_model=list[ScanResult])
 async def scan(req: ScanRequest) -> list[dict]:
     """Scan a custom list of tickers for chart patterns."""
@@ -207,25 +238,7 @@ async def scan(req: ScanRequest) -> list[dict]:
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown patterns: {unknown}")
 
-    cfg = _timeframe_cfg(req.timeframe)
-    lookback = min(req.lookback_days, cfg["max_lookback_days"])
-    from_date, to_date = _date_range(lookback)
-
-    tasks = [
-        _scan_ticker(
-            ticker.upper().strip(),
-            from_date,
-            to_date,
-            pattern_names,
-            timespan=cfg["timespan"],
-            multiplier=cfg["multiplier"],
-        )
-        for ticker in req.tickers
-    ]
-    nested = await asyncio.gather(*tasks)
-    results = [item for sublist in nested for item in sublist]
-    results.sort(key=lambda x: -x["confidence"])
-    return results
+    return await run_pattern_scan(req.tickers, pattern_names, req.timeframe, req.lookback_days)
 
 
 @router.get("/watchlist/scan", response_model=list[ScanResult])
@@ -777,6 +790,10 @@ def _options_recommendations(
 # Cap total signals priced in one run so a 12-pattern x big-universe sweep
 # can't spin for minutes. Most recent signals are kept when truncating.
 _MAX_BT_SIGNALS = 600
+# Cap per-ticker signals too: a single heavily-optioned, signal-dense name (e.g.
+# INTC) would otherwise fan out into hundreds of real-option fetches and dominate
+# the whole run. Most recent signals are kept.
+_MAX_SIGNALS_PER_TICKER = 40
 # Cap the optimizer grid so an accidental huge sweep can't fan out unbounded.
 _MAX_BT_CONFIGS = 80
 
@@ -1020,6 +1037,10 @@ async def backtest_patterns(req: PatternBacktestRequest, request: Request):
                 )
                 if not signals:
                     continue
+                # Cap per ticker first so one signal-dense name can't dominate.
+                if len(signals) > _MAX_SIGNALS_PER_TICKER:
+                    signals = signals[-_MAX_SIGNALS_PER_TICKER:]
+                    truncated = True
                 room = _MAX_BT_SIGNALS - total_signals
                 if room <= 0:
                     truncated = True
@@ -1030,10 +1051,34 @@ async def backtest_patterns(req: PatternBacktestRequest, request: Request):
                 total_signals += len(signals)
                 yield _sse("progress", {"status": f"{tk}: {len(signals)} signals — pricing options…"})
 
-                results = await asyncio.to_thread(
-                    _price_ticker, client, tk, candles, sigma, signals, configs,
-                    req.direction, req.pricing, req.slippage_pct, tf,
+                # Price in a worker thread while keeping the SSE alive with a
+                # heartbeat. A heavy name (many signals × real-option fetches) can
+                # take a while, and a silent await lets a proxy/browser drop the
+                # idle connection — which reads as the run "getting stuck" on that
+                # ticker. The heartbeat also lets us honor client disconnects, and
+                # a per-ticker guard means one bad name can't abort the whole run.
+                price_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        _price_ticker, client, tk, candles, sigma, signals, configs,
+                        req.direction, req.pricing, req.slippage_pct, tf,
+                    )
                 )
+                waited = 0
+                while not price_task.done():
+                    done, _pending = await asyncio.wait({price_task}, timeout=5)
+                    if done:
+                        break
+                    if await request.is_disconnected():
+                        price_task.cancel()
+                        return
+                    waited += 5
+                    yield _sse("progress", {"status": f"{tk}: pricing options… ({waited}s elapsed)"})
+                try:
+                    results = price_task.result()
+                except Exception as exc:  # noqa: BLE001 — one ticker can't kill the run
+                    logger.warning("backtest pricing failed for %s: %s", tk, exc)
+                    yield _sse("progress", {"status": f"{tk}: pricing failed ({exc}) — skipped"})
+                    continue
                 for ci, tlist in enumerate(results):
                     per_config[ci].extend(tlist)
 

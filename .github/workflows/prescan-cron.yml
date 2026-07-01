@@ -1,0 +1,32 @@
+name: Scheduled pre-scans
+
+# Pings the backend every ~15 minutes; the app runs whichever users' scheduled
+# pattern scans are due (see POST /scheduled/run-due). Free + reliable: GitHub's
+# scheduler runs even when nobody has the app open.
+#
+# Setup (one-time):
+#   1. Generate a long random secret.
+#   2. Add it to Railway as the env var  CRON_SECRET  (the backend checks it).
+#   3. Add it to this repo as an Actions secret named  CRON_SECRET
+#      (Settings -> Secrets and variables -> Actions -> New repository secret).
+#
+# The `if` guard makes this run ONLY in the private production repo, so the
+# public mirror (which receives the same files) doesn't fire it a second time.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 min (GitHub's free cron can be a few min late)
+  workflow_dispatch: {}        # allow manual runs from the Actions tab
+
+jobs:
+  run-due:
+    if: github.repository == 'ronitg1/alpha-terminal-cloud'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger due pre-scans
+        run: |
+          curl -fsS -X POST \
+            "https://alpha-terminal-cloud-production.up.railway.app/scheduled/run-due" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 180

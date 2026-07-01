@@ -4,6 +4,47 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-06-30
+
+### Fixed
+- **Pattern backtest getting "stuck" on a ticker (e.g. INTC) in optimize mode.**
+  A signal-dense, heavily-optioned name fanned out into hundreds of real-option
+  fetches priced in a single silent `await`, so the SSE connection idled and a
+  proxy/browser dropped it — the run appeared frozen on that ticker. Now the
+  backtest heartbeats progress every ~5s while pricing (keeping the stream alive
+  and honoring disconnects), isolates per-ticker pricing failures (one bad name
+  can't abort the run), and caps signals per ticker at 40. The frontend adds a
+  90s stall watchdog that surfaces a clear message instead of hanging. Verified:
+  an optimize + real-pricing run over INTC/AAPL/NVDA streams through and completes.
+
+## [1.8.0] — 2026-06-30
+
+### Added
+- **Scheduled background pre-scans.** Users can set times in Settings ("Scheduled
+  scans") for their Pattern Scanner to run automatically in the background, so
+  results are ready and instant when they open the tab. Times are stored in the
+  user's local timezone; the scanner adopts the latest pre-scan on open with a
+  "Showing your pre-scan from …" banner (a manual scan still refreshes live).
+  - New tables `scan_schedules` + `prescan_results` (Alembic `e5f6a7b8c9d0`),
+    dual file/DB service (`scan_schedule_service`), repository, and a reusable
+    `run_pattern_scan()` core shared by the live route and the scheduler.
+  - New routes under `/scheduled/*`: user CRUD for times + `GET /scheduled/prescan`
+    (auth-scoped), and `POST /scheduled/run-due` guarded by a shared `CRON_SECRET`.
+  - The scheduler is a **free GitHub Actions cron** (`.github/workflows/prescan-cron.yml`)
+    that pings `/scheduled/run-due` every ~15 min; the app runs whichever users'
+    schedules are due (once-per-day dedupe via `last_run_on`). Gated to fire only
+    from the production repo. Per-user market-data keys are bound for each
+    background scan when auth is on. +4 tests (dual-backend store + due logic).
+
+## [1.7.7] — 2026-06-30
+
+### Changed
+- **Longer cache for daily/weekly price data (faster repeat scans).** Pattern-scan
+  candle data was cached for only 15 minutes regardless of bar size; daily/weekly
+  bars now cache for 1 hour (intraday stays short). The first scan of a ticker
+  warms it for every user until expiry, cutting repeat-scan latency on the shared
+  production server. (A cross-user Redis cache is the planned next step.)
+
 ## [1.7.6] — 2026-06-30
 
 ### Fixed
