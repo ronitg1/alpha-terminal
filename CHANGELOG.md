@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.4] — 2026-07-01
+
+### Changed
+- **"My Portfolios" in the left nav is now driven by your connected accounts (M5).**
+  One group per brokerage account, showing that account's underlyings (options
+  collapsed), updating with your positions. When no brokerage is connected it falls
+  back to the configured sleeves (and links to Portfolio to connect), so the nav is
+  never empty. The sleeve config stays as the background scan engine — a full
+  backend retirement of manual sleeves is held for review.
+
 ## [1.11.3] — 2026-07-01
 
 ### Added

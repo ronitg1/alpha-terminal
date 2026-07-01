@@ -13,10 +13,12 @@ import { MiniSpark } from '@/components/sleeves/mini-spark';
 import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { sleevesApi } from '@/services/sleeves-api';
+import { portfolioApi } from '@/services/portfolio-api';
+import type { PortfolioAccount } from '@/types/portfolio';
 import { DashboardSection, Quote, WatchlistEntry } from '@/types/sleeves';
 import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 // Hardcoded sector ETFs (SPDR sector suite)
@@ -277,6 +279,30 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [sleevesOpen, setSleevesOpen] = useState(true);
   const [sectorsOpen, setSectorsOpen] = useState(false);
   const [expandedSleeves, setExpandedSleeves] = useState<Set<string>>(new Set());
+  const [accounts, setAccounts] = useState<PortfolioAccount[]>([]);
+
+  // "My Portfolios" is driven by connected brokerage accounts (underlyings only,
+  // one group per account, updates with your positions). Falls back to the
+  // configured sleeves when no brokerage is connected so the nav is never empty.
+  useEffect(() => {
+    let alive = true;
+    portfolioApi
+      .getOverview()
+      .then((o) => { if (alive && o.connected) setAccounts([...o.accounts]); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const portfolioGroups = useMemo(() => {
+    if (accounts.length > 0) {
+      return accounts.map((a) => ({
+        name: a.label,
+        tickers: Array.from(new Set(a.positions.filter((p) => p.kind === 'stock' && p.underlying).map((p) => p.underlying))),
+      }));
+    }
+    return (config?.sleeves ?? []).map((s) => ({ name: s.name, tickers: s.tickers }));
+  }, [accounts, config]);
+  const usingAccounts = accounts.length > 0;
   const [quotesLoading, setQuotesLoading] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -290,9 +316,9 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
     ...watchlists
       .filter((wl) => expandedWatchlists.has(wl.name))
       .flatMap((wl) => wl.tickers.map((e) => e.ticker)),
-    ...(config?.sleeves
-      .filter((s) => expandedSleeves.has(s.name))
-      .flatMap((s) => s.tickers) ?? []),
+    ...portfolioGroups
+      .filter((g) => expandedSleeves.has(g.name))
+      .flatMap((g) => g.tickers),
     ...(sectorsOpen ? SECTOR_ETFS.map((s) => s.ticker) : []),
   ];
   const uniqueTickers = [...new Set(allTickers)];
@@ -567,21 +593,27 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
             label="My Portfolios"
             open={sleevesOpen}
             onToggle={() => setSleevesOpen((o) => !o)}
-            count={config?.sleeves.length}
+            count={portfolioGroups.length}
           />
           {sleevesOpen && (
             <div>
-              {(!config || config.sleeves.length === 0) && (
-                <p className="px-4 py-2 text-[11px] text-muted-foreground italic">No portfolios configured.</p>
+              {portfolioGroups.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setSection('portfolio'); onNavigate?.(); }}
+                  className="px-4 py-2 text-left text-[11px] text-muted-foreground italic hover:text-foreground"
+                >
+                  Connect a brokerage in Portfolio to see your accounts here.
+                </button>
               )}
-              {config?.sleeves.map((sleeve) => {
-                const expanded = expandedSleeves.has(sleeve.name);
+              {portfolioGroups.map((group) => {
+                const expanded = expandedSleeves.has(group.name);
                 return (
-                  <div key={sleeve.name}>
-                    {/* Sleeve header row */}
+                  <div key={group.name}>
+                    {/* Account / portfolio header row */}
                     <button
                       type="button"
-                      onClick={() => toggleSleeve(sleeve.name)}
+                      onClick={() => toggleSleeve(group.name)}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
                     >
                       {expanded ? (
@@ -590,12 +622,12 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
                         <ChevronRight className="h-3 w-3 flex-shrink-0" />
                       )}
                       <span className="flex-1 text-left font-medium">
-                        {sleeve.name.replace(/_/g, ' ')}
+                        {usingAccounts ? group.name : group.name.replace(/_/g, ' ')}
                       </span>
-                      <span className="text-[10px] opacity-60">{sleeve.tickers.length}</span>
+                      <span className="text-[10px] opacity-60">{group.tickers.length}</span>
                     </button>
-                    {/* Sleeve tickers */}
-                    {expanded && sleeve.tickers.map((t) => (
+                    {/* Underlyings */}
+                    {expanded && group.tickers.map((t) => (
                       <TickerRow
                         key={t}
                         ticker={t}
