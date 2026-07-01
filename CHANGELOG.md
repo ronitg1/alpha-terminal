@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.11] — 2026-07-01
+
+### Fixed
+- **Reverted the shared `PortfolioProvider` (v1.11.10).** It fetched
+  `/portfolio/overview` once on app mount, which raced Clerk's session init — the
+  request went out without a token, 401'd, and never retried, so the Portfolio tab
+  showed the "connect a brokerage" empty state and the left nav fell back to manual
+  sleeves even though the brokerage was connected. Restored the per-component
+  fetches (they self-heal on navigation, after auth is ready). The double-fetch
+  optimization will return in an auth-aware form.
+
 ## [1.11.9] — 2026-07-01
 
 ### Changed (efficiency pass — backend)
