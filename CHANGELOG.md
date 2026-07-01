@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.6] — 2026-07-01
+
+### Added
+- **Thesis sub-tab in the Portfolio tab (M6).** Runs the AI agent/thesis engine on
+  each of your holdings — a quick per-name thesis (bias + summary, expandable),
+  with a sequential "Run all". Reuses the existing per-ticker thesis endpoint
+  (grounded in fundamentals + any saved agent analysis); uses your DeepSeek key.
+
 ## [1.11.5] — 2026-07-01
 
 ### Changed

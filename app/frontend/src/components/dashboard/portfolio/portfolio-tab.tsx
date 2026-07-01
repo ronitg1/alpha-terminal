@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { PortfolioSummary } from './portfolio-summary';
 import { PositionsTable } from './positions-table';
+import { PortfolioThesis } from './portfolio-thesis';
 
 const COMBINED_ID = '__combined__';
 const MASK_KEY = 'portfolio-mask-values';
@@ -160,6 +161,7 @@ export function PortfolioTab() {
           <TabsList>
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="positions">Positions</TabsTrigger>
+            <TabsTrigger value="thesis">Thesis</TabsTrigger>
           </TabsList>
           <TabsContent value="summary">
             <PortfolioSummary account={selected} masked={masked} />
@@ -168,6 +170,9 @@ export function PortfolioTab() {
             <div className="rounded-lg border border-border/60 bg-card p-2 sm:p-3">
               <PositionsTable positions={selected.positions} masked={masked} />
             </div>
+          </TabsContent>
+          <TabsContent value="thesis">
+            <PortfolioThesis account={selected} />
           </TabsContent>
         </Tabs>
       </div>
