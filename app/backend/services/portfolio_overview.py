@@ -24,6 +24,7 @@ from typing import Any
 from app.backend.services import snaptrade_connection_service, snaptrade_service
 from app.backend.services.api_key_validation import ROBINHOOD
 from app.backend.services.key_resolver import resolve_key
+from app.backend.services.portfolio_classify import OTHER, bucket_for
 from app.backend.services.snaptrade_client import snaptrade_configured
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def _enrich_position(pos: dict[str, Any], quote: dict[str, Any] | None) -> dict[
         "cost_basis_total": _round(cost_basis),
         "total_gain": _round(total_gain),
         "total_gain_pct": total_gain_pct,
+        "sector": None,  # allocation bucket, filled in build_overview
         "week52_low": None,   # M3
         "week52_high": None,  # M3
         "option_type": pos.get("option_type"),
@@ -329,8 +331,35 @@ async def build_overview() -> dict[str, Any]:
             )
         )
 
+    # Best-effort: never let sector lookups (Finnhub) hang the portfolio response.
+    # Anything unresolved stays None and the frontend shows it as "Other".
+    try:
+        await asyncio.wait_for(_annotate_sectors(accounts), timeout=8.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Sector annotation skipped: %s", type(exc).__name__)
+
     combined = _combine(accounts) if len(accounts) > 1 else None
     return {"connected": True, "sources": sources, "accounts": accounts, "combined": combined}
+
+
+async def _annotate_sectors(accounts: list[dict[str, Any]]) -> None:
+    """Tag every position with its allocation bucket (Cash / Market Index / sector),
+    classified by underlying so an option and its shares share a bucket. Lookups
+    are cached and best-effort; anything unresolved falls back to "Other"."""
+    names: dict[str, str | None] = {}
+    for acct in accounts:
+        for p in acct["positions"]:
+            u = p.get("underlying")
+            if u:
+                names.setdefault(u, p.get("name"))
+
+    async def _one(sym: str, name: str | None) -> tuple[str, str]:
+        return sym, await asyncio.to_thread(bucket_for, sym, name=name)
+
+    resolved = dict(await asyncio.gather(*[_one(u, n) for u, n in names.items()])) if names else {}
+    for acct in accounts:
+        for p in acct["positions"]:
+            p["sector"] = resolved.get(p.get("underlying"), OTHER)
 
 
 async def _fetch_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:

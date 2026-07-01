@@ -15,6 +15,7 @@ export interface PortfolioPosition {
   readonly cost_basis_total: number | null;
   readonly total_gain: number | null;
   readonly total_gain_pct: number | null;
+  readonly sector: string | null;
   readonly week52_low: number | null;
   readonly week52_high: number | null;
   readonly option_type: string | null;

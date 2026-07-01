@@ -34,38 +34,80 @@ function Totals({ account, masked }: { account: PortfolioAccount; masked: boolea
   );
 }
 
-const ALLOC_COLORS = ['bg-sky-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-teal-500', 'bg-indigo-500', 'bg-orange-500'];
+const ALLOC_COLORS = ['bg-sky-500', 'bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-teal-500', 'bg-indigo-500', 'bg-orange-500', 'bg-lime-500', 'bg-fuchsia-500'];
+
+interface AllocName { symbol: string; value: number }
+interface AllocGroup { label: string; value: number; names: AllocName[] }
+
+// Sort order so Cash and Market Index sit at the bottom, sectors (by size) on top.
+const GROUP_RANK = (label: string): number => (label === 'Cash' ? 2 : label === 'Market Index' ? 1 : 0);
+
+function buildGroups(account: PortfolioAccount): { groups: AllocGroup[]; total: number } {
+  // Roll every position onto its underlying (NVDA shares + NVDA calls => NVDA),
+  // keyed by the classified bucket so options land in the same sector as the stock.
+  const byUnderlying = new Map<string, { value: number; bucket: string }>();
+  for (const p of account.positions) {
+    const value = p.current_value ?? 0;
+    if (value <= 0) continue;
+    const key = p.underlying || p.symbol;
+    const bucket = p.sector || 'Other';
+    const prev = byUnderlying.get(key);
+    if (prev) prev.value += value;
+    else byUnderlying.set(key, { value, bucket });
+  }
+  const cash = account.cash ?? 0;
+
+  const groupMap = new Map<string, AllocGroup>();
+  const add = (label: string, symbol: string, value: number) => {
+    const g = groupMap.get(label) ?? { label, value: 0, names: [] };
+    g.value += value;
+    if (symbol) g.names.push({ symbol, value });
+    groupMap.set(label, g);
+  };
+  for (const [symbol, { value, bucket }] of byUnderlying) add(bucket, symbol, value);
+  if (cash > 1) add('Cash', '', cash); // settled cash (not a position) folds in
+
+  const groups = [...groupMap.values()]
+    .map((g) => ({ ...g, names: g.names.sort((a, b) => b.value - a.value) }))
+    .sort((a, b) => GROUP_RANK(a.label) - GROUP_RANK(b.label) || b.value - a.value);
+  const total = groups.reduce((s, g) => s + g.value, 0);
+  return { groups, total };
+}
 
 function Allocation({ account, masked }: { account: PortfolioAccount; masked: boolean }) {
-  const withValue = account.positions.filter((p) => (p.current_value ?? 0) > 0);
-  const top = [...withValue].sort((a, b) => (b.current_value ?? 0) - (a.current_value ?? 0)).slice(0, 8);
-  const shownTotal = top.reduce((s, p) => s + (p.current_value ?? 0), 0);
-  const other = (account.total_value ?? 0) - shownTotal - (account.cash ?? 0);
+  const { groups, total } = buildGroups(account);
+  if (total <= 0) return null;
+  const pctOf = (v: number) => (v / total) * 100;
 
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Allocation</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Allocation by sector</div>
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-muted">
-        {top.map((p, i) => (
-          <div key={p.symbol} className={ALLOC_COLORS[i % ALLOC_COLORS.length]} style={{ width: `${p.pct_of_account ?? 0}%` }} title={`${p.symbol} ${pct(p.pct_of_account, false)}`} />
+        {groups.map((g, i) => (
+          <div key={g.label} className={ALLOC_COLORS[i % ALLOC_COLORS.length]} style={{ width: `${pctOf(g.value)}%` }} title={`${g.label} ${pct(pctOf(g.value), false)}`} />
         ))}
       </div>
-      <div className="mt-3 space-y-1.5">
-        {top.map((p, i) => (
-          <div key={p.symbol} className="flex items-center gap-2 text-xs">
-            <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', ALLOC_COLORS[i % ALLOC_COLORS.length])} />
-            <span className="font-mono">{p.symbol}</span>
-            <span className="ml-auto tabular-nums text-muted-foreground">{maskMoney(p.current_value, masked)}</span>
-            <span className="w-12 text-right tabular-nums">{pct(p.pct_of_account, false)}</span>
+      <div className="mt-3 space-y-2">
+        {groups.map((g, i) => (
+          <div key={g.label}>
+            <div className="flex items-center gap-2 text-xs font-medium">
+              <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', ALLOC_COLORS[i % ALLOC_COLORS.length])} />
+              <span>{g.label}</span>
+              <span className="ml-auto tabular-nums text-muted-foreground">{maskMoney(g.value, masked)}</span>
+              <span className="w-12 text-right tabular-nums">{pct(pctOf(g.value), false)}</span>
+            </div>
+            {g.names.slice(0, 3).map((n) => (
+              <div key={n.symbol} className="flex items-center gap-2 pl-[18px] text-[11px] text-muted-foreground">
+                <span className="font-mono">{n.symbol}</span>
+                <span className="ml-auto tabular-nums">{maskMoney(n.value, masked)}</span>
+                <span className="w-12 text-right tabular-nums">{pct(pctOf(n.value), false)}</span>
+              </div>
+            ))}
+            {g.names.length > 3 && (
+              <div className="pl-[18px] text-[10px] text-muted-foreground/70">+{g.names.length - 3} more</div>
+            )}
           </div>
         ))}
-        {other > 1 && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-muted-foreground/40" />
-            <span>Cash & other</span>
-            <span className="ml-auto tabular-nums">{maskMoney(other + (account.cash ?? 0), masked)}</span>
-          </div>
-        )}
       </div>
     </div>
   );

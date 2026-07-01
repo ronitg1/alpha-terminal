@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.3] — 2026-07-01
+
+### Changed
+- **Allocation card grouped by sector.** Instead of a flat top-8 list with a
+  catch-all "other", holdings are now grouped into **Cash** (SPAXX and other money
+  markets), **Market Index** (VOO/VIG/SPXL and other broad ETFs), and **broad
+  sectors** (Technology, Health Care, …) with the **top 3 names** shown under each.
+  **Options are rolled into their underlying** (NVDA shares + NVDA calls count as
+  one NVDA position). Sector comes from Finnhub's industry mapped to broad buckets
+  (`portfolio_classify.py`), cached and best-effort (never blocks the response).
+
 ## [1.10.2] — 2026-07-01
 
 ### Fixed
