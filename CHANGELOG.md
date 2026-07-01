@@ -4,6 +4,25 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.4] — 2026-07-01
+
+### Added
+- **Catalyst calendar on the Market summary.** Merges per-ticker earnings (Finnhub)
+  with a curated, editable macro/policy calendar — Fed decisions, CPI/PCE/jobs
+  prints, and the IRA/45X/FEOC/ITC energy-policy milestones that move these names —
+  chronologically grouped by date, with clickable earnings rows. Backend
+  `GET /market/catalysts`; earnings are time-boxed so a big watchlist can't stall
+  the panel, and the fetch is debounced to avoid an empty-ticker response wiping the
+  earnings.
+
+### Fixed
+- **Scheduled pre-scan Action now reports why it failed.** It was exiting silently on
+  any HTTP error; it now logs the status + body and annotates the specific cause
+  (503 = `CRON_SECRET` unset on Railway, 403 = secret mismatch, 000 = unreachable).
+  Root cause of the current failures: `CRON_SECRET` is not set on the Railway backend
+  (the endpoint returns 503) — set it there (matching the GitHub Actions secret) to
+  enable scheduled runs.
+
 ## [1.12.3] — 2026-07-01
 
 ### Changed

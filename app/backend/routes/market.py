@@ -37,6 +37,77 @@ async def _cached(key: str, builder: Any) -> dict[str, Any]:
     _market_cache[key] = (time.monotonic(), payload)
     return payload
 
+
+# ─── Macro / policy catalyst calendar ────────────────────────────────────────
+# Curated, hand-maintained events (dates the data providers don't give us) — Fed
+# decisions, CPI/PCE/jobs prints, and the energy/IRA policy milestones that drive
+# these names. EDIT THIS as the calendar firms up (mirrors the IRA_RULE_NOTES /
+# FEOC_RULE_NOTES pattern in src/agents/energy_transition.py). ``expected`` marks a
+# window we're anticipating rather than an officially scheduled date.
+#   category: fed | inflation | jobs | tax_policy | energy_policy
+_MACRO_CATALYSTS: list[dict[str, Any]] = [
+    {"date": "2026-07-03", "category": "jobs", "title": "June jobs report (nonfarm payrolls)"},
+    {"date": "2026-07-15", "category": "inflation", "title": "June CPI release"},
+    {"date": "2026-07-20", "category": "energy_policy", "title": "Treasury 45X production-credit guidance", "expected": True},
+    {"date": "2026-07-29", "category": "fed", "title": "FOMC rate decision + press conference"},
+    {"date": "2026-07-31", "category": "inflation", "title": "June PCE (Fed's preferred gauge)"},
+    {"date": "2026-08-07", "category": "jobs", "title": "July jobs report"},
+    {"date": "2026-08-12", "category": "inflation", "title": "July CPI release"},
+    {"date": "2026-08-15", "category": "energy_policy", "title": "FEOC compliance threshold review", "expected": True},
+    {"date": "2026-08-28", "category": "inflation", "title": "July PCE"},
+    {"date": "2026-09-04", "category": "jobs", "title": "August jobs report"},
+    {"date": "2026-09-11", "category": "inflation", "title": "August CPI release"},
+    {"date": "2026-09-16", "category": "fed", "title": "FOMC rate decision + press conference"},
+    {"date": "2026-09-30", "category": "tax_policy", "title": "ITC/PTC clean-energy tax guidance", "expected": True},
+    {"date": "2026-10-28", "category": "fed", "title": "FOMC rate decision"},
+    {"date": "2026-12-09", "category": "fed", "title": "FOMC rate decision + SEP"},
+]
+
+
+@router.get("/catalysts")
+async def get_catalysts(tickers: str = "", days: int = 60) -> dict[str, Any]:
+    """Chronological catalyst calendar for the Market summary: per-ticker earnings
+    (Finnhub) merged with the curated macro/policy events, over the next ``days``.
+    Best-effort — macro events always return even if earnings are unavailable."""
+    import datetime
+
+    from app.backend.routes.portfolio import get_earnings
+
+    today = datetime.date.today()
+    horizon = min(max(int(days), 7), 120)
+    end = today + datetime.timedelta(days=horizon)
+    today_iso, end_iso = today.isoformat(), end.isoformat()
+
+    events: list[dict[str, Any]] = []
+    # Earnings (reuses the cached per-symbol Finnhub fetch). Cap the symbol count
+    # and time-box the call so a big watchlist can't stall the whole calendar — the
+    # macro/policy events below must always render even if earnings are slow. The
+    # per-symbol cache warms across calls, so earnings fill in on a later load.
+    capped = ",".join([t.strip() for t in tickers.split(",") if t.strip()][:30])
+    if capped:
+        try:
+            payload = await asyncio.wait_for(get_earnings(tickers=capped, days=horizon), timeout=12.0)
+            for e in payload.get("earnings", []):
+                if e.get("date"):
+                    events.append({
+                        "date": e["date"],
+                        "category": "earnings",
+                        "title": f"{e['ticker']} earnings",
+                        "ticker": e["ticker"],
+                        "hour": e.get("hour"),
+                        "eps_estimate": e.get("eps_estimate"),
+                    })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Catalyst earnings fetch failed: %s", type(exc).__name__)
+
+    # Curated macro / policy events within the window.
+    for m in _MACRO_CATALYSTS:
+        if today_iso <= m["date"] <= end_iso:
+            events.append({**m})
+
+    events.sort(key=lambda e: (e.get("date") or "9999", e.get("category")))
+    return {"catalysts": events, "as_of": today_iso}
+
 # (display label, ETF proxy ticker). Equity/bond indices priced off liquid ETF
 # proxies — they track the index and need no index-data entitlement, and their
 # share price sits in a sane range (SPY≈index/10, USO≈WTI), so the number reads

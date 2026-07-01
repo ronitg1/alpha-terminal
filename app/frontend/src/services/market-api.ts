@@ -24,6 +24,16 @@ export interface SymbolMatch {
   readonly type: string;
 }
 
+export interface Catalyst {
+  readonly date: string;
+  readonly category: 'earnings' | 'fed' | 'inflation' | 'jobs' | 'tax_policy' | 'energy_policy' | string;
+  readonly title: string;
+  readonly ticker?: string;
+  readonly hour?: string | null;
+  readonly eps_estimate?: number | null;
+  readonly expected?: boolean;
+}
+
 const BASE = `${API_BASE_URL}/market`;
 
 async function req<T>(path: string, timeoutMs = 30_000): Promise<T> {
@@ -36,4 +46,8 @@ export const marketApi = {
   getIndices: () => req<{ indices: IndexQuote[] }>('/indices'),
   getMovers: () => req<{ gainers: Mover[]; losers: Mover[] }>('/movers'),
   search: (q: string) => req<{ results: SymbolMatch[] }>(`/search?q=${encodeURIComponent(q)}`, 8_000),
+  getCatalysts: (tickers: readonly string[], days = 60) =>
+    req<{ catalysts: Catalyst[]; as_of: string }>(
+      `/catalysts?tickers=${encodeURIComponent(tickers.join(','))}&days=${days}`,
+    ),
 };
