@@ -4,6 +4,13 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.10] — 2026-07-01
+
+### Changed
+- **Options read like Fidelity** in the Positions table: the main label is now
+  `UNDERLYING STRIKE Call/Put` (e.g. "NVDA 210 Call") with the **expiration date**
+  ("Jan-15-2027") on the line beneath, instead of the raw contract symbol.
+
 ## [1.10.9] — 2026-07-01
 
 ### Fixed

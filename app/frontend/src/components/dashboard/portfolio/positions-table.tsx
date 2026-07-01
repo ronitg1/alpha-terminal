@@ -8,10 +8,29 @@ import type { PortfolioPosition } from '@/types/portfolio';
 import { cn } from '@/lib/utils';
 import { maskMoney, maskSigned, money, num, pct, toneClass } from './format';
 
-function optionTag(p: PortfolioPosition): string | null {
-  if (p.kind !== 'option') return null;
-  const parts = [p.option_type, p.strike ? `$${p.strike}` : null, p.expiration].filter(Boolean);
-  return parts.join(' ');
+const _MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Expiration "2027-01-15" -> "Jan-15-2027" (Fidelity style).
+function fmtExpiry(iso: string | null): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  const mi = Number(m) - 1;
+  if (!y || Number.isNaN(mi) || mi < 0 || mi > 11) return iso;
+  return `${_MONTHS[mi]}-${d}-${y}`;
+}
+
+// Main label for a holding: options read like Fidelity ("NVDA 210 Call"),
+// stocks/ETFs just show the ticker.
+function positionTitle(p: PortfolioPosition): string {
+  if (p.kind !== 'option') return p.symbol;
+  const cp = p.option_type ? (p.option_type.toUpperCase().startsWith('C') ? 'Call' : 'Put') : '';
+  const strike = p.strike != null ? String(p.strike) : '';
+  return [p.underlying || p.symbol, strike, cp].filter(Boolean).join(' ');
+}
+
+// Secondary line: option expiration, else the company name.
+function positionSubtitle(p: PortfolioPosition): string {
+  return p.kind === 'option' ? fmtExpiry(p.expiration) : (p.name || '');
 }
 
 function Week52({ p }: { p: PortfolioPosition }) {
@@ -66,9 +85,8 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
           <div key={`${p.symbol}-${i}`} className="rounded-lg border border-border/60 bg-card p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-mono text-sm font-semibold">{p.symbol}</div>
-                {optionTag(p) && <div className="text-[11px] text-muted-foreground">{optionTag(p)}</div>}
-                {p.name && <div className="truncate text-[11px] text-muted-foreground">{p.name}</div>}
+                <div className="font-mono text-sm font-semibold">{positionTitle(p)}</div>
+                {positionSubtitle(p) && <div className="truncate text-[11px] text-muted-foreground">{positionSubtitle(p)}</div>}
               </div>
               <div className="text-right">
                 <div className="text-sm font-semibold">{maskMoney(p.current_value, masked)}</div>
@@ -127,9 +145,9 @@ function PositionsGroup({ title, positions, masked }: { title: string; positions
             {positions.map((p, i) => (
               <tr key={`${p.symbol}-${i}`} className="h-12 border-b border-border/40 hover:bg-muted/30 [&>td]:align-middle [&>td]:whitespace-nowrap">
                 <td className="px-2 py-1">
-                  <div className="font-mono font-semibold leading-tight">{p.symbol}</div>
+                  <div className="font-mono font-semibold leading-tight">{positionTitle(p)}</div>
                   <div className="h-[13px] max-w-[180px] truncate text-[10px] leading-tight text-muted-foreground">
-                    {optionTag(p) || p.name || ''}
+                    {positionSubtitle(p)}
                   </div>
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums">{money(p.last_price)}</td>
