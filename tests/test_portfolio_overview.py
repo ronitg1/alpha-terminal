@@ -19,6 +19,7 @@ def _clear_caches(monkeypatch):
     Also stub the 52-week fetch so tests never hit the network for it."""
     ov._option_change_cache.clear()
     ov._week52_cache.clear()
+    ov._overview_cache.clear()  # per-user overview cache (stale-while-revalidate)
     portfolio_classify._bucket_cache.clear()
     monkeypatch.setattr(ov, "_fetch_week52", lambda client, sym: None)
     yield

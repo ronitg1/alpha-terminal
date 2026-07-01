@@ -40,7 +40,9 @@ function EmptyState() {
 }
 
 export function PortfolioTab() {
-  const [overview, setOverview] = useState<PortfolioOverview | null>(null);
+  // Paint the last cached overview immediately so navigating back to Portfolio is
+  // instant; a fresh copy loads in the background.
+  const [overview, setOverview] = useState<PortfolioOverview | null>(() => portfolioApi.getCachedOverview());
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>(COMBINED_ID);
   const [masked, setMasked] = useState<boolean>(() => localStorage.getItem(MASK_KEY) === '1');
@@ -53,13 +55,14 @@ export function PortfolioTab() {
     });
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true);
     try {
-      setOverview(await portfolioApi.getOverview());
+      setOverview(await portfolioApi.getOverview({ force }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
-      setOverview(null);
+      // Keep any cached overview on screen rather than blanking to the empty state.
+      setOverview((prev) => prev ?? null);
     } finally {
       setLoading(false);
     }
@@ -148,7 +151,7 @@ export function PortfolioTab() {
             </button>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => void load(true)}
               className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
             >
               <RefreshCw className={loading ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />

@@ -279,7 +279,11 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [sleevesOpen, setSleevesOpen] = useState(true);
   const [sectorsOpen, setSectorsOpen] = useState(false);
   const [expandedSleeves, setExpandedSleeves] = useState<Set<string>>(new Set());
-  const [accounts, setAccounts] = useState<PortfolioAccount[]>([]);
+  // Seed from the cached overview so the synced accounts show instantly on load
+  // instead of flashing the sleeve fallback while the fetch is in flight.
+  const [accounts, setAccounts] = useState<PortfolioAccount[]>(
+    () => portfolioApi.getCachedOverview()?.accounts?.slice() ?? [],
+  );
 
   // "My Portfolios" is driven by connected brokerage accounts (underlyings only,
   // one group per account, updates with your positions). Falls back to the

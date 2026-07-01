@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.19] — 2026-07-01
+
+### Changed
+- **Portfolio loads instantly now (caching).** The overview was fully rebuilt
+  (SnapTrade round-trips + quote/sector/option/52-week enrichment) on every
+  navigation, so the tab "loaded forever." Added a per-user server-side cache with
+  stale-while-revalidate: a cached copy returns immediately and refreshes in the
+  background once it ages past 90s. The client also persists the last overview to
+  localStorage and paints it instantly (tab + left nav) while the fetch runs, so
+  you never see a blank screen. The Refresh button forces a rebuild
+  (`?refresh=true`); disconnecting a brokerage invalidates the cache.
+
 ## [1.11.18] — 2026-07-01
 
 ### Fixed

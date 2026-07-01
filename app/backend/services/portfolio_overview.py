@@ -480,8 +480,64 @@ def _num(value: Any) -> float | None:
         return None
 
 
-async def build_overview() -> dict[str, Any]:
-    """Assemble the current user's cross-brokerage portfolio overview."""
+# ─── Per-user overview cache (stale-while-revalidate) ────────────────────────
+# Building the overview is expensive: a SnapTrade round-trip per account plus the
+# quote + sector + option + 52-week enrichment waves. Re-doing all of that on every
+# navigation is why the tab "loaded forever." We cache the built overview per user
+# and serve it instantly; once it ages past the fresh window we return the stale
+# copy immediately and refresh in the background, so the user never waits twice.
+_overview_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_overview_refreshing: set[str] = set()
+_OVERVIEW_FRESH_TTL = 90.0  # seconds a cached overview is served without a refresh
+
+
+def invalidate_overview_cache(user_id: str | None = None) -> None:
+    """Drop cached overview(s). Call after a brokerage connect/disconnect so the
+    next load rebuilds instead of serving a stale connected/empty state. ``None``
+    clears every user (used by tests)."""
+    if user_id is None:
+        _overview_cache.clear()
+    else:
+        _overview_cache.pop(user_id, None)
+
+
+async def build_overview(*, force: bool = False) -> dict[str, Any]:
+    """Cached, stale-while-revalidate wrapper around the real assembly.
+
+    ``force=True`` (the manual Refresh button) always rebuilds. Otherwise: a cached
+    copy is returned immediately; if it is older than the fresh window a background
+    rebuild is kicked off (context vars — including the per-user brokerage creds —
+    are copied into the task automatically) so the *next* load is fresh."""
+    from app.backend.context import current_user_id
+
+    uid = current_user_id()
+    now = time.monotonic()
+    cached = _overview_cache.get(uid)
+
+    if force or cached is None:
+        result = await _build_overview_uncached()
+        _overview_cache[uid] = (now, result)
+        return result
+
+    ts, data = cached
+    if now - ts > _OVERVIEW_FRESH_TTL and uid not in _overview_refreshing:
+        _overview_refreshing.add(uid)
+
+        async def _bg() -> None:
+            try:
+                fresh = await _build_overview_uncached()
+                _overview_cache[uid] = (time.monotonic(), fresh)
+            except Exception:  # noqa: BLE001 — keep the stale copy on failure
+                logger.exception("Background overview refresh failed for %s", uid)
+            finally:
+                _overview_refreshing.discard(uid)
+
+        asyncio.create_task(_bg())
+    return data
+
+
+async def _build_overview_uncached() -> dict[str, Any]:
+    """Assemble the current user's cross-brokerage portfolio overview (uncached)."""
     raw_snaptrade, raw_robinhood = await asyncio.gather(_snaptrade_accounts(), _robinhood_accounts())
     raw_accounts = raw_snaptrade + raw_robinhood
 

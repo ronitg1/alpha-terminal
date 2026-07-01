@@ -20,9 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/overview")
-async def get_overview() -> dict[str, Any]:
-    """The current user's portfolio across all connected brokerages."""
-    return await portfolio_overview.build_overview()
+async def get_overview(refresh: bool = False) -> dict[str, Any]:
+    """The current user's portfolio across all connected brokerages.
+
+    Served from a per-user cache (stale-while-revalidate). Pass ``?refresh=true``
+    (the manual Refresh button) to force a rebuild."""
+    return await portfolio_overview.build_overview(force=refresh)
 
 
 # Per-symbol earnings results cached for the day so re-opening the Portfolio tab

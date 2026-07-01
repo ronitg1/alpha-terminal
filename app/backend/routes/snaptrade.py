@@ -119,4 +119,9 @@ async def delete_connection() -> dict[str, Any]:
     """Forget this user's SnapTrade connection (local record only)."""
     _require_access()
     removed = snaptrade_service.disconnect()
+    # Drop the cached overview so the empty state shows immediately, not after TTL.
+    from app.backend.context import current_user_id
+    from app.backend.services import portfolio_overview
+
+    portfolio_overview.invalidate_overview_cache(current_user_id())
     return {"disconnected": removed}

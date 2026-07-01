@@ -11,11 +11,38 @@ export interface EarningsEvent {
   readonly revenue_estimate: number | null;
 }
 
+// Last successful overview, persisted so the tab + left nav render instantly on
+// the next load while a fresh copy fetches in the background (the server also
+// caches; this just kills the client-side blank-screen wait).
+const OVERVIEW_CACHE_KEY = 'portfolio-overview-cache-v1';
+
+function readOverviewCache(): PortfolioOverview | null {
+  try {
+    const raw = localStorage.getItem(OVERVIEW_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as PortfolioOverview) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOverviewCache(o: PortfolioOverview): void {
+  try {
+    if (o?.connected) localStorage.setItem(OVERVIEW_CACHE_KEY, JSON.stringify(o));
+  } catch {
+    /* quota / disabled storage — non-fatal */
+  }
+}
+
 export const portfolioApi = {
-  getOverview: async (): Promise<PortfolioOverview> => {
-    const res = await fetch(`${BASE}/overview`, { signal: AbortSignal.timeout(60_000) });
+  /** Read the last cached overview synchronously (no network) for instant paint. */
+  getCachedOverview: readOverviewCache,
+  getOverview: async (opts?: { force?: boolean }): Promise<PortfolioOverview> => {
+    const url = `${BASE}/overview${opts?.force ? '?refresh=true' : ''}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`Portfolio request failed (${res.status})`);
-    return res.json() as Promise<PortfolioOverview>;
+    const data = (await res.json()) as PortfolioOverview;
+    writeOverviewCache(data);
+    return data;
   },
   getEarnings: async (tickers: readonly string[], days = 45): Promise<EarningsEvent[]> => {
     if (tickers.length === 0) return [];
