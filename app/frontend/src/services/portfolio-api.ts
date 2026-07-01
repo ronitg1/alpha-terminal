@@ -11,6 +11,23 @@ export interface EarningsEvent {
   readonly revenue_estimate: number | null;
 }
 
+export interface OwnershipHolder {
+  readonly institution: string;
+  readonly shares: number;
+  readonly prev_shares: number;
+  readonly value: number | null;
+  readonly change: 'new' | 'added' | 'trimmed' | 'exited' | 'held' | string;
+  readonly delta_pct: number | null;
+}
+export interface OwnershipName {
+  readonly ticker: string;
+  readonly holders: OwnershipHolder[];
+}
+export interface Ownership {
+  readonly names: OwnershipName[];
+  readonly institutions: string[];
+}
+
 // Last successful overview, persisted so the tab + left nav render instantly on
 // the next load while a fresh copy fetches in the background (the server also
 // caches; this just kills the client-side blank-screen wait).
@@ -43,6 +60,14 @@ export const portfolioApi = {
     const data = (await res.json()) as PortfolioOverview;
     writeOverviewCache(data);
     return data;
+  },
+  getOwnership: async (tickers: readonly string[]): Promise<Ownership> => {
+    if (tickers.length === 0) return { names: [], institutions: [] };
+    const res = await fetch(`${BASE}/ownership?tickers=${encodeURIComponent(tickers.join(','))}`, {
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) return { names: [], institutions: [] };
+    return res.json() as Promise<Ownership>;
   },
   getEarnings: async (tickers: readonly string[], days = 45): Promise<EarningsEvent[]> => {
     if (tickers.length === 0) return [];

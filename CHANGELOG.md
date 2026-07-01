@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] — 2026-07-01
+
+### Added
+- **13F ownership / flow tracker on the Portfolio summary.** For each holding it
+  shows which of a curated set of famous funds (Berkshire, Bridgewater, Renaissance,
+  Citadel, Pershing Square, Appaloosa, Scion/Burry, Tiger Global) hold it and how
+  they moved last quarter — opened / added / trimmed / exited, with the share-count
+  change. Live from SEC EDGAR: pulls each fund's two most recent 13F-HR filings,
+  parses the holdings, and diffs quarter-over-quarter, matched to your names by
+  issuer name (13F reports CUSIPs, not tickers). Cached a day. Verified end-to-end
+  (e.g. Berkshire's KO/AAPL stakes, Burry's new NVDA position, Berkshire adding
+  GOOGL +224%). Quarterly + ~45-day lagged by nature.
+
 ## [1.12.10] — 2026-07-01
 
 ### Added

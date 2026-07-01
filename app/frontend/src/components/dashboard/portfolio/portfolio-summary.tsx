@@ -12,6 +12,7 @@ import { maskMoney, maskSigned, pct, toneClass } from './format';
 import { MarketCards } from './market-cards';
 import { NewsCard } from './news-card';
 import { PortfolioEvents } from './portfolio-events';
+import { OwnershipPanel } from './ownership-panel';
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -287,6 +288,7 @@ export function PortfolioSummary({ account, masked = false }: { account: Portfol
         <PortfolioEvents account={account} />
         <NewsCard account={account} />
       </div>
+      <OwnershipPanel account={account} />
       <MarketCards />
     </div>
   );

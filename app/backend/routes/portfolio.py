@@ -33,6 +33,24 @@ async def get_overview(refresh: bool = False) -> dict[str, Any]:
 _earnings_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
 
 
+@router.get("/ownership")
+async def get_ownership(tickers: str = "") -> dict[str, Any]:
+    """13F ownership/flow: which tracked funds hold your names and last quarter's
+    change (new/added/trimmed/exited). SEC EDGAR, cached a day; time-boxed."""
+    import asyncio
+
+    from app.backend.services import ownership_service
+
+    syms = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not syms:
+        return {"names": [], "institutions": []}
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(ownership_service.build_ownership, syms), timeout=55.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Ownership build failed/timed out: %s", type(exc).__name__)
+        return {"names": [], "institutions": []}
+
+
 @router.get("/earnings")
 async def get_earnings(tickers: str = "", days: int = 30) -> dict[str, Any]:
     """Upcoming earnings dates for the given holdings over the next ``days`` (via
