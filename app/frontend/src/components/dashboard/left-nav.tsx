@@ -363,7 +363,7 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
     { id: 'market', label: 'Market', icon: LayoutGrid },
     { id: 'screening', label: 'Screening', icon: Activity },
     { id: 'portfolio', label: 'Portfolio', icon: LineChart },
-    { id: 'pnl', label: 'P&L', icon: DollarSign },
+    { id: 'pnl', label: 'Paper Trading', icon: DollarSign },
     { id: 'news', label: 'News', icon: Newspaper },
     { id: 'transcripts', label: 'Calls', icon: FileText },
   ];

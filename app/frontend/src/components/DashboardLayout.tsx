@@ -30,7 +30,7 @@ const SECTION_LABELS: Record<DashboardSection, string> = {
   market: 'Market',
   screening: 'Screening',
   portfolio: 'Portfolio',
-  pnl: 'P&L',
+  pnl: 'Paper Trading',
   news: 'News',
   transcripts: 'Calls',
 };

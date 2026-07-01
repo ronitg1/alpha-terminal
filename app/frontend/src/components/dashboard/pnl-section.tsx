@@ -1,16 +1,20 @@
 /**
- * PnlSection — the P&L tracker tab.
+ * PnlSection — the Paper Trading tab (a simulated $100k options account).
  *
  * Layout (top → bottom):
- *   1. Header: marks as-of stamp, Refresh, Import Fidelity CSV, Add position
- *   2. Summary cards: realized / unrealized / total / win rate / open count
- *   3. Equity curve (cumulative realized, lightweight-charts)
- *   4. Open positions table — live marks, unrealized P&L, close/delete
- *   5. Closed positions table — realized P&L history
+ *   1. Header: marks as-of stamp, Refresh, Reset, Add trade
+ *   2. Paper account bar: equity / buying power / positions value / P&L
+ *   3. Summary cards: realized / unrealized / total / win rate / open count
+ *   4. Equity curve (cumulative realized, lightweight-charts)
+ *   5. Open positions — live marks, unrealized P&L, close/delete
+ *   6. Closed positions — realized P&L history
  *
- * Positions arrive from three places: this tab's Add form (manual), the
- * one-click "Track" buttons on screener/pattern picks, and the Fidelity CSV
- * importer (real fills). Real fills are tagged REAL; ideas are PAPER.
+ * Positions arrive from two places: this tab's Add form (manual) and the
+ * one-click "Track"/"Add to Paper Trading" buttons on screener/pattern picks.
+ * Everything here is simulated — nothing is a real trade.
+ *
+ * Both position lists render as a table on desktop (md+) and reflow into stacked
+ * cards on phones (convention #8) so nothing is clipped on iOS.
  */
 
 import { pnlApi, type PaperAccount } from '@/services/pnl-api';
@@ -89,10 +93,10 @@ function SummaryCards({ summary }: { summary: PnlSummary }) {
     { label: 'Open / Closed', value: `${summary.n_open} / ${summary.n_closed}`, color: 'text-foreground' },
   ];
   return (
-    <div className="grid grid-cols-5 gap-3 rounded-lg border border-border/60 bg-card p-4">
+    <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/60 bg-card p-4 sm:grid-cols-5">
       {cards.map((c) => (
         <div key={c.label} className="text-center">
-          <div className={cn('text-xl font-bold font-mono tabular-nums', c.color)}>{c.value}</div>
+          <div className={cn('text-lg font-bold font-mono tabular-nums sm:text-xl', c.color)}>{c.value}</div>
           <div className="text-[10px] text-muted-foreground mt-0.5">{c.label}</div>
         </div>
       ))}
@@ -281,18 +285,10 @@ function SourceTag({ p }: { p: PnlPosition }) {
   );
 }
 
-function OpenRow({
-  p, mark, onChanged,
-}: {
-  p: PnlPosition;
-  mark: PnlMark | undefined;
-  onChanged: () => void;
-}) {
+// Shared close/delete logic so the desktop row and the mobile card stay in sync.
+function usePositionActions(p: PnlPosition, onChanged: () => void) {
   const [closing, setClosing] = useState(false);
   const [exitPrice, setExitPrice] = useState('');
-  const u = unrealized(p, mark?.mark);
-  const basis = p.entry_price * p.qty * multiplier(p);
-  const uPct = u != null && basis > 0 ? (u / basis) * 100 : null;
 
   const doClose = async () => {
     const px = parseFloat(exitPrice);
@@ -320,6 +316,79 @@ function OpenRow({
       cancel: { label: 'Cancel', onClick: () => {} },
     });
   };
+
+  return { closing, setClosing, exitPrice, setExitPrice, doClose, doDelete };
+}
+
+/** Mobile card for an open position (md:hidden). Same data as OpenRow, stacked. */
+function OpenCard({ p, mark, onChanged }: { p: PnlPosition; mark: PnlMark | undefined; onChanged: () => void }) {
+  const { closing, setClosing, exitPrice, setExitPrice, doClose, doDelete } = usePositionActions(p, onChanged);
+  const u = unrealized(p, mark?.mark);
+  const basis = p.entry_price * p.qty * multiplier(p);
+  const uPct = u != null && basis > 0 ? (u / basis) * 100 : null;
+
+  return (
+    <div className="p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate font-mono text-sm font-semibold" title={p.notes || undefined}>{instrumentLabel(p)}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {p.side} · {p.qty} @ ${p.entry_price.toFixed(2)}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn('font-mono text-sm font-semibold', pnlColor(u))}>{fmtMoney(u)}</div>
+          {uPct != null && <div className={cn('font-mono text-[11px]', pnlColor(u))}>{fmtPct(uPct)}</div>}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] text-muted-foreground" title={mark?.source}>
+          Mark {mark?.mark != null ? `$${mark.mark.toFixed(2)}` : '—'}
+        </span>
+        <SourceTag p={p} />
+        <div className="ml-auto flex items-center gap-1">
+          {closing ? (
+            <>
+              <input
+                className="w-20 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px]"
+                placeholder="Exit" value={exitPrice} autoFocus
+                onChange={(e) => setExitPrice(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void doClose(); if (e.key === 'Escape') setClosing(false); }}
+              />
+              <button type="button" onClick={() => void doClose()} className="rounded bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">OK</button>
+              <button type="button" onClick={() => setClosing(false)} className="px-1 text-[10px] text-muted-foreground">✕</button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => { setExitPrice(mark?.mark != null ? String(mark.mark) : ''); setClosing(true); }}
+                className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+              >
+                Close
+              </button>
+              <button type="button" onClick={doDelete} className="p-1 text-muted-foreground hover:text-rose-500">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OpenRow({
+  p, mark, onChanged,
+}: {
+  p: PnlPosition;
+  mark: PnlMark | undefined;
+  onChanged: () => void;
+}) {
+  const { closing, setClosing, exitPrice, setExitPrice, doClose, doDelete } = usePositionActions(p, onChanged);
+  const u = unrealized(p, mark?.mark);
+  const basis = p.entry_price * p.qty * multiplier(p);
+  const uPct = u != null && basis > 0 ? (u / basis) * 100 : null;
 
   return (
     <tr className="border-b border-border/40 hover:bg-muted/20">
@@ -367,22 +436,43 @@ function OpenRow({
   );
 }
 
-function ClosedRow({ p, onChanged }: { p: PnlPosition; onChanged: () => void }) {
+/** Mobile card for a closed position (md:hidden). */
+function ClosedCard({ p, onChanged }: { p: PnlPosition; onChanged: () => void }) {
+  const { doDelete } = usePositionActions(p, onChanged);
   const r = realized(p);
   const basis = p.entry_price * p.qty * multiplier(p);
   const rPct = r != null && basis > 0 ? (r / basis) * 100 : null;
 
-  const doDelete = () => {
-    toast(`Delete ${instrumentLabel(p)}?`, {
-      action: {
-        label: 'Delete',
-        onClick: () => {
-          void pnlApi.deletePosition(p.id).then(onChanged).catch((e) => toast.error(String(e)));
-        },
-      },
-      cancel: { label: 'Cancel', onClick: () => {} },
-    });
-  };
+  return (
+    <div className="p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate font-mono text-sm font-semibold" title={p.notes || undefined}>{instrumentLabel(p)}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {p.side} · {p.qty} · ${p.entry_price.toFixed(2)} → {p.exit_price != null ? `$${p.exit_price.toFixed(2)}` : '—'}
+          </div>
+          {p.exit_date && <div className="text-[10px] text-muted-foreground">closed {p.exit_date}</div>}
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn('font-mono text-sm font-semibold', pnlColor(r))}>{fmtMoney(r)}</div>
+          {rPct != null && <div className={cn('font-mono text-[11px]', pnlColor(r))}>{fmtPct(rPct)}</div>}
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <SourceTag p={p} />
+        <button type="button" onClick={doDelete} className="ml-auto p-1 text-muted-foreground hover:text-rose-500">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClosedRow({ p, onChanged }: { p: PnlPosition; onChanged: () => void }) {
+  const { doDelete } = usePositionActions(p, onChanged);
+  const r = realized(p);
+  const basis = p.entry_price * p.qty * multiplier(p);
+  const rPct = r != null && basis > 0 ? (r / basis) * 100 : null;
 
   return (
     <tr className="border-b border-border/40 hover:bg-muted/20">
@@ -531,10 +621,18 @@ export function PnlSection() {
         </div>
         {open.length === 0 ? (
           <p className="px-3 py-4 text-xs text-muted-foreground italic">
-            Nothing tracked yet — add a position, click Track on a screener pick, or import your Fidelity CSV.
+            Nothing tracked yet — add a trade, or send a pick from the Pattern Scanner or screener.
           </p>
         ) : (
-          <table className="w-full text-left">
+          <>
+          {/* Mobile: stacked cards */}
+          <div className="divide-y divide-border/40 md:hidden">
+            {open.map((p) => (
+              <OpenCard key={p.id} p={p} mark={marks[p.id]} onChanged={() => void reload()} />
+            ))}
+          </div>
+          {/* Desktop: table */}
+          <table className="hidden w-full text-left md:table">
             <thead>
               <tr className="text-[10px] uppercase text-muted-foreground border-b border-border/60">
                 <th className="py-1.5 px-2 font-medium">Instrument</th>
@@ -553,6 +651,7 @@ export function PnlSection() {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
 
@@ -564,7 +663,15 @@ export function PnlSection() {
         {closed.length === 0 ? (
           <p className="px-3 py-4 text-xs text-muted-foreground italic">No closed trades yet.</p>
         ) : (
-          <table className="w-full text-left">
+          <>
+          {/* Mobile: stacked cards */}
+          <div className="divide-y divide-border/40 md:hidden">
+            {closed.map((p) => (
+              <ClosedCard key={p.id} p={p} onChanged={() => void reload()} />
+            ))}
+          </div>
+          {/* Desktop: table */}
+          <table className="hidden w-full text-left md:table">
             <thead>
               <tr className="text-[10px] uppercase text-muted-foreground border-b border-border/60">
                 <th className="py-1.5 px-2 font-medium">Instrument</th>
@@ -583,6 +690,7 @@ export function PnlSection() {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </div>

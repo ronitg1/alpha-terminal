@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.14] — 2026-07-01
+
+### Changed
+- **P&L renamed to "Paper Trading"** everywhere (top bar, left nav) to match the
+  simulated-account framing.
+- **Open/Closed positions reflow into cards on phones.** The positions tables ran
+  wider than the screen on iOS, clipping the Unrealized column so you couldn't see
+  your P&L. They now render as a table on desktop (md+) and stacked cards below md
+  (verified: every field, including unrealized $/%, fits at 390px with no overflow).
+  Summary cards drop from 5-across to 2-across on narrow screens.
+- Removed the last Fidelity-CSV references from the Paper Trading copy and docs.
+
 ## [1.11.13] — 2026-07-01
 
 ### Fixed
