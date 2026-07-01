@@ -20,33 +20,90 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
 
-# (display label, ETF/crypto proxy ticker). Proxies avoid index-data entitlement.
+# (display label, ETF proxy ticker). Equity/bond indices priced off liquid ETF
+# proxies — they track the index and need no index-data entitlement, and their
+# share price sits in a sane range (SPY≈index/10, USO≈WTI), so the number reads
+# right. Ordered as they should appear in the card.
 _INDEX_PROXIES: list[tuple[str, str]] = [
     ("S&P 500", "SPY"),
     ("Nasdaq", "QQQ"),
     ("Dow Jones", "DIA"),
     ("Russell 2000", "IWM"),
-    ("Gold", "GLD"),
     ("Crude Oil", "USO"),
-    ("Bitcoin", "BITO"),
     ("20Y Treasuries", "TLT"),
+]
+
+# (display label, Polygon spot ticker). Crypto (``X:``) and forex/metals (``C:``)
+# quote in their real units, so an ETF proxy would misprice them badly
+# (BITO≈$60 vs BTC≈$100k, GLD≈$240 vs gold≈$2,600/oz). We pull real spot bars.
+_SPOT_INSTRUMENTS: list[tuple[str, str]] = [
+    ("Bitcoin", "X:BTCUSD"),
+    ("Ethereum", "X:ETHUSD"),
+    ("Gold", "C:XAUUSD"),
+    ("Silver", "C:XAGUSD"),
 ]
 
 _MAX_MOVERS = 8
 
 
+def _fetch_spot(label: str, ticker: str) -> dict[str, Any]:
+    """Real spot last/prev/change/spark for a crypto or forex/metal ticker.
+
+    Uses daily aggregates (last ~45 calendar days) so crypto weekends and forex
+    gaps still yield a couple of closes. Best-effort: returns nulls on failure so
+    the row degrades to a dash rather than dropping the instrument."""
+    import datetime
+
+    from src.tools.massive.client import MassiveClient
+
+    empty = {"label": label, "symbol": ticker, "last": None, "prev_close": None,
+             "change": None, "change_pct": None, "spark": []}
+    try:
+        today = datetime.date.today()
+        start = today - datetime.timedelta(days=45)
+        data = MassiveClient(timeout=8).get_daily_aggregates(ticker, start.isoformat(), today.isoformat())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Spot fetch (%s) failed: %s", ticker, type(exc).__name__)
+        return empty
+    bars = data.get("results") if isinstance(data, dict) else None
+    closes = [b.get("c") for b in bars or [] if isinstance(b, dict) and b.get("c") is not None]
+    if not closes:
+        return empty
+    last = closes[-1]
+    prev = closes[-2] if len(closes) >= 2 else None
+    change = round(last - prev, 2) if prev is not None else None
+    change_pct = round((last - prev) / prev * 100, 2) if prev else None
+    return {
+        "label": label,
+        "symbol": ticker,
+        "last": round(last, 2),
+        "prev_close": round(prev, 2) if prev is not None else None,
+        "change": change,
+        "change_pct": change_pct,
+        "spark": [round(c, 2) for c in closes[-30:]],
+    }
+
+
 @router.get("/indices")
 async def get_indices() -> dict[str, Any]:
-    """Major indices + macro proxies with last / change / % / sparkline."""
+    """Major indices (ETF proxies) + real crypto/metal spot, each with last /
+    change / % / sparkline. Best-effort — degrades to dashes, never errors."""
     from app.backend.routes.sleeves import get_quotes
 
     symbols = ",".join(sym for _, sym in _INDEX_PROXIES)
-    try:
-        payload = await get_quotes(tickers=symbols)
-        quotes = payload.get("quotes", {}) if isinstance(payload, dict) else {}
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Index quotes failed: %s", type(exc).__name__)
-        quotes = {}
+
+    async def _proxies() -> dict[str, Any]:
+        try:
+            payload = await get_quotes(tickers=symbols)
+            return payload.get("quotes", {}) if isinstance(payload, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Index quotes failed: %s", type(exc).__name__)
+            return {}
+
+    quotes, *spots = await asyncio.gather(
+        _proxies(),
+        *(asyncio.to_thread(_fetch_spot, label, tkr) for label, tkr in _SPOT_INSTRUMENTS),
+    )
 
     out = []
     for label, sym in _INDEX_PROXIES:
@@ -60,6 +117,7 @@ async def get_indices() -> dict[str, Any]:
             "change_pct": q.get("pct_change"),
             "spark": q.get("spark") or [],
         })
+    out.extend(spots)
     return {"indices": out}
 
 

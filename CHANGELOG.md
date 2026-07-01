@@ -4,6 +4,21 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.13] — 2026-07-01
+
+### Fixed
+- **Bitcoin (and Gold/Silver) show real spot prices.** The Markets card used ETF
+  proxies (BITO≈$60, GLD≈$240) which badly mispriced crypto and metals. It now
+  pulls real spot for Bitcoin/Ethereum (`X:…USD`) and Gold/Silver (`C:XAUUSD`,
+  `C:XAGUSD`) from Polygon's crypto/forex aggregates; equity indices keep their
+  ETF proxies (which price sanely).
+- **Portfolio earnings calendar was never loading.** The backend called
+  `earnings_calendar()` with positional args against a keyword-only signature, so
+  every call raised `TypeError`, got swallowed, and returned `[]`. It now queries
+  per-symbol with keyword args. This also fixes the alias problem: asking Finnhub
+  for `GOOG` returns symbol `GOOGL`, which the old whole-calendar filter dropped —
+  results are now labeled with the held ticker, so GOOG's earnings show up.
+
 ## [1.11.12] — 2026-07-01
 
 ### Fixed

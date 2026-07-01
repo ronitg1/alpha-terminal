@@ -43,28 +43,40 @@ async def get_earnings(tickers: str = "", days: int = 30) -> dict[str, Any]:
     end = today + datetime.timedelta(days=days)
 
     def _fetch() -> list[dict[str, Any]]:
-        try:
-            data = FinnhubClient().earnings_calendar(today.isoformat(), end.isoformat())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Earnings calendar failed: %s", type(exc).__name__)
-            return []
-        rows = data.get("earningsCalendar") if isinstance(data, dict) else None
+        # Query per-symbol. Two reasons: (1) the shared-class alias problem — asking
+        # for GOOG returns Finnhub symbol GOOGL, so a whole-calendar scan filtered by
+        # the user's exact ticker silently drops it; querying by the held ticker and
+        # labeling the row with *that* ticker keeps the attribution the user expects.
+        # (2) the free tier's full calendar is ~1,500 rows; per-symbol is cheaper.
+        client = FinnhubClient()
         out: list[dict[str, Any]] = []
-        for r in rows or []:
-            sym = str(r.get("symbol") or "").upper()
-            if sym in syms:
-                out.append({
-                    "ticker": sym,
-                    "date": r.get("date"),
-                    "hour": r.get("hour"),  # bmo | amc | dmh
-                    "eps_estimate": r.get("epsEstimate"),
-                    "revenue_estimate": r.get("revenueEstimate"),
-                })
+        for sym in sorted(syms)[:40]:
+            try:
+                data = client.earnings_calendar(
+                    start_date=today.isoformat(), end_date=end.isoformat(), ticker=sym
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Earnings calendar (%s) failed: %s", sym, type(exc).__name__)
+                continue
+            rows = data.get("earningsCalendar") if isinstance(data, dict) else None
+            if not rows:
+                continue
+            # Nearest upcoming date for this holding.
+            r = min(rows, key=lambda x: x.get("date") or "9999")
+            out.append({
+                "ticker": sym,  # the held ticker, not Finnhub's alias
+                "date": r.get("date"),
+                "hour": r.get("hour"),  # bmo | amc | dmh
+                "eps_estimate": r.get("epsEstimate"),
+                "revenue_estimate": r.get("revenueEstimate"),
+            })
         out.sort(key=lambda e: (e.get("date") or "9999", e.get("ticker")))
         return out
 
     try:
-        earnings = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=8.0)
+        # Per-symbol scan makes up to len(syms) sequential Finnhub calls, so give it
+        # more headroom than the old single-call budget.
+        earnings = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=25.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Earnings fetch timed out/failed: %s", type(exc).__name__)
         earnings = []
