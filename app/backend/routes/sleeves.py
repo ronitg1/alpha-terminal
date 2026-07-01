@@ -3646,22 +3646,52 @@ async def post_ticker_thesis(ticker: str, depth: str = "quick") -> dict[str, Any
     if cached and (now - cached[0]) < _REASON_CACHE_TTL_SECONDS:
         return cached[1]
 
-    # Gather grounding context off the event loop.
-    def _gather() -> str:
+    # Valuation football field — computed alongside the context so the thesis can
+    # ground its call in an estimated fair value, and returned for the UI chart.
+    from app.backend.services.valuation_service import compute_valuation
+
+    def _gather(valuation: dict[str, Any]) -> str:
         blocks = [
             _chat_saved_analysis_block(symbol),
             _chat_fundamentals_block(symbol),
+            _valuation_block(valuation),
         ]
         if deep:
             blocks.append(_chat_news_block(symbol))
         joined = "\n\n".join(b for b in blocks if b)
         return joined or "No saved analysis or fundamentals available for this ticker."
 
-    context = await asyncio.to_thread(_gather)
+    valuation = await asyncio.to_thread(compute_valuation, symbol)
+    context = await asyncio.to_thread(_gather, valuation)
     result = await asyncio.to_thread(_generate_ticker_thesis, symbol, context, deep)
+    result["valuation"] = valuation  # football-field data for the UI
     _ticker_thesis_cache[cache_key] = (now, result)
     _save_thesis(f"ticker:{symbol}:{depth}", result)
     return result
+
+
+def _valuation_block(valuation: dict[str, Any]) -> str:
+    """One grounding paragraph so the LLM references the estimated fair value in its
+    bull/bear reasoning instead of ignoring valuation."""
+    if not valuation or not valuation.get("available"):
+        return ""
+    price = valuation.get("current_price")
+    fair = valuation.get("fair_value")
+    up = valuation.get("upside_pct")
+    bands = "; ".join(
+        f"{b['method']} ${b['low']}–${b['high']}" for b in valuation.get("bands", [])
+    )
+    verdict = (
+        "roughly fairly valued" if up is not None and abs(up) < 10
+        else "appears undervalued" if up and up > 0
+        else "appears expensive"
+    )
+    return (
+        f"Valuation football field: price ${price}, blended fair value ~${fair} "
+        f"({up:+.0f}% vs price → {verdict}). Method bands: {bands}. Weigh this in the "
+        f"call — do not be bullish on a name trading well above fair value without a "
+        f"specific growth/catalyst reason."
+    )
 
 
 def _save_thesis(key: str, thesis: dict[str, Any]) -> None:

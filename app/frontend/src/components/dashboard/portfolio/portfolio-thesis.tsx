@@ -7,7 +7,7 @@
 import { sleevesApi } from '@/services/sleeves-api';
 import { cn } from '@/lib/utils';
 import type { PortfolioAccount } from '@/types/portfolio';
-import type { TickerThesis } from '@/types/sleeves';
+import type { TickerThesis, Valuation } from '@/types/sleeves';
 import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -18,6 +18,70 @@ const BIAS_CLASS: Record<string, string> = {
   mixed: 'bg-amber-500/15 text-amber-500',
   neutral: 'bg-muted text-muted-foreground',
 };
+
+/**
+ * Valuation football field: one horizontal band per method (low→high, mid ticked)
+ * on a shared scale, with a vertical line at the current price so you can see at a
+ * glance whether the market is above or below the estimated fair value.
+ */
+function FootballField({ v }: { v: Valuation }) {
+  if (!v.available || !v.bands?.length || v.current_price == null) return null;
+  const price = v.current_price;
+  const lows = v.bands.map((b) => b.low);
+  const highs = v.bands.map((b) => b.high);
+  const min = Math.min(...lows, price);
+  const max = Math.max(...highs, price);
+  const pad = (max - min) * 0.08 || 1;
+  const lo = min - pad;
+  const hi = max + pad;
+  const x = (val: number) => ((val - lo) / (hi - lo)) * 100;
+  const up = v.upside_pct ?? 0;
+  const upTone = up > 3 ? 'text-emerald-500' : up < -3 ? 'text-rose-500' : 'text-muted-foreground';
+
+  return (
+    <div className="mt-3 rounded-md border border-border/60 bg-background/40 p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Valuation</span>
+        <span className="text-[11px]">
+          Fair ~${v.fair_value} <span className={cn('font-medium', upTone)}>({up >= 0 ? '+' : ''}{up}%)</span>
+        </span>
+      </div>
+      <div className="relative">
+        <div className="space-y-2">
+          {v.bands.map((b) => (
+            <div key={b.method}>
+              <div className="mb-0.5 flex justify-between text-[10px] text-muted-foreground">
+                <span>{b.method}</span>
+                <span className="tabular-nums">${b.low}–${b.high}</span>
+              </div>
+              <div className="relative h-2 rounded bg-muted">
+                <div
+                  className="absolute inset-y-0 rounded bg-primary/30"
+                  style={{ left: `${x(b.low)}%`, width: `${Math.max(1, x(b.high) - x(b.low))}%` }}
+                />
+                <div
+                  className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded bg-primary"
+                  style={{ left: `${x(b.mid)}%` }}
+                  title={`${b.method} mid $${b.mid}`}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Current-price reference line across all bands */}
+        <div
+          className="pointer-events-none absolute inset-y-0 w-px -translate-x-1/2 bg-foreground/70"
+          style={{ left: `${x(price)}%` }}
+        />
+      </div>
+      <div className="mt-1.5 flex justify-between text-[9px] tabular-nums text-muted-foreground">
+        <span>${lo.toFixed(0)}</span>
+        <span className="font-medium text-foreground">price ${price}</span>
+        <span>${hi.toFixed(0)}</span>
+      </div>
+    </div>
+  );
+}
 
 function ThesisRow({ ticker }: { ticker: string }) {
   const [thesis, setThesis] = useState<TickerThesis | null>(null);
@@ -62,6 +126,7 @@ function ThesisRow({ ticker }: { ticker: string }) {
       {thesis && (
         <div className="border-t border-border/60 px-3 py-2">
           <p className="text-xs leading-relaxed">{thesis.condensed}</p>
+          {open && thesis.valuation?.available && <FootballField v={thesis.valuation} />}
           {open && thesis.full && thesis.full !== thesis.condensed && (
             <p className="mt-2 whitespace-pre-line text-[11px] leading-relaxed text-muted-foreground">{thesis.full}</p>
           )}

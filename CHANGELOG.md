@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.21] — 2026-07-01
+
+### Added
+- **Valuation football field in the thesis.** Each holding's thesis now computes an
+  estimated fair value and shows a football-field chart: a growth-justified P/E band
+  (a PEG-style multiple scaled to the name's own growth — the "comps" leg) and the
+  52-week range, on a shared scale with the current price marked. The thesis prompt
+  is fed the blended fair value + upside, so the bull/bear call is grounded in
+  valuation instead of hand-waving (verified: KO comes back neutral citing "premium
+  valuation and limited upside"). Every band is clamped to a sane window around the
+  price and dropped if too wide, so ranges never come out ridiculous. A full FCFF
+  DCF isn't offered because this data plan's financial statements are premium-gated
+  (403); the field is built from Finnhub's free fundamentals.
+
 ## [1.11.20] — 2026-07-01
 
 ### Changed

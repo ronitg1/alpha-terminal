@@ -83,12 +83,32 @@ export interface AnalystMetadata {
 // ─── Thesis synthesis payloads ──────────────────────────────────────────────
 
 /** Per-ticker thesis for Portfolio Pulse "Run analysis" (quick or deep). */
+export interface ValuationBand {
+  method: string;
+  low: number;
+  mid: number;
+  high: number;
+}
+
+/** Football-field valuation attached to a ticker thesis (may be unavailable). */
+export interface Valuation {
+  available: boolean;
+  ticker: string;
+  current_price?: number;
+  fair_value?: number;
+  upside_pct?: number;
+  growth_pct?: number | null;
+  bands?: ValuationBand[];
+  as_of?: string;
+}
+
 export interface TickerThesis {
   ticker: string;
   depth: 'quick' | 'deep';
   bias: 'bullish' | 'bearish' | 'neutral' | string;
   condensed: string;
   full: string;
+  valuation?: Valuation;
 }
 
 /** LLM-synthesized thesis at portfolio or sleeve scope. */
