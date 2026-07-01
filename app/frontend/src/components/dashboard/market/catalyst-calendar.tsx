@@ -20,6 +20,18 @@ const CAT_META: Record<string, { label: string; dot: string; chip: string }> = {
 };
 const meta = (c: string) => CAT_META[c] ?? { label: c, dot: 'bg-muted-foreground', chip: 'bg-muted text-muted-foreground' };
 
+/** Compact label shown inside a day cell: the ticker for earnings, else a keyword
+ *  pulled from the macro title (FOMC/CPI/PCE/45X/FEOC/ITC/Jobs), else the category. */
+function shortLabel(c: Catalyst): string {
+  if (c.ticker) return c.ticker;
+  const kw = (c.title || '').match(/FOMC|CPI|PCE|45X|FEOC|ITC|PTC|GDP|jobs|payrolls/i);
+  if (kw) {
+    const w = kw[0].toLowerCase();
+    return w === 'payrolls' || w === 'jobs' ? 'Jobs' : kw[0].toUpperCase();
+  }
+  return meta(c.category).label;
+}
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MON_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WD = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -150,28 +162,33 @@ export function CatalystCalendar({ tickers, onTicker }: { tickers: string[]; onT
       {/* Day grid (week = 1 row, month = full grid) */}
       <div className="mt-1 grid grid-cols-7 gap-1">
         {cells.map((c, i) => {
-          if (!c.date) return <div key={i} className="aspect-square" />;
+          if (!c.date) return <div key={i} className={mode === 'week' ? 'min-h-[5rem]' : 'min-h-[3.5rem]'} />;
           const dayIso = isoOf(c.date);
           const evs = byDate.get(dayIso) ?? [];
           const isToday = dayIso === today;
           const isSelected = dayIso === selected;
-          const cats = [...new Set(evs.map((e) => e.category))].slice(0, 4);
+          const shown = mode === 'week' ? 5 : 2; // chips to show inline before "+N"
           return (
             <button
               key={i}
               type="button"
               onClick={() => setSelected(isSelected ? null : dayIso)}
               className={cn(
-                'flex flex-col items-center justify-start rounded-md border p-0.5 text-[11px] transition-colors',
-                mode === 'week' ? 'min-h-[3.25rem]' : 'aspect-square',
+                'flex flex-col items-stretch rounded-md border p-0.5 text-left transition-colors',
+                mode === 'week' ? 'min-h-[5rem]' : 'min-h-[3.5rem]',
                 isSelected ? 'border-primary bg-primary/10' : evs.length ? 'border-border/60 hover:bg-muted/50' : 'border-transparent',
                 isToday && !isSelected && 'ring-1 ring-inset ring-primary/50',
               )}
             >
-              <span className={cn('tabular-nums', isToday ? 'font-bold text-primary' : evs.length ? 'font-medium' : 'text-muted-foreground')}>{c.date.getDate()}</span>
-              {cats.length > 0 && (
-                <span className="mt-auto flex flex-wrap items-center justify-center gap-0.5 pb-0.5">
-                  {cats.map((cc, j) => <span key={j} className={cn('h-1.5 w-1.5 rounded-full', meta(cc).dot)} />)}
+              <span className={cn('px-0.5 text-[11px] tabular-nums', isToday ? 'font-bold text-primary' : evs.length ? 'font-medium' : 'text-muted-foreground')}>{c.date.getDate()}</span>
+              {evs.length > 0 && (
+                <span className="mt-0.5 flex flex-col gap-0.5 overflow-hidden">
+                  {evs.slice(0, shown).map((e, j) => (
+                    <span key={j} className={cn('truncate rounded px-1 text-[8px] font-medium leading-[1.3]', meta(e.category).chip)}>
+                      {shortLabel(e)}
+                    </span>
+                  ))}
+                  {evs.length > shown && <span className="px-1 text-[8px] text-muted-foreground">+{evs.length - shown}</span>}
                 </span>
               )}
             </button>
@@ -206,7 +223,7 @@ export function CatalystCalendar({ tickers, onTicker }: { tickers: string[]; onT
         ) : (
           <p className="text-xs text-muted-foreground">
             {periodEventCount > 0
-              ? 'Tap a highlighted day to see its catalysts.'
+              ? 'Tap a day to open its earnings for research.'
               : `No catalysts this ${mode} — use the arrows to browse.`}
           </p>
         )}

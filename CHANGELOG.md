@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.8] — 2026-07-01
+
+### Changed
+- **Catalyst calendar shows events inline in each day cell** — no tapping needed.
+  Earnings show as the ticker, macro/policy as a short label (Jobs / CPI / FOMC /
+  45X / FEOC / ITC), category-colored, with a "+N" overflow when a day is busy.
+  Tapping a day still opens its earnings for research.
+
 ## [1.12.7] — 2026-07-01
 
 ### Added
