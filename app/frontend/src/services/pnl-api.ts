@@ -11,6 +11,19 @@ import type {
 
 const BASE = `${API_BASE_URL}/pnl`;
 
+export interface PaperAccount {
+  readonly starting_cash: number;
+  readonly cash: number;
+  readonly buying_power: number;
+  readonly positions_value: number;
+  readonly equity: number;
+  readonly realized: number;
+  readonly unrealized: number;
+  readonly total_pnl: number;
+  readonly total_pnl_pct: number | null;
+  readonly asof: string;
+}
+
 async function _req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
@@ -43,6 +56,11 @@ export const pnlApi = {
     _req<{ deleted: string }>(`/positions/${id}`, { method: 'DELETE' }),
 
   getMarks: () => _req<{ marks: Record<string, PnlMark>; asof: string }>('/marks'),
+
+  getAccount: () => _req<PaperAccount>('/account'),
+
+  resetAccount: () =>
+    _req<{ reset: boolean; removed: number; starting_cash: number }>('/account/reset', { method: 'POST' }),
 
   getSummary: (withMarks = true) =>
     _req<PnlSummary>(`/summary?marks=${withMarks}`),

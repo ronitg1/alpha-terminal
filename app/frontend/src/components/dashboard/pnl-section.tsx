@@ -13,18 +13,16 @@
  * importer (real fills). Real fills are tagged REAL; ideas are PAPER.
  */
 
-import { pnlApi } from '@/services/pnl-api';
+import { pnlApi, type PaperAccount } from '@/services/pnl-api';
 import { cn } from '@/lib/utils';
-import { RobinhoodPortfolioPull } from '@/components/dashboard/robinhood-portfolio-pull';
-import { SnapTradeConnect } from '@/components/dashboard/snaptrade-connect';
 import type { OptionLeg, PnlMark, PnlPosition, PnlSummary, PositionCreatePayload } from '@/types/pnl';
 import { ColorType, createChart, LineStyle } from 'lightweight-charts';
 import {
-  DollarSign,
-  Download,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -410,45 +408,72 @@ function ClosedRow({ p, onChanged }: { p: PnlPosition; onChanged: () => void }) 
   );
 }
 
+// ─── Paper account bar ───────────────────────────────────────────────────────
+
+function PaperAccountBar({ account }: { account: PaperAccount }) {
+  const tone = (v: number) => (v > 0 ? 'text-emerald-500' : v < 0 ? 'text-rose-500' : 'text-muted-foreground');
+  const Stat = ({ label, value, cls }: { label: string; value: string; cls?: string }) => (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={cn('text-sm font-semibold tabular-nums', cls)}>{value}</div>
+    </div>
+  );
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-4">
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Account value</div>
+      <div className="text-2xl font-bold tabular-nums">{fmtMoney(account.equity, false)}</div>
+      <div className={cn('text-xs', tone(account.total_pnl))}>
+        {fmtMoney(account.total_pnl)} ({fmtPct(account.total_pnl_pct)}) all-time
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Buying power" value={fmtMoney(account.buying_power, false)} />
+        <Stat label="Positions value" value={fmtMoney(account.positions_value, false)} />
+        <Stat label="Unrealized" value={fmtMoney(account.unrealized)} cls={tone(account.unrealized)} />
+        <Stat label="Realized" value={fmtMoney(account.realized)} cls={tone(account.realized)} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Main section ────────────────────────────────────────────────────────────
 
 export function PnlSection() {
   const [positions, setPositions] = useState<PnlPosition[]>([]);
   const [summary, setSummary] = useState<PnlSummary | null>(null);
+  const [account, setAccount] = useState<PaperAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async (withMarks = true) => {
     setLoading(true);
     try {
-      const [pos, sum] = await Promise.all([
+      const [pos, sum, acct] = await Promise.all([
         pnlApi.listPositions(),
         pnlApi.getSummary(withMarks),
+        pnlApi.getAccount().catch(() => null),
       ]);
       setPositions(pos.positions);
       setSummary(sum);
+      if (acct) setAccount(acct);
     } catch (e) {
-      toast.error(`P&L load failed: ${e instanceof Error ? e.message : e}`);
+      toast.error(`Paper trading load failed: ${e instanceof Error ? e.message : e}`);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void reload(); }, [reload]);
-
-  const onImportFile = async (file: File) => {
+  const resetAll = useCallback(async () => {
+    if (!window.confirm('Reset paper trading? This deletes all your paper trades and restores full buying power.')) return;
     try {
-      const result = await pnlApi.importFidelity(file);
-      toast.success(
-        `Imported ${result.imported} position${result.imported === 1 ? '' : 's'} from the Fidelity ${result.flavor} export` +
-        (result.skipped ? ` (${result.skipped} already imported)` : ''),
-      );
+      await pnlApi.resetAccount();
+      toast.success('Paper trading reset.');
       void reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, [reload]);
+
+  useEffect(() => { void reload(); }, [reload]);
 
   const open = positions.filter((p) => p.status === 'open');
   const closed = positions.filter((p) => p.status === 'closed');
@@ -457,47 +482,44 @@ export function PnlSection() {
   return (
     <div className="h-full overflow-y-auto p-4 space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <DollarSign className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">P&L Tracker</h2>
-        {summary && (
-          <span className="text-[10px] text-muted-foreground">marks as of {summary.asof.replace('T', ' ')}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <Wallet className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Paper Trading</h2>
+        {account && (
+          <span className="text-[10px] text-muted-foreground">as of {account.asof.replace('T', ' ')}</span>
         )}
-        <div className="flex-1" />
-        <button
-          type="button" onClick={() => void reload()}
-          disabled={loading}
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground disabled:opacity-50"
-        >
-          <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /> Refresh marks
-        </button>
-        <button
-          type="button" onClick={() => fileRef.current?.click()}
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground"
-          title="Import a Fidelity positions or activity CSV export"
-        >
-          <Download className="h-3 w-3" /> Import Fidelity CSV
-        </button>
-        <input
-          ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void onImportFile(f);
-            e.target.value = '';
-          }}
-        />
-        <button
-          type="button" onClick={() => setAdding((a) => !a)}
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary"
-        >
-          <Plus className="h-3 w-3" /> Add position
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button" onClick={() => void reload()}
+            disabled={loading}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} /> Refresh
+          </button>
+          <button
+            type="button" onClick={() => void resetAll()}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground"
+            title="Delete all paper trades and restore full buying power"
+          >
+            <RotateCcw className="h-3 w-3" /> Reset
+          </button>
+          <button
+            type="button" onClick={() => setAdding((a) => !a)}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary"
+          >
+            <Plus className="h-3 w-3" /> Add trade
+          </button>
+        </div>
       </div>
 
-      {adding && <AddPositionForm onAdded={() => { setAdding(false); void reload(); }} onCancel={() => setAdding(false)} />}
+      <p className="text-[11px] text-muted-foreground">
+        A simulated options account. Add contracts manually or send them from the Pattern Scanner, and track P&amp;L against a
+        ${account ? account.starting_cash.toLocaleString() : '100,000'} starting balance. Nothing here is a real trade.
+      </p>
 
-      <RobinhoodPortfolioPull />
-      <SnapTradeConnect />
+      {account && <PaperAccountBar account={account} />}
+
+      {adding && <AddPositionForm onAdded={() => { setAdding(false); void reload(); }} onCancel={() => setAdding(false)} />}
 
       {summary && <SummaryCards summary={summary} />}
       {summary && <EquityCurve points={summary.equity_curve} />}

@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] — 2026-07-01
+
+### Changed
+- **P&L tab reworked into a Paper Trading simulator.** Removed the Robinhood pull,
+  Fidelity CSV import, and SnapTrade connect (brokerage sync lives in the Portfolio
+  tab now). It's now a simulated options account: **$100k starting buying power**,
+  cash/equity/realized/unrealized derived from your tracked contracts (new
+  `GET /pnl/account`), a **Reset** button (`POST /pnl/account/reset`), and an
+  account bar showing buying power, positions value, and P&L.
+- **"Add to Paper Trading" from the Pattern Scanner.** The trade-plan card now has a
+  button that opens the recommended contract as a paper position at its **current
+  price** (live during market hours, last close when shut), sized to your risk %.
+
 ## [1.10.11] — 2026-07-01
 
 ### Fixed

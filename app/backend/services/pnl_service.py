@@ -146,6 +146,59 @@ def cost_basis(position: dict[str, Any]) -> float | None:
     return abs(float(entry) * float(position.get("qty") or 0) * position_multiplier(position))
 
 
+# Paper-trading simulated account: everyone starts with this much buying power.
+# Cash is DERIVED from the positions (opening pays the premium, closing returns
+# proceeds), so there's no separate mutable balance to keep in sync.
+DEFAULT_STARTING_CASH = 100_000.0
+
+
+def account_snapshot(
+    positions: list[dict[str, Any]],
+    marks: dict[str, float | None] | None = None,
+    starting_cash: float = DEFAULT_STARTING_CASH,
+) -> dict[str, Any]:
+    """Simulated paper-trading account state derived from the positions.
+
+    Cash flow per position: opening debits ``entry × qty × mult × dir`` (a long
+    pays premium, a short receives it); closing credits ``exit × …``. So cash =
+    starting − Σ(entry cash flow, all) + Σ(exit cash flow, closed), buying power =
+    cash, and equity = cash + market value of open positions. ``total_pnl`` equals
+    realized + unrealized by construction."""
+    marks = marks or {}
+    open_cf = close_cf = pos_value = realized = unrealized = 0.0
+    for p in positions:
+        entry = p.get("entry_price")
+        if entry is None:
+            continue
+        qty = float(p.get("qty") or 0)
+        mult = position_multiplier(p)
+        d = _direction(p)
+        open_cf -= float(entry) * qty * mult * d
+        if p.get("status") == "closed":
+            exit_ = p.get("exit_price")
+            if exit_ is not None:
+                close_cf += float(exit_) * qty * mult * d
+                realized += (float(exit_) - float(entry)) * qty * mult * d
+        else:
+            mark = marks.get(p["id"])
+            if mark is not None:
+                pos_value += float(mark) * qty * mult * d
+                unrealized += (float(mark) - float(entry)) * qty * mult * d
+    cash = starting_cash + open_cf + close_cf
+    equity = cash + pos_value
+    return {
+        "starting_cash": round(starting_cash, 2),
+        "cash": round(cash, 2),
+        "buying_power": round(cash, 2),
+        "positions_value": round(pos_value, 2),
+        "equity": round(equity, 2),
+        "realized": round(realized, 2),
+        "unrealized": round(unrealized, 2),
+        "total_pnl": round(equity - starting_cash, 2),
+        "total_pnl_pct": round((equity - starting_cash) / starting_cash * 100, 2) if starting_cash else None,
+    }
+
+
 def instrument_key(position: dict[str, Any]) -> str:
     """Identity of the tradable instrument — used to match closes to opens."""
     if position.get("kind") == "option" and position.get("option"):
@@ -255,6 +308,22 @@ def delete(position_id: str) -> bool:
             return False
         _save(kept)
     return True
+
+
+def clear_all() -> int:
+    """Remove every position for the current user (paper-trading 'reset'). Returns
+    the number removed."""
+    if use_db():
+        with session_scope() as db:
+            repo = PnlRepository(db, current_user_id())
+            existing = repo.get_all()
+            for p in existing:
+                repo.delete(p["id"])
+            return len(existing)
+    with _lock:
+        positions = _load()
+        _save([])
+        return len(positions)
 
 
 def existing_import_keys() -> set[str]:

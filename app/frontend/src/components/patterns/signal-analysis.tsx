@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { getSignalAnalysis, getTradePlan } from '@/services/patterns-api';
+import { pnlApi } from '@/services/pnl-api';
 import type {
   OptionsStrategy,
   PatternTimeframe,
@@ -91,6 +93,43 @@ export function TradePlanCard({
 
   const rrColor = (rr: number | null | undefined) =>
     (rr ?? 0) >= 2 ? 'text-emerald-400' : (rr ?? 0) >= 1 ? 'text-amber-400' : 'text-red-400';
+
+  const [addingPaper, setAddingPaper] = useState(false);
+  const addToPaper = async () => {
+    if (!opt) return;
+    if (!opt.expiration) {
+      toast.error('This contract has no expiration date; cannot add it to Paper Trading.');
+      return;
+    }
+    const expiration = opt.expiration;
+    setAddingPaper(true);
+    try {
+      // Entry = the contract's current mid (live during market hours, last close
+      // when shut) so it opens the paper position "now".
+      await pnlApi.createPosition({
+        kind: 'option',
+        ticker,
+        side: 'long',
+        qty: contracts && contracts > 0 ? contracts : 1,
+        option: {
+          type: opt.type,
+          strike: opt.strike,
+          expiration,
+          contract_ticker: opt.contract_ticker ?? null,
+        },
+        entry_price: opt.current_mid,
+        entry_date: new Date().toISOString().slice(0, 10),
+        source: 'pattern',
+        real: false,
+        notes: `${pattern} · ${timeframe}`,
+      });
+      toast.success(`Added ${ticker} $${opt.strike}${opt.type === 'call' ? 'C' : 'P'} to Paper Trading.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddingPaper(false);
+    }
+  };
 
   return (
     <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4">
@@ -231,6 +270,16 @@ export function TradePlanCard({
                 )}
               </div>
               )}
+
+              {/* Send this contract to the Paper Trading tab at its current price */}
+              <button
+                type="button"
+                onClick={() => void addToPaper()}
+                disabled={addingPaper}
+                className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-indigo-500/40 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 disabled:opacity-50"
+              >
+                {addingPaper ? 'Adding…' : `＋ Add to Paper Trading (${contracts && contracts > 0 ? contracts : 1} contract${(contracts ?? 1) === 1 ? '' : 's'} @ ${money(opt.current_mid)})`}
+              </button>
             </>
           ) : plan.status === 'stale' ? (
             /* Played out AND no chain to re-anchor against — say so plainly. */

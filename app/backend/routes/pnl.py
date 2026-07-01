@@ -226,6 +226,26 @@ async def _marks_for(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any
     return marks
 
 
+@router.get("/account")
+async def get_account() -> dict[str, Any]:
+    """Simulated paper-trading account state (cash, buying power, equity, P&L),
+    derived from the tracked positions + live marks."""
+    positions = pnl_service.get_all()
+    mark_meta = await _marks_for(positions)
+    marks = {pid: m["mark"] for pid, m in mark_meta.items()}
+    snapshot = pnl_service.account_snapshot(positions, marks)
+    snapshot["asof"] = _dt.datetime.now().isoformat(timespec="seconds")
+    return snapshot
+
+
+@router.post("/account/reset")
+async def reset_account() -> dict[str, Any]:
+    """Clear all paper trades — resets buying power to the full starting cash."""
+    removed = pnl_service.clear_all()
+    _marks_cache.clear()
+    return {"reset": True, "removed": removed, "starting_cash": pnl_service.DEFAULT_STARTING_CASH}
+
+
 @router.get("/marks")
 async def get_marks() -> dict[str, Any]:
     """Per-share marks for all open positions. {id: {mark, source}}."""
