@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { API_BASE_URL } from '@/lib/api-base';
+import { ScheduledScansSettings } from './scheduled-scans-settings';
 
 type Provider = 'deepseek' | 'openrouter' | 'massive' | 'finnhub';
 type LlmProvider = 'DeepSeek' | 'OpenRouter';
@@ -390,6 +391,8 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
               ))}
             </div>
           )}
+
+          <ScheduledScansSettings />
         </div>
       </DialogContent>
     </Dialog>

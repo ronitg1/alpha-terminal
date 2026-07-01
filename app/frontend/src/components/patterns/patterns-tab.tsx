@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getSignalAnalysis } from '@/services/patterns-api';
+import { scheduledApi } from '@/services/scheduled-api';
 import type { HistoricalStats, PatternTimeframe, ScanResult } from '@/types/patterns';
 import { ScannerPanel } from './scanner-panel';
 import { ResultsTable } from './results-table';
@@ -78,11 +79,31 @@ export function PatternsTab() {
   const [isScanning, setIsScanning] = useState(false);
   const [chart, setChart] = useState<ChartTarget | null>(null);
   const [winRates, setWinRates] = useState<Map<string, HistoricalStats>>(new Map());
+  const [prescanAt, setPrescanAt] = useState<string | null>(null);
 
   const handleResults = (rows: ScanResult[], tf: PatternTimeframe) => {
     setTimeframe(tf);
     setResults(rows);
+    setPrescanAt(null); // a manual scan supersedes the background pre-scan
   };
+
+  // On first open, if the user hasn't scanned yet, show their latest background
+  // pre-scan so results are ready instantly.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const pre = await scheduledApi.getPrescan();
+        if (cancelled || !pre || !pre.results?.length) return;
+        setResults((cur) => (cur.length ? cur : pre.results));
+        setTimeframe((pre.timeframe as PatternTimeframe) ?? 'day');
+        setPrescanAt(pre.computed_at);
+      } catch {
+        // no pre-scan, or not signed in — ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Background-fetch win rates for all unique ticker+pattern pairs after a scan
   useEffect(() => {
@@ -147,7 +168,13 @@ export function PatternsTab() {
           <PatternBacktestPanel />
         </div>
       ) : (
-      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 p-3 md:p-4 overflow-y-auto md:overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {prescanAt && !isScanning && results.length > 0 && (
+          <div className="flex-shrink-0 px-3 md:px-4 pt-2 text-[11px] text-muted-foreground">
+            Showing your pre-scan from {new Date(prescanAt).toLocaleString()}. Run a scan to refresh.
+          </div>
+        )}
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 p-3 md:p-4 overflow-y-auto md:overflow-hidden">
         {/* Left: scanner + stats */}
         <div className="space-y-4 md:overflow-y-auto md:pr-1">
           <ScannerPanel
@@ -172,6 +199,7 @@ export function PatternsTab() {
           winRates={winRates}
           timeframe={timeframe}
         />
+        </div>
       </div>
       )}
 
