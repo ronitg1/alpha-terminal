@@ -4,22 +4,6 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.11.10] — 2026-07-01
-
-### Changed (efficiency pass — frontend)
-- **`GET /portfolio/overview` is now fetched once, not twice.** A shared
-  `PortfolioProvider` owns the overview; the left nav and the Portfolio tab both
-  read it (previously each fetched the expensive endpoint separately). Bonus: the
-  nav's "My Portfolios" now refreshes when the tab refreshes.
-- **Summary cards no longer refetch on unrelated re-renders.** The News and
-  Portfolio-Events cards keyed their fetch on the `account` object identity, so the
-  Hide/Show mask toggle refetched news + earnings. They now key on a stable ticker
-  string.
-
-### Removed
-- Dead `pnlApi.getMarks`/`patchPosition` (no callers), vestigial `portfolioSleeves`
-  dashboard-context state, and added missing fetch timeouts to `news-api`/`sleeves-api`.
-
 ## [1.11.9] — 2026-07-01
 
 ### Changed (efficiency pass — backend)

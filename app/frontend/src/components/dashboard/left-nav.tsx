@@ -13,7 +13,8 @@ import { MiniSpark } from '@/components/sleeves/mini-spark';
 import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { sleevesApi } from '@/services/sleeves-api';
-import { usePortfolio } from '@/contexts/portfolio-context';
+import { portfolioApi } from '@/services/portfolio-api';
+import type { PortfolioAccount } from '@/types/portfolio';
 import { DashboardSection, Quote, WatchlistEntry } from '@/types/sleeves';
 import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -278,12 +279,19 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
   const [sleevesOpen, setSleevesOpen] = useState(true);
   const [sectorsOpen, setSectorsOpen] = useState(false);
   const [expandedSleeves, setExpandedSleeves] = useState<Set<string>>(new Set());
+  const [accounts, setAccounts] = useState<PortfolioAccount[]>([]);
+
   // "My Portfolios" is driven by connected brokerage accounts (underlyings only,
-  // one group per account, updates with your positions) from the SHARED overview
-  // (fetched once by PortfolioProvider — the Portfolio tab reuses the same data).
-  // Falls back to the configured sleeves when no brokerage is connected.
-  const { overview } = usePortfolio();
-  const accounts = overview?.connected ? overview.accounts : [];
+  // one group per account, updates with your positions). Falls back to the
+  // configured sleeves when no brokerage is connected so the nav is never empty.
+  useEffect(() => {
+    let alive = true;
+    portfolioApi
+      .getOverview()
+      .then((o) => { if (alive && o.connected) setAccounts([...o.accounts]); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const portfolioGroups = useMemo(() => {
     if (accounts.length > 0) {

@@ -7,9 +7,9 @@
  */
 import { SnapTradeConnect } from '@/components/dashboard/snaptrade-connect';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { usePortfolio } from '@/contexts/portfolio-context';
+import { portfolioApi } from '@/services/portfolio-api';
 import { snaptradeApi } from '@/services/snaptrade-api';
-import type { PortfolioAccount } from '@/types/portfolio';
+import type { PortfolioAccount, PortfolioOverview } from '@/types/portfolio';
 import { Eye, EyeOff, Plus, RefreshCw, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -40,8 +40,8 @@ function EmptyState() {
 }
 
 export function PortfolioTab() {
-  // Overview comes from the shared PortfolioProvider (one fetch for nav + tab).
-  const { overview, loading, refresh } = usePortfolio();
+  const [overview, setOverview] = useState<PortfolioOverview | null>(null);
+  const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string>(COMBINED_ID);
   const [masked, setMasked] = useState<boolean>(() => localStorage.getItem(MASK_KEY) === '1');
 
@@ -53,7 +53,17 @@ export function PortfolioTab() {
     });
   }, []);
 
-  const load = refresh;
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setOverview(await portfolioApi.getOverview());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setOverview(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Open the SnapTrade connection portal to add another brokerage (any supported
   // institution, not just Fidelity), then refresh once they finish.
@@ -66,6 +76,10 @@ export function PortfolioTab() {
       toast.error(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   // Choose a sensible default account once data arrives: combined if it exists,
   // else the first account. Only reset when the current selection is invalid.
