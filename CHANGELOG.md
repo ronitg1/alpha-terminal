@@ -4,6 +4,36 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.4] — 2026-07-01
+
+### Changed
+- **README rewritten for the current app.** Version/tests badges (1.14 / 434), the
+  Market dashboard (S&P 500 treemap heatmap, catalyst calendar, news + AI
+  thesis-impact), Portfolio via SnapTrade (Summary / Positions / Thesis with the
+  valuation football field + 13F ownership tracker), Paper Trading (replaces the
+  old "P&L tab with Fidelity CSV import"), universal search, the AI assistant, and
+  the local-first vs cloud-profile story. "Signals only — no execution" framing kept.
+- **Onboarding screenshots recaptured for every slide.** The capture pipeline
+  (`app/frontend/scripts/capture-onboarding.mjs`) was rebuilt: it now captures the
+  Market *dashboard*, clicks `Paper Trading` (the old `P&L` click silently no-oped),
+  produces the slide files the walkthrough actually references (`07-portfolio.png`
+  with the 13F panel, `07b-paper-trading.png`, `08-settings.png`), serves a demo
+  book for `/portfolio/overview` (no brokerage on the capture machine), and waits
+  out every loading placeholder before shooting.
+
+### Added
+- `VITE_CAPTURE_MODE=1` (set by `.env.capture.local` under `--mode capture`)
+  renders the auth-only Help/Settings buttons without Clerk so the settings slide
+  can be captured against an auth-off dev server.
+
+## [1.14.3] — 2026-07-01
+
+### Changed
+- Onboarding walkthrough copy refreshed for the current app: the Market dashboard
+  slide (heatmap, macro, catalyst calendar, news thesis-impact), the sidebar
+  universal search, and the Portfolio slide (SnapTrade, thesis valuation, 13F).
+  *(Entry added retroactively — the commit shipped without one.)*
+
 ## [1.14.2] — 2026-07-01
 
 ### Changed
