@@ -35,23 +35,31 @@ export function PositionsTable({ positions, masked = false }: { positions: reado
   if (positions.length === 0) {
     return <p className="p-4 text-sm italic text-muted-foreground">No positions in this account.</p>;
   }
-  const stocks = positions.filter((p) => p.kind !== 'option');
   const options = positions.filter((p) => p.kind === 'option');
+  const etfs = positions.filter((p) => p.kind !== 'option' && ETF_BUCKETS.has(p.sector || ''));
+  const stocks = positions.filter((p) => p.kind !== 'option' && !ETF_BUCKETS.has(p.sector || ''));
 
   return (
     <div className="space-y-4">
-      {stocks.length > 0 && <PositionsGroup title="Stocks & ETFs" positions={stocks} masked={masked} />}
+      {stocks.length > 0 && <PositionsGroup title="Stocks" positions={stocks} masked={masked} />}
+      {etfs.length > 0 && <PositionsGroup title="ETFs & Funds" positions={etfs} masked={masked} />}
       {options.length > 0 && <PositionsGroup title="Options" positions={options} masked={masked} />}
     </div>
   );
 }
 
+const ETF_BUCKETS = new Set(['Market Index', 'Funds & ETFs', 'Cash']);
+
 function PositionsGroup({ title, positions, masked }: { title: string; positions: readonly PortfolioPosition[]; masked: boolean }) {
+  const subtotalValue = positions.reduce((s, p) => s + (p.current_value ?? 0), 0);
+  const subtotalGain = positions.reduce((s, p) => s + (p.total_gain ?? 0), 0);
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
         <span className="text-[11px] text-muted-foreground">({positions.length})</span>
+        <span className="ml-auto text-[11px] font-semibold tabular-nums">{maskMoney(subtotalValue, masked)}</span>
+        <span className={cn('text-[11px] tabular-nums', toneClass(subtotalGain))}>{maskSigned(subtotalGain, masked)}</span>
       </div>
       {/* Mobile / iOS: stacked cards */}
       <div className="space-y-2 md:hidden">

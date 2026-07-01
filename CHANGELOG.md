@@ -4,6 +4,26 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.4] — 2026-07-01
+
+### Added
+- **Options now show Today $ / Today %.** Computed from Polygon option-contract bars
+  (close-to-close, so it reflects the closing price when the market is shut) —
+  the underlying's quote can't price an option. Best-effort + cached; kept out of
+  the "top movers" card so leveraged option swings don't dominate.
+
+### Changed
+- **Allocation groups are collapsible** — click a sector/Cash/Market Index row to
+  expand every holding you own in it, with its $ amount and % of the portfolio.
+- **Positions split into Stocks / ETFs & Funds / Options**, each with a **subtotal**
+  (value + total gain).
+
+### Fixed
+- **Option average cost auto-detects per-contract vs per-share.** Brokers disagree
+  (Fidelity reports per contract, Robinhood per share); the magnitude vs the
+  per-share price now decides, so cost basis and gain are right for both instead of
+  being 100× off or showing $0.
+
 ## [1.10.3] — 2026-07-01
 
 ### Changed

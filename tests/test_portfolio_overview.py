@@ -51,6 +51,9 @@ def only_snaptrade(monkeypatch):
         return {"NVDA": {"last": 205.0, "prev_close": 200.0, "pct_change": 2.5, "name": "NVIDIA"}}
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
+    # Keep tests hermetic: no Finnhub sector calls, no Polygon option-bar calls.
+    monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
+    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
     yield
 
 
@@ -123,6 +126,8 @@ def test_combined_merges_symbols_across_accounts(monkeypatch):
         return {"NVDA": {"last": 205.0, "prev_close": 200.0, "pct_change": 2.5, "name": "NVIDIA"}}
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
+    monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
+    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
 
     result = anyio.run(ov.build_overview)
     assert len(result["accounts"]) == 2
@@ -150,6 +155,8 @@ def test_robinhood_positions_parsed(monkeypatch):
         return {"AAPL": {"last": 110.0, "prev_close": 100.0, "pct_change": 10.0, "name": "Apple"}}
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
+    monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
+    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
 
     result = anyio.run(ov.build_overview)
     assert result["connected"] is True

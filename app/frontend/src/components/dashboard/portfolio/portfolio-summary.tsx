@@ -6,6 +6,8 @@
  */
 import type { PortfolioAccount, PortfolioPosition } from '@/types/portfolio';
 import { cn } from '@/lib/utils';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
 import { maskMoney, maskSigned, pct, toneClass } from './format';
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -76,8 +78,15 @@ function buildGroups(account: PortfolioAccount): { groups: AllocGroup[]; total: 
 
 function Allocation({ account, masked }: { account: PortfolioAccount; masked: boolean }) {
   const { groups, total } = buildGroups(account);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (total <= 0) return null;
   const pctOf = (v: number) => (v / total) * 100;
+  const toggle = (label: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(label) ? next.delete(label) : next.add(label);
+      return next;
+    });
 
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
@@ -87,27 +96,41 @@ function Allocation({ account, masked }: { account: PortfolioAccount; masked: bo
           <div key={g.label} className={ALLOC_COLORS[i % ALLOC_COLORS.length]} style={{ width: `${pctOf(g.value)}%` }} title={`${g.label} ${pct(pctOf(g.value), false)}`} />
         ))}
       </div>
-      <div className="mt-3 space-y-2">
-        {groups.map((g, i) => (
-          <div key={g.label}>
-            <div className="flex items-center gap-2 text-xs font-medium">
-              <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', ALLOC_COLORS[i % ALLOC_COLORS.length])} />
-              <span>{g.label}</span>
-              <span className="ml-auto tabular-nums text-muted-foreground">{maskMoney(g.value, masked)}</span>
-              <span className="w-12 text-right tabular-nums">{pct(pctOf(g.value), false)}</span>
+      <div className="mt-3 space-y-1">
+        {groups.map((g, i) => {
+          const isOpen = expanded.has(g.label);
+          const canExpand = g.names.length > 0;
+          return (
+            <div key={g.label}>
+              <button
+                type="button"
+                onClick={() => canExpand && toggle(g.label)}
+                className={cn('flex w-full items-center gap-2 rounded px-1 py-1 text-xs font-medium', canExpand && 'hover:bg-muted/40')}
+              >
+                {canExpand ? (
+                  isOpen ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                ) : (
+                  <span className="w-3" />
+                )}
+                <span className={cn('h-2.5 w-2.5 shrink-0 rounded-sm', ALLOC_COLORS[i % ALLOC_COLORS.length])} />
+                <span>{g.label}</span>
+                <span className="ml-auto tabular-nums text-muted-foreground">{maskMoney(g.value, masked)}</span>
+                <span className="w-12 text-right tabular-nums">{pct(pctOf(g.value), false)}</span>
+              </button>
+              {isOpen && (
+                <div className="mb-1 space-y-0.5 pl-[26px]">
+                  {g.names.map((n) => (
+                    <div key={n.symbol} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="font-mono">{n.symbol}</span>
+                      <span className="ml-auto tabular-nums">{maskMoney(n.value, masked)}</span>
+                      <span className="w-12 text-right tabular-nums">{pct(pctOf(n.value), false)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            {g.names.slice(0, 3).map((n) => (
-              <div key={n.symbol} className="flex items-center gap-2 pl-[18px] text-[11px] text-muted-foreground">
-                <span className="font-mono">{n.symbol}</span>
-                <span className="ml-auto tabular-nums">{maskMoney(n.value, masked)}</span>
-                <span className="w-12 text-right tabular-nums">{pct(pctOf(n.value), false)}</span>
-              </div>
-            ))}
-            {g.names.length > 3 && (
-              <div className="pl-[18px] text-[10px] text-muted-foreground/70">+{g.names.length - 3} more</div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -126,7 +149,7 @@ function MoverRow({ p, masked }: { p: PortfolioPosition; masked: boolean }) {
 
 function Movers({ account, masked }: { account: PortfolioAccount; masked: boolean }) {
   const ranked = account.positions
-    .filter((p) => p.day_change_pct !== null)
+    .filter((p) => p.kind === 'stock' && p.day_change_pct !== null)
     .sort((a, b) => (b.day_change_pct ?? 0) - (a.day_change_pct ?? 0));
   const gainers = ranked.filter((p) => (p.day_change_pct ?? 0) > 0).slice(0, 5);
   const losers = ranked.filter((p) => (p.day_change_pct ?? 0) < 0).slice(-5).reverse();

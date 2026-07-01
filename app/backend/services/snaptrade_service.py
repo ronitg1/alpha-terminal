@@ -139,13 +139,17 @@ def normalize_option_position(position: dict[str, Any]) -> dict[str, Any]:
         option_symbol = position.get("option_symbol") if isinstance(position.get("option_symbol"), dict) else {}
     units = _as_float(position.get("units"))
     price = _as_float(position.get("price"))
-    # SnapTrade quirk: for options it returns the LAST PRICE per share but the
-    # AVERAGE COST per CONTRACT (total premium, already ×100). Convert avg cost to
-    # per-share so both are per-share and cost basis uses the same ×100 as value —
-    # otherwise cost basis is inflated 100× (a $17 option showed a $325k basis).
-    avg_cost_per_contract = _as_float(position.get("average_purchase_price"))
-    avg_cost = (avg_cost_per_contract / 100) if avg_cost_per_contract is not None else None
-    # option contracts are 100 shares; SnapTrade's last price is per share.
+    # Brokers disagree on the unit for an option's average cost: some report it PER
+    # CONTRACT (total premium, ~100× the per-share last price — Fidelity), others PER
+    # SHARE (Robinhood). Detect by magnitude vs the per-share price and normalize to
+    # per-share, so cost basis is right for both. Without this, per-contract cost was
+    # inflated 100× ($17 option → $325k basis) and per-share brokers showed $0 gain.
+    avg_cost_raw = _as_float(position.get("average_purchase_price"))
+    if avg_cost_raw is not None and price and avg_cost_raw > price * 20:
+        avg_cost = avg_cost_raw / 100  # per-contract → per-share
+    else:
+        avg_cost = avg_cost_raw
+    # option contracts are 100 shares; the last price is per share.
     market_value = (units * price * 100) if (units is not None and price is not None) else None
     cost_basis = (units * avg_cost * 100) if (units is not None and avg_cost is not None) else None
     return {

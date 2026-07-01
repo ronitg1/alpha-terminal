@@ -18,7 +18,9 @@ so the frontend column exists but fills in when M3 lands.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
+import time
 from typing import Any
 
 from app.backend.services import snaptrade_connection_service, snaptrade_service
@@ -190,6 +192,82 @@ def _combine(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+# OCC contract symbol -> (fetched_at_monotonic, (last_close, prev_close) | None).
+_OPTION_CHANGE_TTL = 300.0
+_option_change_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
+
+
+def _occ_ticker(underlying: str | None, expiration: str | None, option_type: str | None, strike: Any) -> str | None:
+    """Polygon option contract symbol, e.g. ``O:MSFT261218C00440000``. None if any
+    field is missing/unparseable."""
+    if not (underlying and expiration and option_type and strike is not None):
+        return None
+    try:
+        exp = str(expiration).replace("-", "")[2:]  # YYMMDD
+        cp = "C" if str(option_type).upper().startswith("C") else "P"
+        strike_millis = int(round(float(strike) * 1000))
+    except (ValueError, TypeError):
+        return None
+    return f"O:{underlying.upper()}{exp}{cp}{strike_millis:08d}"
+
+
+def _fetch_option_closes(occ: str) -> tuple[float, float] | None:
+    """(last_close, prev_close) daily closes for one option contract, or None. Daily
+    bars mean the change is close-to-close (and reflects the closing price when the
+    market is shut), as requested."""
+    from src.tools.massive.client import MassiveClient
+
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=10)).isoformat()
+    try:
+        data = MassiveClient(timeout=6).get_option_aggregates(occ, start, today.isoformat())
+    except Exception as exc:  # noqa: BLE001 — best-effort; option may be illiquid/unlisted
+        logger.debug("Option aggregates failed for %s: %s", occ, type(exc).__name__)
+        return None
+    results = data.get("results") if isinstance(data, dict) else None
+    closes = [float(r["c"]) for r in results or [] if isinstance(r, dict) and r.get("c") is not None]
+    if len(closes) < 2:
+        return None
+    return closes[-1], closes[-2]
+
+
+async def _annotate_option_day_change(accounts: list[dict[str, Any]]) -> None:
+    """Fill today's $/% change for option positions from Polygon option bars — the
+    underlying's quote can't price an option, so this is the only source. Cached
+    with a short TTL; best-effort per contract."""
+    wanted: dict[str, str] = {}  # occ -> occ (dedupe)
+    for acct in accounts:
+        for p in acct["positions"]:
+            if p.get("kind") != "option":
+                continue
+            occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
+            if occ:
+                wanted[occ] = occ
+
+    async def _one(occ: str) -> tuple[str, tuple[float, float] | None]:
+        cached = _option_change_cache.get(occ)
+        if cached and (time.monotonic() - cached[0]) < _OPTION_CHANGE_TTL:
+            return occ, cached[1]
+        res = await asyncio.to_thread(_fetch_option_closes, occ)
+        _option_change_cache[occ] = (time.monotonic(), res)
+        return occ, res
+
+    resolved = dict(await asyncio.gather(*[_one(o) for o in wanted])) if wanted else {}
+    for acct in accounts:
+        for p in acct["positions"]:
+            if p.get("kind") != "option":
+                continue
+            occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
+            closes = resolved.get(occ) if occ else None
+            units = p.get("quantity")
+            if not closes or units is None:
+                continue
+            last, prev = closes
+            if prev:
+                p["day_change"] = _round((last - prev) * units * 100)
+                p["day_change_pct"] = _round((last - prev) / prev * 100)
+
+
 async def _snaptrade_accounts() -> list[dict[str, Any]]:
     """SnapTrade accounts as raw (pre-enrichment) position bundles, or [] when not
     connected. Errors are logged and swallowed so the other source still loads."""
@@ -331,12 +409,15 @@ async def build_overview() -> dict[str, Any]:
             )
         )
 
-    # Best-effort: never let sector lookups (Finnhub) hang the portfolio response.
-    # Anything unresolved stays None and the frontend shows it as "Other".
+    # Best-effort enrichment: never let these external lookups hang the response.
     try:
         await asyncio.wait_for(_annotate_sectors(accounts), timeout=8.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Sector annotation skipped: %s", type(exc).__name__)
+    try:
+        await asyncio.wait_for(_annotate_option_day_change(accounts), timeout=8.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Option day-change annotation skipped: %s", type(exc).__name__)
 
     combined = _combine(accounts) if len(accounts) > 1 else None
     return {"connected": True, "sources": sources, "accounts": accounts, "combined": combined}

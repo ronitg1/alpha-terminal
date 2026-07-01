@@ -63,6 +63,20 @@ def test_normalize_option_position_collapses_and_scales_by_contract():
     assert out["cost_basis"] == pytest.approx(2 * 3.0 * 100)
 
 
+def test_normalize_option_per_share_avg_cost_not_divided():
+    # A broker that reports avg cost PER SHARE (~ the price magnitude) must NOT be
+    # divided by 100 — the heuristic keeps it as-is.
+    pos = {
+        "symbol": {"option_symbol": {"underlying_symbol": {"symbol": "SPCM"}, "option_type": "call"}},
+        "units": 1,
+        "price": 5.0,
+        "average_purchase_price": 4.1,  # per share, close to price -> keep
+    }
+    out = svc.normalize_option_position(pos)
+    assert out["avg_cost"] == pytest.approx(4.1)
+    assert out["cost_basis"] == pytest.approx(1 * 4.1 * 100)  # 410, gain = 500 - 410
+
+
 def test_connect_url_registers_once_then_reuses(monkeypatch):
     registered: list[str] = []
     saved: list[tuple[str, str]] = []
