@@ -24,6 +24,15 @@ export interface SymbolMatch {
   readonly type: string;
 }
 
+export interface HeatmapTile {
+  readonly ticker: string;
+  readonly name: string;
+  readonly sector: string;
+  readonly market_cap: number | null; // $ millions
+  readonly pct_change: number | null;
+  readonly spark: readonly number[];
+}
+
 export interface Catalyst {
   readonly date: string;
   readonly category: 'earnings' | 'fed' | 'inflation' | 'jobs' | 'tax_policy' | 'energy_policy' | string;
@@ -50,4 +59,8 @@ export const marketApi = {
     req<{ catalysts: Catalyst[]; as_of: string }>(
       `/catalysts?tickers=${encodeURIComponent(tickers.join(','))}&days=${days}`,
     ),
+  getHeatmap: (tickers: readonly string[]) =>
+    // Long timeout: the first (cold-cache) build does per-name Finnhub profile
+    // lookups; once warmed (6h cache) it returns in a few seconds.
+    req<{ tiles: HeatmapTile[] }>(`/heatmap?tickers=${encodeURIComponent(tickers.join(','))}`, 45_000),
 };

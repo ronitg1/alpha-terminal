@@ -108,6 +108,84 @@ async def get_catalysts(tickers: str = "", days: int = 60) -> dict[str, Any]:
     events.sort(key=lambda e: (e.get("date") or "9999", e.get("category")))
     return {"catalysts": events, "as_of": today_iso}
 
+
+# ─── Sector heatmap ──────────────────────────────────────────────────────────
+# Per-ticker sector + market cap from Finnhub's company profile, cached long (both
+# change slowly), so the heatmap only pays the slow lookup once per name per window.
+_profile_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_PROFILE_TTL = 6 * 3600.0
+
+
+def _fetch_profile(sym: str) -> dict[str, Any]:
+    from src.tools.finnhub.client import FinnhubClient, is_finnhub_configured
+
+    if not is_finnhub_configured():
+        return {"sector": None, "market_cap": None}
+    try:
+        p = FinnhubClient().company_profile(sym)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Profile fetch (%s) failed: %s", sym, type(exc).__name__)
+        return {"sector": None, "market_cap": None}
+    try:
+        mc = float(p.get("marketCapitalization"))  # Finnhub reports in $millions
+    except (TypeError, ValueError):
+        mc = None
+    return {"sector": (p.get("finnhubIndustry") or "").strip() or None, "market_cap": mc}
+
+
+def _profile(sym: str) -> dict[str, Any]:
+    hit = _profile_cache.get(sym)
+    if hit is not None and (time.monotonic() - hit[0]) < _PROFILE_TTL:
+        return hit[1]
+    out = _fetch_profile(sym)
+    if out.get("market_cap"):  # cache only successful lookups
+        _profile_cache[sym] = (time.monotonic(), out)
+    return out
+
+
+@router.get("/heatmap")
+async def get_heatmap(tickers: str = "") -> dict[str, Any]:
+    """Sector heatmap tiles for the given tickers: sector + market cap (Finnhub,
+    cached) + today's quote (for the performance colour + week/month sparkline).
+    The frontend sizes tiles by market cap and colours by performance."""
+    from app.backend.routes.sleeves import get_quotes
+
+    # Cap tight: each name needs a (slow, rate-limited) Finnhub profile lookup on a
+    # cold cache, and the biggest ~24 names dominate a market-cap-weighted treemap
+    # anyway. Profiles are cached 6h, so this cost is paid once per window.
+    syms = [t.strip().upper() for t in tickers.split(",") if t.strip()][:24]
+    if not syms:
+        return {"tiles": []}
+
+    try:
+        payload = await get_quotes(tickers=",".join(syms))
+        quotes = payload.get("quotes", {}) if isinstance(payload, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Heatmap quotes failed: %s", type(exc).__name__)
+        quotes = {}
+
+    def _profiles() -> dict[str, dict[str, Any]]:
+        return {s: _profile(s) for s in syms}
+
+    try:
+        profs = await asyncio.wait_for(asyncio.to_thread(_profiles), timeout=22.0)
+    except Exception:  # noqa: BLE001 — first cold load may exceed budget; use what's cached
+        profs = {s: (_profile_cache.get(s, (0.0, {}))[1]) for s in syms}
+
+    tiles = []
+    for s in syms:
+        q = quotes.get(s) or {}
+        pf = profs.get(s) or {}
+        tiles.append({
+            "ticker": s,
+            "name": q.get("name") or "",
+            "sector": pf.get("sector") or "Other",
+            "market_cap": pf.get("market_cap"),
+            "pct_change": q.get("pct_change"),
+            "spark": q.get("spark") or [],
+        })
+    return {"tiles": tiles}
+
 # (display label, ETF proxy ticker). Equity/bond indices priced off liquid ETF
 # proxies — they track the index and need no index-data entitlement, and their
 # share price sits in a sane range (SPY≈index/10, USO≈WTI), so the number reads

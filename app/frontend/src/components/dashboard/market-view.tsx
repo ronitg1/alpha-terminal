@@ -15,6 +15,7 @@ import { LineVolumeChart } from '@/components/sleeves/line-volume-chart';
 import { MiniSpark } from '@/components/sleeves/mini-spark';
 import { MarketCards } from '@/components/dashboard/portfolio/market-cards';
 import { CatalystCalendar } from '@/components/dashboard/market/catalyst-calendar';
+import { SectorHeatmap } from '@/components/dashboard/market/sector-heatmap';
 import { sleevesApi } from '@/services/sleeves-api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -873,6 +874,9 @@ function MarketDashboard() {
           )}
           <p className="text-[10px] text-muted-foreground">Tap any ticker for full research — chart, fundamentals, and news.</p>
         </div>
+
+        {/* Sector heatmap — watchlist tiled by sector, size = mkt cap, colour = perf */}
+        <SectorHeatmap tickers={tickers} onTicker={setSelectedTicker} />
 
         {/* Catalyst calendar — earnings + macro/policy events for these names */}
         <CatalystCalendar tickers={tickers} onTicker={setSelectedTicker} />

@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.7] — 2026-07-01
+
+### Added
+- **Sector heatmap on the Market summary.** The selected watchlist tiled by sector,
+  tile size ≈ market cap, tile colour = performance (red→green), with a Today/Week/
+  Month toggle. At-a-glance sector rotation and where the day's action is; tap a
+  tile to open that name's research. Backend `GET /market/heatmap` (sector + market
+  cap from Finnhub, cached 6h; capped to the top ~24 names, which dominate a
+  cap-weighted treemap).
+
+### Changed
+- **Catalyst calendar has a Week / Month toggle.** Month shows the full grid; Week
+  shows a single 7-day row with the week range, same day markers and tap-to-detail.
+
 ## [1.12.6] — 2026-07-01
 
 ### Changed
