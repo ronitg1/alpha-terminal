@@ -6,7 +6,7 @@
  */
 import type { PortfolioAccount, PortfolioPosition } from '@/types/portfolio';
 import { cn } from '@/lib/utils';
-import { AlertTriangle, ChevronDown, ChevronRight, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 import { maskMoney, maskSigned, pct, toneClass } from './format';
 import { MarketCards } from './market-cards';
@@ -146,96 +146,6 @@ function Allocation({ account, masked }: { account: PortfolioAccount; masked: bo
   );
 }
 
-// ─── Concentration / risk flags ──────────────────────────────────────────────
-// Single-name and sector concentration matter more for risk than the allocation
-// breakdown alone: one 15%+ position, or half the book in two sectors, is the
-// thing to surface. Cash/Market-Index buckets are excluded from the risk view.
-
-interface Flag { level: 'warn' | 'info'; text: string }
-
-function Concentration({ account }: { account: PortfolioAccount }) {
-  const { groups, total } = buildGroups(account);
-  if (total <= 0) return null;
-
-  const positions = groups
-    .filter((g) => g.label !== 'Cash')
-    .flatMap((g) => g.names.map((n) => ({ symbol: n.symbol, pct: (n.value / total) * 100 })))
-    .filter((p) => p.symbol)
-    .sort((a, b) => b.pct - a.pct);
-
-  const sectors = groups
-    .filter((g) => g.label !== 'Cash' && g.label !== 'Market Index')
-    .map((g) => ({ label: g.label, pct: (g.value / total) * 100 }))
-    .sort((a, b) => b.pct - a.pct);
-
-  const top5 = positions.slice(0, 5).reduce((s, p) => s + p.pct, 0);
-  const top2Sectors = sectors.slice(0, 2);
-  const top2Sum = top2Sectors.reduce((s, x) => s + x.pct, 0);
-
-  const flags: Flag[] = [];
-  for (const p of positions.filter((p) => p.pct >= 15)) {
-    flags.push({ level: 'warn', text: `${p.symbol} is ${p.pct.toFixed(1)}% of the book — single-name concentration` });
-  }
-  if (top2Sum >= 45 && top2Sectors.length === 2) {
-    flags.push({
-      level: 'warn',
-      text: `${top2Sectors.map((s) => `${s.label} ${s.pct.toFixed(1)}%`).join(' + ')} = ${top2Sum.toFixed(0)}% in two sectors — consider diversifying`,
-    });
-  } else if (sectors[0]?.pct >= 35) {
-    flags.push({ level: 'warn', text: `${sectors[0].label} is ${sectors[0].pct.toFixed(1)}% of the book` });
-  }
-  if (top5 >= 60) {
-    flags.push({ level: 'info', text: `Top 5 positions are ${top5.toFixed(0)}% of the book` });
-  }
-
-  return (
-    <div className="rounded-lg border border-border/60 bg-card p-4">
-      <div className="mb-3 flex items-center gap-2">
-        {flags.some((f) => f.level === 'warn') ? (
-          <AlertTriangle className="h-4 w-4 text-amber-500" />
-        ) : (
-          <ShieldCheck className="h-4 w-4 text-emerald-500" />
-        )}
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Concentration &amp; risk</span>
-        <span className="ml-auto text-[11px] text-muted-foreground">
-          Top 5: <span className="font-medium text-foreground tabular-nums">{top5.toFixed(0)}%</span>
-        </span>
-      </div>
-
-      {flags.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          No single name above 15% and no sector above 35% — reasonably diversified.
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {flags.map((f, i) => (
-            <div key={i} className="flex items-start gap-2 text-xs">
-              <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', f.level === 'warn' ? 'bg-amber-500' : 'bg-sky-500')} />
-              <span className={f.level === 'warn' ? 'text-foreground' : 'text-muted-foreground'}>{f.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Largest positions bar */}
-      {positions.length > 0 && (
-        <div className="mt-3 space-y-1">
-          <div className="text-[10px] font-medium uppercase text-muted-foreground">Largest positions</div>
-          {positions.slice(0, 5).map((p) => (
-            <div key={p.symbol} className="flex items-center gap-2">
-              <span className="w-14 shrink-0 font-mono text-[11px] font-semibold">{p.symbol}</span>
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                <div className={cn('h-full rounded-full', p.pct >= 15 ? 'bg-amber-500' : 'bg-primary/60')} style={{ width: `${Math.min(100, p.pct)}%` }} />
-              </div>
-              <span className="w-10 text-right text-[11px] tabular-nums text-muted-foreground">{p.pct.toFixed(1)}%</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function MoverRow({ p, masked }: { p: PortfolioPosition; masked: boolean }) {
   return (
     <div className="flex items-center gap-2 text-xs">
@@ -281,9 +191,8 @@ export function PortfolioSummary({ account, masked = false }: { account: Portfol
       <Totals account={account} masked={masked} />
       <div className="grid gap-3 lg:grid-cols-2">
         <Allocation account={account} masked={masked} />
-        <Concentration account={account} />
+        <Movers account={account} masked={masked} />
       </div>
-      <Movers account={account} masked={masked} />
       <div className="grid gap-3 lg:grid-cols-2">
         <PortfolioEvents account={account} />
         <NewsCard account={account} />
