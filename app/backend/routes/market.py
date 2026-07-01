@@ -77,11 +77,25 @@ def _fetch_movers(direction: str) -> list[dict[str, Any]]:
         if not isinstance(r, dict):
             continue
         day = r.get("day") if isinstance(r.get("day"), dict) else {}
+        prev = r.get("prevDay") if isinstance(r.get("prevDay"), dict) else {}
+        last_trade = r.get("lastTrade") if isinstance(r.get("lastTrade"), dict) else {}
+        # Prefer today's close; fall back to the last trade (pre/post-market) or prev close.
+        last = day.get("c") or day.get("close") or last_trade.get("p") or prev.get("c")
+        prev_c = prev.get("c")
+        change = r.get("todaysChange")
+        change_pct = r.get("todaysChangePerc")
+        # Polygon reports todaysChange(Perc) as 0/None when the market is closed or
+        # pre-market (no session yet). Derive the move from the previous close so the
+        # card never shows a flat 0% for every name.
+        if (not change_pct) and last and prev_c:
+            change = round(last - prev_c, 2)
+            change_pct = round((last - prev_c) / prev_c * 100, 2)
         out.append({
             "ticker": r.get("ticker"),
-            "change": r.get("todaysChange"),
-            "change_pct": r.get("todaysChangePerc"),
-            "price": day.get("c") or day.get("close"),
+            "name": "",
+            "change": change,
+            "change_pct": change_pct,
+            "price": last,
         })
     return out[:_MAX_MOVERS]
 
@@ -97,4 +111,21 @@ async def get_movers() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Movers failed: %s", type(exc).__name__)
         gainers, losers = [], []
+
+    # Enrich with company names via the cached quote machinery (same source the
+    # left nav uses). Best-effort — a missing name just leaves the ticker alone.
+    tickers = [m["ticker"] for m in (*gainers, *losers) if m.get("ticker")]
+    if tickers:
+        from app.backend.routes.sleeves import get_quotes
+
+        try:
+            payload = await get_quotes(tickers=",".join(sorted(set(tickers))))
+            quotes = payload.get("quotes", {}) if isinstance(payload, dict) else {}
+            for m in (*gainers, *losers):
+                nm = (quotes.get(m["ticker"]) or {}).get("name")
+                if nm:
+                    m["name"] = nm
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Mover name enrichment failed: %s", type(exc).__name__)
+
     return {"gainers": gainers, "losers": losers}

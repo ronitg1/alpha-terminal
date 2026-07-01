@@ -118,12 +118,23 @@ export function PortfolioEvents({ account }: { account: PortfolioAccount }) {
     return () => { alive = false; };
   }, [tickers]);
 
-  if (flags.length === 0 && earnings.length === 0) return null;
+  // Render whenever there are stock holdings so the earnings calendar is always
+  // reachable — even on a day with no flags and no imminent earnings.
+  if (tickers.length === 0) return null;
   const upcoming = earnings.slice(0, 5);
 
   return (
     <div className="rounded-lg border border-border/60 bg-card p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Portfolio events</div>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Portfolio events</span>
+        <button
+          type="button"
+          onClick={() => setShowCal(true)}
+          className="ml-auto flex items-center gap-1 text-[11px] text-primary hover:underline"
+        >
+          <CalendarDays className="h-3.5 w-3.5" /> Earnings calendar
+        </button>
+      </div>
 
       {flags.length > 0 && (
         <div className="mt-3 space-y-1">
@@ -137,22 +148,23 @@ export function PortfolioEvents({ account }: { account: PortfolioAccount }) {
         </div>
       )}
 
-      {upcoming.length > 0 && (
-        <div className="mt-3">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-[11px] font-medium text-muted-foreground">Upcoming earnings</span>
-            <button type="button" onClick={() => setShowCal(true)} className="ml-auto text-[11px] text-primary hover:underline">
-              Full calendar →
-            </button>
-          </div>
-          {upcoming.map((e, i) => (
+      <div className="mt-3">
+        <div className="mb-1 text-[11px] font-medium text-muted-foreground">Upcoming earnings</div>
+        {upcoming.length > 0 ? (
+          upcoming.map((e, i) => (
             <div key={`${e.ticker}-${i}`} className="flex items-center gap-2 py-0.5 text-xs">
               <span className="font-mono font-medium">{e.ticker}</span>
-              <span className="ml-auto text-muted-foreground">{fmtDate(e.date)}{e.hour && ` · ${HOUR_LABEL[e.hour] ?? e.hour}`}</span>
+              <span className="ml-auto text-muted-foreground">
+                {fmtDate(e.date) || 'date TBD'}{e.hour && ` · ${HOUR_LABEL[e.hour] ?? e.hour}`}
+              </span>
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        ) : (
+          <p className="text-xs italic text-muted-foreground">
+            No earnings for your holdings in the next 45 days.
+          </p>
+        )}
+      </div>
 
       {showCal && <EarningsModal events={earnings} onClose={() => setShowCal(false)} />}
     </div>

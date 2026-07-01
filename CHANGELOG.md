@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.12] — 2026-07-01
+
+### Fixed
+- **Market movers no longer show 0% for every name.** Polygon reports
+  `todaysChange`/`todaysChangePerc` as 0 when the market is closed or pre-market;
+  the movers card now derives the move from the previous close in that case.
+- **Market movers show the company name** under each ticker, resolved via the same
+  cached quote machinery the left nav uses (best-effort).
+- **Portfolio events: earnings calendar is always reachable.** The "Earnings
+  calendar" button moved to the card header and no longer hides when there are no
+  imminent earnings; the card renders whenever you hold stocks, and the upcoming
+  list shows an explicit "no earnings in the next 45 days" line with dates on each
+  event.
+
 ## [1.11.11] — 2026-07-01
 
 ### Fixed

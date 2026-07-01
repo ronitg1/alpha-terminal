@@ -12,6 +12,7 @@ export interface IndexQuote {
 
 export interface Mover {
   readonly ticker: string;
+  readonly name?: string;
   readonly change: number | null;
   readonly change_pct: number | null;
   readonly price: number | null;

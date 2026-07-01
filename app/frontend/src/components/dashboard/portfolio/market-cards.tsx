@@ -40,8 +40,13 @@ function MoverList({ title, rows, tone }: { title: string; rows: readonly Mover[
       ) : (
         rows.map((m) => (
           <div key={m.ticker} className="flex items-center gap-2 text-xs">
-            <span className="font-mono font-medium">{m.ticker}</span>
-            <span className={cn('ml-auto w-16 text-right tabular-nums', toneClass(m.change_pct))}>{pct(m.change_pct)}</span>
+            <div className="flex min-w-0 flex-col">
+              <span className="font-mono font-medium leading-tight">{m.ticker}</span>
+              {m.name && (
+                <span className="truncate text-[10px] leading-tight text-muted-foreground">{m.name}</span>
+              )}
+            </div>
+            <span className={cn('ml-auto w-16 shrink-0 text-right tabular-nums', toneClass(m.change_pct))}>{pct(m.change_pct)}</span>
           </div>
         ))
       )}
