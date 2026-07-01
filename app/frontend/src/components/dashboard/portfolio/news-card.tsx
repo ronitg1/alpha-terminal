@@ -8,7 +8,7 @@ import { newsApi } from '@/services/news-api';
 import { cn } from '@/lib/utils';
 import type { NewsArticle } from '@/types/sleeves';
 import type { PortfolioAccount } from '@/types/portfolio';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 function timeAgo(unixSeconds: number): string {
   const s = Math.max(0, Date.now() / 1000 - unixSeconds);
@@ -45,14 +45,15 @@ export function NewsCard({ account }: { account: PortfolioAccount }) {
   const [tab, setTab] = useState<'holdings' | 'market'>('holdings');
   const [loading, setLoading] = useState(true);
 
-  const tickers = useMemo(
-    () => Array.from(new Set(account.positions.map((p) => p.underlying).filter(Boolean))).slice(0, 20) as string[],
-    [account],
-  );
+  // Key the fetch on a STABLE string, not the `account` object — otherwise an
+  // unrelated re-render (e.g. the mask toggle) gives `account` a new identity and
+  // refetches news for no reason.
+  const tickerKey = Array.from(new Set(account.positions.map((p) => p.underlying).filter(Boolean))).slice(0, 20).join(',');
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    const tickers = tickerKey ? tickerKey.split(',') : [];
     newsApi
       .getFeed(tickers)
       .then((feed) => {
@@ -63,7 +64,7 @@ export function NewsCard({ account }: { account: PortfolioAccount }) {
       .catch(() => {})
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [tickers]);
+  }, [tickerKey]);
 
   // Default to whichever tab has content (holdings news is often sparser).
   useEffect(() => {

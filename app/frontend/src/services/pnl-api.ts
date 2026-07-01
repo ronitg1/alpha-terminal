@@ -2,7 +2,6 @@
 
 import { API_BASE_URL } from '@/lib/api-base';
 import type {
-  PnlMark,
   PnlPosition,
   PnlSummary,
   PositionCreatePayload,
@@ -45,16 +44,11 @@ export const pnlApi = {
   createPosition: (payload: PositionCreatePayload) =>
     _req<PnlPosition>('/positions', _json('POST', payload)),
 
-  patchPosition: (id: string, fields: Partial<PnlPosition>) =>
-    _req<PnlPosition>(`/positions/${id}`, _json('PATCH', fields)),
-
   closePosition: (id: string, exitPrice: number, exitDate?: string) =>
     _req<PnlPosition>(`/positions/${id}/close`, _json('POST', { exit_price: exitPrice, exit_date: exitDate ?? null })),
 
   deletePosition: (id: string) =>
     _req<{ deleted: string }>(`/positions/${id}`, { method: 'DELETE' }),
-
-  getMarks: () => _req<{ marks: Record<string, PnlMark>; asof: string }>('/marks'),
 
   getAccount: () => _req<PaperAccount>('/account'),
 

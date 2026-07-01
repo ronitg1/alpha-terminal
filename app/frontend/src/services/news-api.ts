@@ -9,7 +9,7 @@ import { ArticleSummary, NewsArticle, NewsFeed, TranscriptAnalysis } from '@/typ
 import { API_BASE_URL } from '@/lib/api-base';
 
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`);
+  const res = await fetch(`${API_BASE_URL}${path}`, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`GET ${path} failed: ${res.status} ${res.statusText} ${body}`);

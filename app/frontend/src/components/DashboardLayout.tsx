@@ -20,6 +20,7 @@ import { Menu } from 'lucide-react';
 
 import { DashboardProvider, useDashboard } from '@/contexts/dashboard-context';
 import { SleevesProvider } from '@/contexts/sleeves-context';
+import { PortfolioProvider } from '@/contexts/portfolio-context';
 import { cn } from '@/lib/utils';
 import type { DashboardSection } from '@/types/sleeves';
 import { LeftNav } from './dashboard/left-nav';
@@ -98,7 +99,9 @@ export function DashboardLayout() {
   return (
     <SleevesProvider>
       <DashboardProvider>
-        <DashboardShell />
+        <PortfolioProvider>
+          <DashboardShell />
+        </PortfolioProvider>
       </DashboardProvider>
     </SleevesProvider>
   );

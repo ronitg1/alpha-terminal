@@ -107,16 +107,16 @@ export function PortfolioEvents({ account }: { account: PortfolioAccount }) {
   const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
   const [showCal, setShowCal] = useState(false);
   const flags = useMemo(() => week52Flags(account.positions), [account]);
-  const tickers = useMemo(
-    () => Array.from(new Set(account.positions.filter((p) => p.kind === 'stock').map((p) => p.underlying).filter(Boolean))) as string[],
-    [account],
-  );
+  // Key the earnings fetch on a STABLE string, not the `account` object, so an
+  // unrelated re-render (e.g. mask toggle) doesn't refetch earnings.
+  const tickerKey = Array.from(new Set(account.positions.filter((p) => p.kind === 'stock').map((p) => p.underlying).filter(Boolean))).join(',');
 
   useEffect(() => {
     let alive = true;
+    const tickers = tickerKey ? tickerKey.split(',') : [];
     void portfolioApi.getEarnings(tickers).then((e) => alive && setEarnings(e)).catch(() => {});
     return () => { alive = false; };
-  }, [tickers]);
+  }, [tickerKey]);
 
   if (flags.length === 0 && earnings.length === 0) return null;
   const upcoming = earnings.slice(0, 5);
