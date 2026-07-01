@@ -445,6 +445,7 @@ sudo apt install -y nodejs
 | `MASSIVE_API_KEY` | ✅ Yes | Prices, market cap, options chain | https://polygon.io → Dashboard → API Keys |
 | `FINNHUB_API_KEY` | 🟡 Strongly recommended | Market News tab; **fundamentals fallback so agents actually see data on a Polygon-only plan** (insider trades, growth/turnover ratios); analyst consensus + earnings beat/miss; per-ticker enrichment | https://finnhub.io/register (free, 60/min) |
 | `FINANCIAL_DATASETS_API_KEY` | ⚪ Optional | Alternative fundamentals provider (richer line-items) | https://financialdatasets.ai → Settings |
+| `ROBINHOOD_MCP_BEARER_TOKEN` | ⚪ Optional | Read-only Robinhood portfolio pull through MCP; users can also save their own token in Settings | https://agent.robinhood.com/mcp/trading |
 | `ANTHROPIC_API_KEY` | ⚪ Optional | Reserved for an alternate LLM provider; not wired by default | https://console.anthropic.com → API Keys |
 
 `DEEPSEEK_API_KEY` (or a saved OpenRouter key/model in Settings) + `MASSIVE_API_KEY` is the bare minimum, **but add `FINNHUB_API_KEY` too** — Polygon's Starter plan doesn't include the fundamentals/ratios add-on, so without Finnhub (or FDS) the agents reason over null fundamentals and report "no edge." Finnhub's free tier fills that gap and powers the News tab. All Finnhub traffic is rate-limited to stay under the free-tier 60/min ceiling.

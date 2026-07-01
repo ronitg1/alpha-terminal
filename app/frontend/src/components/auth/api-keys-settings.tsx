@@ -2,8 +2,8 @@
  * BYOK API-key settings (Phase 3). Lets a signed-in user add/replace/remove
  * their own provider keys. DeepSeek is required by default for LLM scans/thesis
  * /chat and is billed per use; OpenRouter can replace it when selected. Massive
- * (market data) and Finnhub (news) are optional — the app falls back to the
- * shared keys for those.
+ * (market data), Finnhub (news), and Robinhood MCP (read-only portfolio pull)
+ * are optional — the app falls back to shared keys for market data where allowed.
  *
  * Key values are write-only: the API never returns them, so the UI only shows
  * whether a key is set, never the value.
@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { API_BASE_URL } from '@/lib/api-base';
 import { ScheduledScansSettings } from './scheduled-scans-settings';
 
-type Provider = 'deepseek' | 'openrouter' | 'massive' | 'finnhub';
+type Provider = 'deepseek' | 'openrouter' | 'massive' | 'finnhub' | 'robinhood';
 type LlmProvider = 'DeepSeek' | 'OpenRouter';
 
 const PROVIDERS: { id: Provider; label: string; required: boolean; help: string }[] = [
@@ -28,6 +28,7 @@ const PROVIDERS: { id: Provider; label: string; required: boolean; help: string 
   { id: 'openrouter', label: 'OpenRouter', required: false, help: 'Optional; enables OpenRouter model selection and bills LLM usage to your key.' },
   { id: 'massive', label: 'Massive (Polygon)', required: false, help: 'Market data. Approved accounts use the shared key; otherwise add your own.' },
   { id: 'finnhub', label: 'Finnhub', required: false, help: 'News & fundamentals. Approved accounts use the shared key; otherwise add your own.' },
+  { id: 'robinhood', label: 'Robinhood MCP', required: false, help: 'Optional; pulls a read-only Robinhood portfolio snapshot for now.' },
 ];
 
 interface KeySummary { provider: string; has_key: boolean }

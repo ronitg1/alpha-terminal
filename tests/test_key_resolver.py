@@ -27,6 +27,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter")
     monkeypatch.setenv("MASSIVE_API_KEY", "env-massive")
     monkeypatch.setenv("FINNHUB_API_KEY", "env-finnhub")
+    monkeypatch.setenv("ROBINHOOD_MCP_BEARER_TOKEN", "env-robinhood")
     monkeypatch.delenv("AUTH_ENABLED", raising=False)
     monkeypatch.delenv("OWNER_USER_ID", raising=False)
     monkeypatch.delenv("OWNER_EMAIL", raising=False)
@@ -64,6 +65,7 @@ def as_user():
 def test_auth_off_returns_env_for_all_providers():
     assert key_resolver.resolve_key("deepseek") == "env-deepseek"
     assert key_resolver.resolve_key("openrouter") == "env-openrouter"
+    assert key_resolver.resolve_key("robinhood") == "env-robinhood"
     assert key_resolver.resolve_key("massive") == "env-massive"
     assert key_resolver.resolve_key("finnhub") == "env-finnhub"
 
@@ -111,6 +113,22 @@ def test_auth_on_openrouter_uses_stored_user_key(monkeypatch, db, as_user):
         ApiKeyRepository(s, "user_a").set_key("openrouter", "alice-openrouter")
     as_user("user_a")
     assert key_resolver.resolve_key("openrouter") == "alice-openrouter"
+
+
+def test_auth_on_robinhood_requires_user_key(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    as_user("user_a")
+    assert key_resolver.resolve_key("robinhood") is None
+    with pytest.raises(key_resolver.MissingUserKey):
+        key_resolver.require_key("robinhood")
+
+
+def test_auth_on_robinhood_uses_stored_user_key(monkeypatch, db, as_user):
+    monkeypatch.setenv("AUTH_ENABLED", "1")
+    with db() as s:
+        ApiKeyRepository(s, "user_a").set_key("robinhood", "alice-robinhood")
+    as_user("user_a")
+    assert key_resolver.resolve_key("robinhood") == "alice-robinhood"
 
 
 def test_auth_on_massive_no_fallback_for_unapproved(monkeypatch, db, as_user):

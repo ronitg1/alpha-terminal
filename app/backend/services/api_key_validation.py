@@ -22,7 +22,8 @@ DEEPSEEK = "deepseek"
 MASSIVE = "massive"
 FINNHUB = "finnhub"
 OPENROUTER = "openrouter"
-PROVIDERS: frozenset[str] = frozenset({DEEPSEEK, MASSIVE, FINNHUB, OPENROUTER})
+ROBINHOOD = "robinhood"
+PROVIDERS: frozenset[str] = frozenset({DEEPSEEK, MASSIVE, FINNHUB, OPENROUTER, ROBINHOOD})
 
 # How long to wait on a provider's validation endpoint before giving up.
 _TIMEOUT_SECONDS = 10.0
@@ -56,6 +57,8 @@ def validate_provider_key(provider: str, key: str) -> None:
         _check(key, "Finnhub", "https://finnhub.io/api/v1/quote", params={"symbol": "AAPL", "token": key})
     elif provider == OPENROUTER:
         _check(key, "OpenRouter", "https://openrouter.ai/api/v1/key", headers={"Authorization": f"Bearer {key}"})
+    elif provider == ROBINHOOD:
+        _check_robinhood_mcp(key)
     else:
         raise KeyValidationError(f"Unknown provider '{provider}'.")
 
@@ -77,3 +80,51 @@ def _check(key: str, label: str, url: str, *, headers: dict | None = None, param
         raise KeyValidationUnavailable(f"{label} is temporarily unavailable (HTTP {resp.status_code}); try again.")
     if resp.status_code != 200:
         raise KeyValidationError(f"{label} key check failed (HTTP {resp.status_code}).")
+
+
+def _check_robinhood_mcp(key: str) -> None:
+    from app.backend.services.robinhood_mcp import RobinhoodMcpError, parse_mcp_payload, robinhood_mcp_url
+
+    try:
+        endpoint = robinhood_mcp_url()
+    except RobinhoodMcpError as exc:
+        raise KeyValidationUnavailable(f"Robinhood MCP token check is misconfigured: {exc}") from exc
+    try:
+        resp = httpx.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "MCP-Protocol-Version": "2025-06-18",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "alpha-terminal", "version": "1.7.6"},
+                },
+            },
+            timeout=_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        raise KeyValidationUnavailable(f"Could not reach Robinhood MCP to validate the token: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise KeyValidationError("Robinhood MCP rejected this token (unauthorized).")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise KeyValidationUnavailable(f"Robinhood MCP is temporarily unavailable (HTTP {resp.status_code}); try again.")
+    if resp.status_code not in (200, 202):
+        raise KeyValidationError(f"Robinhood MCP token check failed (HTTP {resp.status_code}).")
+    if not resp.content:
+        raise KeyValidationUnavailable("Robinhood MCP token check returned an empty response; try again.")
+    try:
+        payload = parse_mcp_payload(resp, expected_id=1)
+    except RobinhoodMcpError as exc:
+        raise KeyValidationUnavailable(f"Robinhood MCP token check could not be parsed: {exc}") from exc
+    if payload.get("error"):
+        raise KeyValidationError("Robinhood MCP rejected this token.")

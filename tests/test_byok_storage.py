@@ -214,6 +214,12 @@ def test_route_accepts_openrouter_provider(db_session):
     assert "key_value" not in body
 
 
+def test_route_accepts_robinhood_provider(db_session):
+    resp = client.post("/api-keys/", json={"provider": "robinhood", "key_value": "rh-token"})
+    assert resp.status_code == 200
+    assert resp.json()["provider"] == "robinhood"
+
+
 def test_route_stores_encrypted(db_session):
     client.post("/api-keys/", json={"provider": "massive", "key_value": "poly-123"})
     db = db_session()

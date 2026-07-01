@@ -8,6 +8,8 @@ then a per-provider **policy** decides whether the shared env fallback is allowe
 
 - ``deepseek`` / ``openrouter`` (LLM, usage-billed) — **no** shared fallback when
   auth is on: each user must bring their own key so they pay their own LLM spend.
+- ``robinhood`` (account access) — **no** shared fallback when auth is on: each
+  user must explicitly connect their own MCP token.
 - ``massive`` (Polygon market data) and ``finnhub`` (news) — **shared** fallback
   to the owner's env keys; users don't need to provide these today.
 
@@ -41,7 +43,7 @@ from app.backend.context import (
 from app.backend.crypto import DecryptionError, EncryptionNotConfigured
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.services._storage import session_scope
-from app.backend.services.api_key_validation import DEEPSEEK, FINNHUB, MASSIVE, OPENROUTER
+from app.backend.services.api_key_validation import DEEPSEEK, FINNHUB, MASSIVE, OPENROUTER, ROBINHOOD
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +66,20 @@ FINANCIAL_DATASETS = "financial_datasets"
 _ENV_VAR = {
     DEEPSEEK: "DEEPSEEK_API_KEY",
     OPENROUTER: "OPENROUTER_API_KEY",
+    ROBINHOOD: "ROBINHOOD_MCP_BEARER_TOKEN",
     MASSIVE: "MASSIVE_API_KEY",
     FINNHUB: "FINNHUB_API_KEY",
     FINANCIAL_DATASETS: "FINANCIAL_DATASETS_API_KEY",
 }
 
+# Provider -> may fall back to the shared env key when auth is on AND the user is
+# approved for shared keys (see is_shared_data_approved). DeepSeek, OpenRouter,
+# and Robinhood never share. Massive/Finnhub share only for the owner + an
+# approved-emails allowlist; everyone else must bring their own.
 _SHARED_FALLBACK = {
     DEEPSEEK: False,
     OPENROUTER: False,
+    ROBINHOOD: False,
     MASSIVE: True,
     FINNHUB: True,
     FINANCIAL_DATASETS: True,

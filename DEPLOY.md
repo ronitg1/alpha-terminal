@@ -67,6 +67,8 @@ backend. Done with Phase 1.
 | `OPENROUTER_APP_NAME` | no | Optional OpenRouter attribution header. |
 | `FINNHUB_API_KEY` | optional | Market News + insider/ratio fallback. |
 | `FINANCIAL_DATASETS_API_KEY` | only if `DATA_PROVIDER=fds` | Alt market data. |
+| `ROBINHOOD_MCP_BEARER_TOKEN` | optional | Single-user fallback token for the Robinhood MCP portfolio pull. With auth on, users should save their own Robinhood MCP token in Settings. |
+| `ROBINHOOD_MCP_URL` | no | Defaults to `https://agent.robinhood.com/mcp/trading`; must stay on `agent.robinhood.com`. |
 | `ALLOWED_ORIGINS` | yes (prod) | Comma-separated frontend origins. Defaults to localhost for dev. |
 | `API_KEY_ENCRYPTION_KEY` | yes (when `AUTH_ENABLED`) | Fernet key encrypting users' stored BYOK keys at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separate multiple keys to rotate (first encrypts, all decrypt). **Set this in the env BEFORE the deploy that turns auth on** — the backend refuses to boot with `AUTH_ENABLED` on and this unset. |
 | `OWNER_USER_ID` | no | The owner's Clerk user id (`sub`). On first login this account claims the pre-auth `default` data. Unspoofable — preferred. Bootstrap: enable auth, log in once, read the id from the logs / `users` table, set this var. |
