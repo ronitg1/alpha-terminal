@@ -4,6 +4,15 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.20] — 2026-07-01
+
+### Changed
+- **News tab rebuilt as three switchable sub-tabs** — Market (general-market news
+  with category pills), Watchlist (news across your watchlist + portfolio
+  holdings), and Ticker (search any symbol) — instead of a 3-column layout that
+  crammed on desktop and became an endless triple-stack on iOS. Same tabs on mobile
+  and desktop; content is a single centered readable column.
+
 ## [1.11.19] — 2026-07-01
 
 ### Changed
