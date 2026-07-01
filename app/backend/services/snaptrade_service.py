@@ -166,11 +166,12 @@ def _account_label(account: dict[str, Any]) -> str:
     return f"{name} ({number})" if number else str(name)
 
 
-def _account_cash(account: dict[str, Any]) -> float | None:
-    """Best-effort cash balance from a SnapTrade account object. SnapTrade shapes
-    vary; probe the common nestings and fall back to None (the overview then sums
-    position values only)."""
-    for path in (("cash",), ("balance", "cash"), ("balance", "total", "amount")):
+def _account_total_balance(account: dict[str, Any]) -> float | None:
+    """Best-effort TOTAL account value (positions + cash) from a SnapTrade account
+    object. This is the broker-authoritative total; the overview derives cash from
+    it as total − invested. NOTE: ``balance.total.amount`` is the *total*, not cash
+    — treating it as cash was the bug behind an absurdly high cash figure."""
+    for path in (("balance", "total", "amount"), ("total_value",), ("balance", "total")):
         node: Any = account
         for key in path:
             node = node.get(key) if isinstance(node, dict) else None
@@ -207,7 +208,7 @@ def fetch_portfolio() -> dict[str, Any]:
                 "name": account.get("name"),
                 "institution": account.get("institution_name"),
                 "number": account.get("number"),
-                "cash": _account_cash(account),
+                "total_balance": _account_total_balance(account),
                 "positions": [normalize_stock_position(p) for p in stocks],
                 "options": [normalize_option_position(p) for p in options],
             }

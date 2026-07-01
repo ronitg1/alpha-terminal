@@ -33,3 +33,14 @@ export function toneClass(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v) || v === 0) return 'text-muted-foreground';
   return v > 0 ? 'text-emerald-500' : 'text-rose-500';
 }
+
+// Privacy mask: when `masked`, dollar amounts render as dots so someone glancing
+// at the screen can't read the balances. Percentages stay visible (they don't
+// reveal absolute wealth).
+export const MASKED = '••••••';
+export function maskMoney(v: number | null | undefined, masked: boolean, opts?: { compact?: boolean }): string {
+  return masked ? MASKED : money(v, opts);
+}
+export function maskSigned(v: number | null | undefined, masked: boolean): string {
+  return masked ? MASKED : signedMoney(v);
+}

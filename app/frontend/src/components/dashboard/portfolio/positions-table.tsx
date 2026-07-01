@@ -6,7 +6,7 @@
  */
 import type { PortfolioPosition } from '@/types/portfolio';
 import { cn } from '@/lib/utils';
-import { money, num, pct, signedMoney, toneClass } from './format';
+import { maskMoney, maskSigned, money, num, pct, toneClass } from './format';
 
 function optionTag(p: PortfolioPosition): string | null {
   if (p.kind !== 'option') return null;
@@ -31,7 +31,7 @@ function Week52({ p }: { p: PortfolioPosition }) {
   );
 }
 
-export function PositionsTable({ positions }: { positions: readonly PortfolioPosition[] }) {
+export function PositionsTable({ positions, masked = false }: { positions: readonly PortfolioPosition[]; masked?: boolean }) {
   if (positions.length === 0) {
     return <p className="p-4 text-sm italic text-muted-foreground">No positions in this account.</p>;
   }
@@ -49,9 +49,9 @@ export function PositionsTable({ positions }: { positions: readonly PortfolioPos
                 {p.name && <div className="truncate text-[11px] text-muted-foreground">{p.name}</div>}
               </div>
               <div className="text-right">
-                <div className="text-sm font-semibold">{money(p.current_value)}</div>
+                <div className="text-sm font-semibold">{maskMoney(p.current_value, masked)}</div>
                 <div className={cn('text-[11px]', toneClass(p.day_change))}>
-                  {signedMoney(p.day_change)} ({pct(p.day_change_pct)})
+                  {maskSigned(p.day_change, masked)} ({pct(p.day_change_pct)})
                 </div>
               </div>
             </div>
@@ -62,7 +62,7 @@ export function PositionsTable({ positions }: { positions: readonly PortfolioPos
               </div>
               <div>
                 <div className="text-muted-foreground">Total G/L</div>
-                <div className={toneClass(p.total_gain)}>{signedMoney(p.total_gain)}</div>
+                <div className={toneClass(p.total_gain)}>{maskSigned(p.total_gain, masked)}</div>
               </div>
               <div>
                 <div className="text-muted-foreground">% of acct</div>
@@ -104,15 +104,15 @@ export function PositionsTable({ positions }: { positions: readonly PortfolioPos
                   ) : null}
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums">{money(p.last_price)}</td>
-                <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.day_change))}>{signedMoney(p.day_change)}</td>
+                <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.day_change))}>{maskSigned(p.day_change, masked)}</td>
                 <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.day_change_pct))}>{pct(p.day_change_pct)}</td>
-                <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.total_gain))}>{signedMoney(p.total_gain)}</td>
+                <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.total_gain))}>{maskSigned(p.total_gain, masked)}</td>
                 <td className={cn('px-2 py-2 text-right tabular-nums', toneClass(p.total_gain_pct))}>{pct(p.total_gain_pct)}</td>
-                <td className="px-2 py-2 text-right font-medium tabular-nums">{money(p.current_value)}</td>
+                <td className="px-2 py-2 text-right font-medium tabular-nums">{maskMoney(p.current_value, masked)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{pct(p.pct_of_account, false)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{num(p.quantity)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{money(p.avg_cost)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{money(p.cost_basis_total)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{maskMoney(p.cost_basis_total, masked)}</td>
                 <td className="px-2 py-2"><Week52 p={p} /></td>
               </tr>
             ))}

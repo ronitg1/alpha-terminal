@@ -19,7 +19,7 @@ def _snaptrade_payload():
                 "id": "acc1",
                 "label": "Individual (X1)",
                 "institution": "Fidelity",
-                "cash": 1000.0,
+                "total_balance": 3425.0,  # positions (2050 + 375) + 1000 cash
                 "positions": [
                     {
                         "kind": "stock", "symbol": "NVDA", "underlying": "NVDA",
@@ -76,8 +76,9 @@ def test_single_snaptrade_account_metrics(only_snaptrade):
     assert nvda["current_value"] == 2050.0
     assert nvda["day_change"] == 50.0
     assert nvda["day_change_pct"] == 2.5
-    assert nvda["total_gain"] == 1000.0
-    assert nvda["total_gain_pct"] == 100.0
+    # total gain = value (2050) − cost basis (10 * 100) = 1050, computed (not open_pnl)
+    assert nvda["total_gain"] == 1050.0
+    assert nvda["total_gain_pct"] == 105.0
     assert nvda["name"] == "NVIDIA"
 
     opt = by_symbol[("NVDA 260724C", "option")]
@@ -86,8 +87,10 @@ def test_single_snaptrade_account_metrics(only_snaptrade):
     assert opt["current_value"] == 375.0
     assert opt["day_change"] is None
     assert opt["option_type"] == "CALL"
+    # option total gain = value (375) − cost basis (526), computed from avg cost
+    assert opt["total_gain"] == -151.0
 
-    # account totals: 2050 (stock) + 375 (option) + 1000 cash
+    # account totals: broker total 3425; cash = 3425 − invested (2425) = 1000
     assert acct["total_value"] == 3425.0
     assert acct["cash"] == 1000.0
     # pct_of_account sums to <100 because of cash
@@ -98,7 +101,7 @@ def test_combined_merges_symbols_across_accounts(monkeypatch):
     def _two_accounts():
         payload = _snaptrade_payload()
         second = {
-            "id": "acc2", "label": "Roth (X2)", "institution": "Fidelity", "cash": 0.0,
+            "id": "acc2", "label": "Roth (X2)", "institution": "Fidelity", "total_balance": 1025.0,
             "positions": [
                 {
                     "kind": "stock", "symbol": "NVDA", "underlying": "NVDA",

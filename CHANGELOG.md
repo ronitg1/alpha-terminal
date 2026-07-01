@@ -4,6 +4,25 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] — 2026-07-01
+
+### Fixed
+- **Portfolio total gain/loss.** No longer trusts SnapTrade's `open_pnl` (which it
+  reports as absurd values for options, e.g. a −$1.4M total). Gain/loss is now
+  always computed as today's value − cost basis (avg cost × qty, ×100 for option
+  contracts); null when average cost is unavailable so the UI shows "—" not a bogus
+  number.
+- **Portfolio cash figure.** The account's *total balance* was being mistaken for
+  cash (hugely inflated). Cash is now the residual: total balance − invested.
+
+### Added
+- **Add another brokerage** from the Portfolio tab — an "Add account" button opens
+  the SnapTrade portal to link any supported institution (not just Fidelity), on
+  top of an existing connection.
+- **Hide amounts (privacy).** An eye toggle in the Portfolio header masks all
+  dollar values (`••••••`) so balances aren't visible to someone glancing at the
+  screen; percentages stay visible. Preference persists per browser.
+
 ## [1.10.0] — 2026-07-01
 
 ### Added

@@ -74,9 +74,14 @@ def _enrich_position(pos: dict[str, Any], quote: dict[str, Any] | None) -> dict[
         day_change = (last - prev_close) * qty
         day_change_pct = _pct(last - prev_close, prev_close)
 
+    # Total gain/loss = today's value − what you paid (avg cost × qty, ×100 for
+    # option contracts). We compute this ourselves rather than trusting SnapTrade's
+    # ``open_pnl``, which it reports inconsistently for options and produced absurd
+    # values. Null when we lack an average cost, so the UI shows "—" not a bogus
+    # number.
     cost_basis = pos.get("cost_basis")
-    total_gain = pos.get("open_pnl")
-    if total_gain is None and current_value is not None and cost_basis is not None:
+    total_gain = None
+    if current_value is not None and cost_basis is not None:
         total_gain = current_value - cost_basis
     total_gain_pct = _pct(total_gain, cost_basis)
 
@@ -108,12 +113,29 @@ def _finalize_account(
     label: str,
     source: str,
     institution: str | None,
-    cash: float | None,
     positions: list[dict[str, Any]],
+    *,
+    total_balance: float | None = None,
+    cash: float | None = None,
 ) -> dict[str, Any]:
-    """Compute account totals and each position's % of account."""
+    """Compute account totals and each position's % of account.
+
+    Cash is a *residual*, not a raw field: brokers report a total account value
+    (positions + cash), so cash = total − invested. Pass ``total_balance`` (the
+    broker's total) and cash is derived; or pass ``cash`` directly (e.g. Robinhood,
+    where we have cash but no clean total) and the total is invested + cash. This is
+    the fix for cash reading absurdly high — the old code mistook the total balance
+    for cash."""
     invested = sum(p["current_value"] for p in positions if p["current_value"] is not None)
-    total_value = invested + (cash or 0.0)
+    if total_balance is not None:
+        total_value = total_balance
+        cash = total_balance - invested
+        if -1.0 < cash < 0:  # tiny negative from rounding → clamp to zero
+            cash = 0.0
+    elif cash is not None:
+        total_value = invested + cash
+    else:
+        total_value = invested
     day_change = sum(p["day_change"] for p in positions if p["day_change"] is not None)
     cost_basis = sum(p["cost_basis_total"] for p in positions if p["cost_basis_total"] is not None)
     total_gain = sum(p["total_gain"] for p in positions if p["total_gain"] is not None)
@@ -141,10 +163,10 @@ def _combine(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate all accounts into one 'All combined' account, merging positions
     that share a symbol (units summed, values added, cost basis added)."""
     merged: dict[str, dict[str, Any]] = {}
-    cash = 0.0
+    # The combined total is the sum of each account's own total (broker-authoritative
+    # where available); cash then falls out as total − invested in _finalize_account.
+    total_balance = sum(a["total_value"] for a in accounts if a["total_value"] is not None)
     for acct in accounts:
-        if acct.get("cash") is not None:
-            cash += acct["cash"]
         for p in acct["positions"]:
             key = f"{p['kind']}:{p['symbol']}"
             if key not in merged:
@@ -159,7 +181,9 @@ def _combine(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     for p in positions:
         p["total_gain_pct"] = _pct(p["total_gain"], p["cost_basis_total"])
         p["day_change_pct"] = _pct(p["day_change"], (p["current_value"] or 0) - (p["day_change"] or 0))
-    return _finalize_account("__combined__", "All accounts", "combined", None, cash, positions)
+    return _finalize_account(
+        "__combined__", "All accounts", "combined", None, positions, total_balance=total_balance
+    )
 
 
 async def _snaptrade_accounts() -> list[dict[str, Any]]:
@@ -180,7 +204,7 @@ async def _snaptrade_accounts() -> list[dict[str, Any]]:
                 "label": acct.get("label") or "Account",
                 "source": "snaptrade",
                 "institution": acct.get("institution"),
-                "cash": acct.get("cash"),
+                "total_balance": acct.get("total_balance"),
                 "raw_positions": list(acct.get("positions", [])) + list(acct.get("options", [])),
             }
         )
@@ -296,7 +320,12 @@ async def build_overview() -> dict[str, Any]:
     accounts: list[dict[str, Any]] = []
     for a in raw_accounts:
         enriched = [_enrich_position(p, quotes.get(p.get("underlying") or p.get("symbol"))) for p in a["raw_positions"]]
-        accounts.append(_finalize_account(a["id"], a["label"], a["source"], a["institution"], a["cash"], enriched))
+        accounts.append(
+            _finalize_account(
+                a["id"], a["label"], a["source"], a["institution"], enriched,
+                total_balance=a.get("total_balance"), cash=a.get("cash"),
+            )
+        )
 
     combined = _combine(accounts) if len(accounts) > 1 else None
     return {"connected": True, "sources": sources, "accounts": accounts, "combined": combined}
