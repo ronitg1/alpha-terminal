@@ -113,8 +113,8 @@ export function PortfolioTab() {
   return (
     <div className="h-full overflow-y-auto p-3 sm:p-4">
       <div className="mx-auto max-w-6xl space-y-3">
-        {/* Header: title + account switcher + refresh — wraps on iOS */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Header (pr reserves space for the fixed top-right account menu) */}
+        <div className="flex flex-wrap items-center gap-2 pr-28">
           <Wallet className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-base font-semibold">Portfolio</h1>
           <select

@@ -481,8 +481,8 @@ export function PnlSection() {
 
   return (
     <div className="h-full overflow-y-auto p-4 space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Header (pr reserves space for the fixed top-right account menu) */}
+      <div className="flex flex-wrap items-center gap-2 pr-28">
         <Wallet className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold">Paper Trading</h2>
         {account && (

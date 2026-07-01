@@ -4,6 +4,13 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.7] — 2026-07-01
+
+### Fixed
+- **Header buttons no longer sit under the top-right account menu** (help / settings /
+  profile). The Paper Trading and Portfolio headers now reserve space on the right so
+  their controls don't overlap the fixed menu.
+
 ## [1.11.6] — 2026-07-01
 
 ### Added
