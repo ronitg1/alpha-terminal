@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — 2026-07-01
+
+### Added
+- **Market tab redesigned into a watchlist dashboard.** With no ticker selected the
+  Market section now shows: a macro panel (indices + commodities incl. gold/silver
+  and real-spot BTC/ETH) and market movers; a watchlist selector that defaults to
+  the market-cap-leaders list; and Top-performers / Laggards for the selected
+  watchlist with a Today / Week / Month toggle (week/month derived from each name's
+  sparkline). Tapping any ticker still opens full single-stock research (chart,
+  fundamentals, news). The old watchlist/portfolio management moved into a
+  collapsible "Manage" section. Mobile-first (convention #8).
+
 ## [1.11.22] — 2026-07-01
 
 ### Changed

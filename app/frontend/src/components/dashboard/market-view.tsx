@@ -12,11 +12,14 @@ import { CompanyOverviewCard } from '@/components/sleeves/company-overview-card'
 import { FinnhubFinancials } from '@/components/dashboard/finnhub-financials';
 import { RecentNewsList } from '@/components/sleeves/recent-news-list';
 import { LineVolumeChart } from '@/components/sleeves/line-volume-chart';
+import { MiniSpark } from '@/components/sleeves/mini-spark';
+import { MarketCards } from '@/components/dashboard/portfolio/market-cards';
+import { sleevesApi } from '@/services/sleeves-api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, LineChart, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { WatchlistEntry } from '@/types/sleeves';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, LineChart, Pencil, Plus, Settings2, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { Quote, WatchlistEntry } from '@/types/sleeves';
 
 type Timeframe = '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | '2Y';
 
@@ -726,45 +729,183 @@ function SleevesPanel() {
   );
 }
 
-// ─── No-ticker landing / management panel ────────────────────────────────────
+// ─── Watchlist dashboard (shown when no ticker is selected) ───────────────────
 
-function MarketLanding() {
-  const [tab, setTab] = useState<'watchlists' | 'sleeves'>('watchlists');
+type PerfPeriod = 'today' | 'week' | 'month';
+
+/** Percent change over the chosen window, derived from the quote (today's %) or
+ *  its 30-close sparkline (≈5 trading days = week, ≈21 = month). */
+function perfForPeriod(q: Quote | undefined, period: PerfPeriod): number | null {
+  if (!q) return null;
+  if (period === 'today') return q.pct_change ?? null;
+  const s = q.spark ?? [];
+  const back = period === 'week' ? 5 : 21;
+  if (s.length <= back) return null;
+  const prev = s[s.length - 1 - back];
+  const last = s[s.length - 1];
+  if (!prev) return null;
+  return ((last - prev) / prev) * 100;
+}
+
+function PerfRow({ ticker, quote, perf, onClick }: { ticker: string; quote?: Quote; perf: number | null; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-muted/50">
+      <div className="min-w-0 flex-1">
+        <div className="font-mono text-xs font-semibold">{ticker}</div>
+        {quote?.name && <div className="truncate text-[10px] text-muted-foreground">{quote.name}</div>}
+      </div>
+      {quote?.spark && quote.spark.length >= 2 && (
+        <MiniSpark closes={quote.spark} width={56} height={22} className="flex-shrink-0 opacity-80" />
+      )}
+      <div className="w-20 flex-shrink-0 text-right">
+        <div className="font-mono text-xs">{quote?.last != null ? `$${quote.last.toFixed(2)}` : '—'}</div>
+        <div className={cn('font-mono text-[10px]', perf == null ? 'text-muted-foreground' : perf >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+          {perf == null ? '—' : `${perf >= 0 ? '+' : ''}${perf.toFixed(2)}%`}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function MarketDashboard() {
+  const { watchlists } = useSleevesContext();
+  const { setSelectedTicker } = useDashboard();
+  const [selected, setSelected] = useState<string>('');
+  const [period, setPeriod] = useState<PerfPeriod>('today');
+  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageTab, setManageTab] = useState<'watchlists' | 'sleeves'>('watchlists');
+
+  // Default to a market-cap-leaders watchlist when present, else the first one.
+  useEffect(() => {
+    if (selected || watchlists.length === 0) return;
+    const leaders = watchlists.find((w) => /market ?cap|leaders|mega/i.test(w.name));
+    setSelected(leaders?.name ?? watchlists[0].name);
+  }, [watchlists, selected]);
+
+  const current = watchlists.find((w) => w.name === selected);
+  const tickers = useMemo(() => current?.tickers.map((t) => t.ticker) ?? [], [current]);
+
+  useEffect(() => {
+    if (tickers.length === 0) { setQuotes({}); return; }
+    let alive = true;
+    void sleevesApi.getQuotes(tickers).then((d) => { if (alive) setQuotes(d.quotes); }).catch(() => {});
+    return () => { alive = false; };
+  }, [tickers.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ranked = useMemo(
+    () =>
+      tickers
+        .map((t) => ({ t, q: quotes[t], perf: perfForPeriod(quotes[t], period) }))
+        .filter((x) => x.perf != null)
+        .sort((a, b) => (b.perf as number) - (a.perf as number)),
+    [tickers, quotes, period],
+  );
+  const top = ranked.slice(0, 8);
+  const bottom = ranked.slice(-8).reverse();
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">
-            <LineChart className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold">Market Monitor</h1>
-            <p className="text-sm text-muted-foreground">Select a ticker from the sidebar, or manage your watchlists and portfolios below.</p>
+    <div className="app-vh overflow-y-auto">
+      <div className="mx-auto max-w-5xl space-y-5 px-4 py-4 sm:px-6 sm:py-6">
+        {/* Header + watchlist selector */}
+        <div className="flex flex-wrap items-center gap-2">
+          <LineChart className="h-5 w-5 text-primary" />
+          <h1 className="text-base font-semibold sm:text-lg">Market Monitor</h1>
+          <div className="ml-auto flex items-center gap-2">
+            {watchlists.length > 0 && (
+              <select
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+                className="rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
+              >
+                {watchlists.map((w) => (
+                  <option key={w.name} value={w.name}>{w.name} ({w.tickers.length})</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex gap-1 border-b border-border">
-          {(['watchlists', 'sleeves'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors capitalize',
-                tab === t
-                  ? 'border-foreground text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {t === 'sleeves' ? 'Portfolios' : 'Watchlists'}
-            </button>
-          ))}
+        {/* Macro panel + market movers */}
+        <MarketCards />
+
+        {/* Watchlist performers */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {current?.name ?? 'Watchlist'} movers
+            </span>
+            <div className="ml-auto flex rounded-md bg-muted p-0.5 text-[11px]">
+              {(['today', 'week', 'month'] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPeriod(p)}
+                  className={cn('rounded px-2 py-0.5 font-medium capitalize', period === p ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground')}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+          {tickers.length === 0 ? (
+            <p className="py-2 text-xs italic text-muted-foreground">This watchlist has no tickers.</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-border/60 bg-card p-3">
+                <div className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase text-emerald-500">
+                  <TrendingUp className="h-3 w-3" /> Top performers
+                </div>
+                {top.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">Loading…</p> : top.map((x) => (
+                  <PerfRow key={x.t} ticker={x.t} quote={x.q} perf={x.perf} onClick={() => setSelectedTicker(x.t)} />
+                ))}
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card p-3">
+                <div className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase text-rose-500">
+                  <TrendingDown className="h-3 w-3" /> Laggards
+                </div>
+                {bottom.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">Loading…</p> : bottom.map((x) => (
+                  <PerfRow key={x.t} ticker={x.t} quote={x.q} perf={x.perf} onClick={() => setSelectedTicker(x.t)} />
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground">Tap any ticker for full research — chart, fundamentals, and news.</p>
         </div>
 
-        {tab === 'watchlists' && <WatchlistsPanel />}
-        {tab === 'sleeves' && <SleevesPanel />}
+        {/* Manage watchlists & portfolios (collapsible — the old landing content) */}
+        <div className="rounded-lg border border-border/60">
+          <button
+            type="button"
+            onClick={() => setManageOpen((o) => !o)}
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-medium"
+          >
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            Manage watchlists &amp; portfolios
+            {manageOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+          </button>
+          {manageOpen && (
+            <div className="space-y-4 border-t border-border/60 p-4">
+              <div className="flex gap-1 border-b border-border">
+                {(['watchlists', 'sleeves'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setManageTab(t)}
+                    className={cn(
+                      '-mb-px border-b-2 px-4 py-2 text-sm font-medium capitalize transition-colors',
+                      manageTab === t ? 'border-foreground text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {t === 'sleeves' ? 'Portfolios' : 'Watchlists'}
+                  </button>
+                ))}
+              </div>
+              {manageTab === 'watchlists' && <WatchlistsPanel />}
+              {manageTab === 'sleeves' && <SleevesPanel />}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -774,5 +915,5 @@ function MarketLanding() {
 
 export function MarketView() {
   const { selectedTicker } = useDashboard();
-  return selectedTicker ? <TickerDetail ticker={selectedTicker} /> : <MarketLanding />;
+  return selectedTicker ? <TickerDetail ticker={selectedTicker} /> : <MarketDashboard />;
 }
