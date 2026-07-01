@@ -4,6 +4,13 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.5] — 2026-07-01
+
+### Fixed
+- Portfolio positions are now fully enriched (sector + option day-change) **before**
+  account totals are computed, so an account's headline **"Today"** figure includes
+  its options' daily change instead of dropping them.
+
 ## [1.10.4] — 2026-07-01
 
 ### Added

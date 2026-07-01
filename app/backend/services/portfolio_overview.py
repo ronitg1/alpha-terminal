@@ -231,18 +231,17 @@ def _fetch_option_closes(occ: str) -> tuple[float, float] | None:
     return closes[-1], closes[-2]
 
 
-async def _annotate_option_day_change(accounts: list[dict[str, Any]]) -> None:
+async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
     """Fill today's $/% change for option positions from Polygon option bars — the
     underlying's quote can't price an option, so this is the only source. Cached
     with a short TTL; best-effort per contract."""
     wanted: dict[str, str] = {}  # occ -> occ (dedupe)
-    for acct in accounts:
-        for p in acct["positions"]:
-            if p.get("kind") != "option":
-                continue
-            occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
-            if occ:
-                wanted[occ] = occ
+    for p in positions:
+        if p.get("kind") != "option":
+            continue
+        occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
+        if occ:
+            wanted[occ] = occ
 
     async def _one(occ: str) -> tuple[str, tuple[float, float] | None]:
         cached = _option_change_cache.get(occ)
@@ -253,19 +252,18 @@ async def _annotate_option_day_change(accounts: list[dict[str, Any]]) -> None:
         return occ, res
 
     resolved = dict(await asyncio.gather(*[_one(o) for o in wanted])) if wanted else {}
-    for acct in accounts:
-        for p in acct["positions"]:
-            if p.get("kind") != "option":
-                continue
-            occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
-            closes = resolved.get(occ) if occ else None
-            units = p.get("quantity")
-            if not closes or units is None:
-                continue
-            last, prev = closes
-            if prev:
-                p["day_change"] = _round((last - prev) * units * 100)
-                p["day_change_pct"] = _round((last - prev) / prev * 100)
+    for p in positions:
+        if p.get("kind") != "option":
+            continue
+        occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
+        closes = resolved.get(occ) if occ else None
+        units = p.get("quantity")
+        if not closes or units is None:
+            continue
+        last, prev = closes
+        if prev:
+            p["day_change"] = _round((last - prev) * units * 100)
+            p["day_change_pct"] = _round((last - prev) / prev * 100)
 
 
 async def _snaptrade_accounts() -> list[dict[str, Any]]:
@@ -399,48 +397,52 @@ async def build_overview() -> dict[str, Any]:
     symbols = sorted({p.get("underlying") or p.get("symbol") for a in raw_accounts for p in a["raw_positions"] if (p.get("underlying") or p.get("symbol"))})
     quotes = await _fetch_quotes(symbols)
 
-    accounts: list[dict[str, Any]] = []
+    enriched_by_account: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    all_positions: list[dict[str, Any]] = []
     for a in raw_accounts:
         enriched = [_enrich_position(p, quotes.get(p.get("underlying") or p.get("symbol"))) for p in a["raw_positions"]]
-        accounts.append(
-            _finalize_account(
-                a["id"], a["label"], a["source"], a["institution"], enriched,
-                total_balance=a.get("total_balance"), cash=a.get("cash"),
-            )
-        )
+        enriched_by_account.append((a, enriched))
+        all_positions.extend(enriched)
 
-    # Best-effort enrichment: never let these external lookups hang the response.
+    # Annotate positions BEFORE finalizing accounts, so the account totals (esp.
+    # today's change) include options' day change. Best-effort + time-boxed: never
+    # let these external lookups hang the response.
     try:
-        await asyncio.wait_for(_annotate_sectors(accounts), timeout=8.0)
+        await asyncio.wait_for(_annotate_sectors(all_positions), timeout=8.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Sector annotation skipped: %s", type(exc).__name__)
     try:
-        await asyncio.wait_for(_annotate_option_day_change(accounts), timeout=8.0)
+        await asyncio.wait_for(_annotate_option_day_change(all_positions), timeout=8.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Option day-change annotation skipped: %s", type(exc).__name__)
 
+    accounts = [
+        _finalize_account(
+            a["id"], a["label"], a["source"], a["institution"], enriched,
+            total_balance=a.get("total_balance"), cash=a.get("cash"),
+        )
+        for a, enriched in enriched_by_account
+    ]
     combined = _combine(accounts) if len(accounts) > 1 else None
     return {"connected": True, "sources": sources, "accounts": accounts, "combined": combined}
 
 
-async def _annotate_sectors(accounts: list[dict[str, Any]]) -> None:
+async def _annotate_sectors(positions: list[dict[str, Any]]) -> None:
     """Tag every position with its allocation bucket (Cash / Market Index / sector),
     classified by underlying so an option and its shares share a bucket. Lookups
     are cached and best-effort; anything unresolved falls back to "Other"."""
     names: dict[str, str | None] = {}
-    for acct in accounts:
-        for p in acct["positions"]:
-            u = p.get("underlying")
-            if u:
-                names.setdefault(u, p.get("name"))
+    for p in positions:
+        u = p.get("underlying")
+        if u:
+            names.setdefault(u, p.get("name"))
 
     async def _one(sym: str, name: str | None) -> tuple[str, str]:
         return sym, await asyncio.to_thread(bucket_for, sym, name=name)
 
     resolved = dict(await asyncio.gather(*[_one(u, n) for u, n in names.items()])) if names else {}
-    for acct in accounts:
-        for p in acct["positions"]:
-            p["sector"] = resolved.get(p.get("underlying"), OTHER)
+    for p in positions:
+        p["sector"] = resolved.get(p.get("underlying"), OTHER)
 
 
 async def _fetch_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
