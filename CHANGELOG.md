@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.6] — 2026-07-01
+
+### Fixed
+- **Allocation sectors no longer all collapse to "Other."** The per-ticker Finnhub
+  lookups could exceed the timeout and get cancelled, wiping every classification
+  (including SPAXX→Cash). Now cash, index ETFs, and a **curated ticker→sector map**
+  are applied **synchronously first** (so they always land), and Finnhub is used
+  only for the unknown tail. Sectors are now **detailed** (Semiconductors, Software
+  & Cloud, Internet & Media, …) since you hold a lot of tech.
+- **Option "Today $ / %"** now comes from Polygon's option **snapshot** (`day.change`)
+  — **live during market hours, last close when the market is shut** — instead of a
+  daily bar that can lag intraday.
+
 ## [1.10.5] — 2026-07-01
 
 ### Fixed

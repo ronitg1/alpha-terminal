@@ -18,7 +18,6 @@ so the frontend column exists but fills in when M3 lands.
 from __future__ import annotations
 
 import asyncio
-import datetime
 import logging
 import time
 from typing import Any
@@ -26,7 +25,7 @@ from typing import Any
 from app.backend.services import snaptrade_connection_service, snaptrade_service
 from app.backend.services.api_key_validation import ROBINHOOD
 from app.backend.services.key_resolver import resolve_key
-from app.backend.services.portfolio_classify import OTHER, bucket_for
+from app.backend.services.portfolio_classify import OTHER, bucket_for, instant_bucket
 from app.backend.services.snaptrade_client import snaptrade_configured
 
 logger = logging.getLogger(__name__)
@@ -192,8 +191,8 @@ def _combine(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
-# OCC contract symbol -> (fetched_at_monotonic, (last_close, prev_close) | None).
-_OPTION_CHANGE_TTL = 300.0
+# OCC contract symbol -> (fetched_at_monotonic, (change_per_share, change_pct) | None).
+_OPTION_CHANGE_TTL = 120.0
 _option_change_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
 
 
@@ -211,59 +210,63 @@ def _occ_ticker(underlying: str | None, expiration: str | None, option_type: str
     return f"O:{underlying.upper()}{exp}{cp}{strike_millis:08d}"
 
 
-def _fetch_option_closes(occ: str) -> tuple[float, float] | None:
-    """(last_close, prev_close) daily closes for one option contract, or None. Daily
-    bars mean the change is close-to-close (and reflects the closing price when the
-    market is shut), as requested."""
+def _fetch_option_day(underlying: str, occ: str) -> tuple[float, float] | None:
+    """``(change_per_share, change_percent)`` today for one option contract, or
+    None. Uses Polygon's option snapshot ``day`` block, which is **live during
+    market hours and the last close when the market is shut** — exactly the
+    "use live, fall back to close" behavior requested."""
     from src.tools.massive.client import MassiveClient
 
-    today = datetime.date.today()
-    start = (today - datetime.timedelta(days=10)).isoformat()
     try:
-        data = MassiveClient(timeout=6).get_option_aggregates(occ, start, today.isoformat())
+        data = MassiveClient(timeout=6).get_option_contract_snapshot(underlying, occ)
     except Exception as exc:  # noqa: BLE001 — best-effort; option may be illiquid/unlisted
-        logger.debug("Option aggregates failed for %s: %s", occ, type(exc).__name__)
+        logger.debug("Option snapshot failed for %s: %s", occ, type(exc).__name__)
         return None
     results = data.get("results") if isinstance(data, dict) else None
-    closes = [float(r["c"]) for r in results or [] if isinstance(r, dict) and r.get("c") is not None]
-    if len(closes) < 2:
+    day = results.get("day") if isinstance(results, dict) else None
+    if not isinstance(day, dict):
         return None
-    return closes[-1], closes[-2]
+    change, change_pct = day.get("change"), day.get("change_percent")
+    if change is None or change_pct is None:
+        return None
+    try:
+        return float(change), float(change_pct)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _annotate_option_day_change(positions: list[dict[str, Any]]) -> None:
     """Fill today's $/% change for option positions from Polygon option bars — the
     underlying's quote can't price an option, so this is the only source. Cached
     with a short TTL; best-effort per contract."""
-    wanted: dict[str, str] = {}  # occ -> occ (dedupe)
+    wanted: dict[str, str] = {}  # occ -> underlying (dedupe)
     for p in positions:
         if p.get("kind") != "option":
             continue
         occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
-        if occ:
-            wanted[occ] = occ
+        if occ and p.get("underlying"):
+            wanted[occ] = p["underlying"]
 
-    async def _one(occ: str) -> tuple[str, tuple[float, float] | None]:
+    async def _one(occ: str, underlying: str) -> tuple[str, tuple[float, float] | None]:
         cached = _option_change_cache.get(occ)
         if cached and (time.monotonic() - cached[0]) < _OPTION_CHANGE_TTL:
             return occ, cached[1]
-        res = await asyncio.to_thread(_fetch_option_closes, occ)
+        res = await asyncio.to_thread(_fetch_option_day, underlying, occ)
         _option_change_cache[occ] = (time.monotonic(), res)
         return occ, res
 
-    resolved = dict(await asyncio.gather(*[_one(o) for o in wanted])) if wanted else {}
+    resolved = dict(await asyncio.gather(*[_one(o, u) for o, u in wanted.items()])) if wanted else {}
     for p in positions:
         if p.get("kind") != "option":
             continue
         occ = _occ_ticker(p.get("underlying"), p.get("expiration"), p.get("option_type"), p.get("strike"))
-        closes = resolved.get(occ) if occ else None
+        day = resolved.get(occ) if occ else None
         units = p.get("quantity")
-        if not closes or units is None:
+        if not day or units is None:
             continue
-        last, prev = closes
-        if prev:
-            p["day_change"] = _round((last - prev) * units * 100)
-            p["day_change_pct"] = _round((last - prev) / prev * 100)
+        change_per_share, change_pct = day
+        p["day_change"] = _round(change_per_share * units * 100)
+        p["day_change_pct"] = _round(change_pct)
 
 
 async def _snaptrade_accounts() -> list[dict[str, Any]]:
@@ -431,18 +434,31 @@ async def _annotate_sectors(positions: list[dict[str, Any]]) -> None:
     """Tag every position with its allocation bucket (Cash / Market Index / sector),
     classified by underlying so an option and its shares share a bucket. Lookups
     are cached and best-effort; anything unresolved falls back to "Other"."""
-    names: dict[str, str | None] = {}
+    # Pass 1 — instant (no I/O). Runs before any await and mutates positions in
+    # place, so cash/index/curated-map buckets survive even if the Finnhub pass
+    # below times out and gets cancelled (that was the "everything is Other" bug).
+    need: dict[str, str | None] = {}
     for p in positions:
         u = p.get("underlying")
-        if u:
-            names.setdefault(u, p.get("name"))
+        if not u:
+            p["sector"] = OTHER
+            continue
+        fast = instant_bucket(u, name=p.get("name"))
+        if fast is not None:
+            p["sector"] = fast
+        else:
+            need.setdefault(u, p.get("name"))
+    if not need:
+        return
 
+    # Pass 2 — Finnhub for the unknown tail only (time-boxed by the caller).
     async def _one(sym: str, name: str | None) -> tuple[str, str]:
         return sym, await asyncio.to_thread(bucket_for, sym, name=name)
 
-    resolved = dict(await asyncio.gather(*[_one(u, n) for u, n in names.items()])) if names else {}
+    resolved = dict(await asyncio.gather(*[_one(u, n) for u, n in need.items()]))
     for p in positions:
-        p["sector"] = resolved.get(p.get("underlying"), OTHER)
+        if p.get("sector") is None:
+            p["sector"] = resolved.get(p.get("underlying")) or OTHER
 
 
 async def _fetch_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:

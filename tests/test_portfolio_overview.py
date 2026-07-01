@@ -53,7 +53,7 @@ def only_snaptrade(monkeypatch):
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     # Keep tests hermetic: no Finnhub sector calls, no Polygon option-bar calls.
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
     yield
 
 
@@ -127,7 +127,7 @@ def test_combined_merges_symbols_across_accounts(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert len(result["accounts"]) == 2
@@ -156,7 +156,7 @@ def test_robinhood_positions_parsed(monkeypatch):
 
     monkeypatch.setattr(ov, "_fetch_quotes", _quotes)
     monkeypatch.setattr(ov, "bucket_for", lambda sym, name=None: "Technology")
-    monkeypatch.setattr(ov, "_fetch_option_closes", lambda occ: None)
+    monkeypatch.setattr(ov, "_fetch_option_day", lambda underlying, occ: None)
 
     result = anyio.run(ov.build_overview)
     assert result["connected"] is True

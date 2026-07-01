@@ -330,3 +330,14 @@ class MassiveClient:
         if strike_price_lte is not None:
             params["strike_price.lte"] = strike_price_lte
         return self._get(path, params)
+
+    def get_option_contract_snapshot(self, underlying: str, option_ticker: str) -> dict[str, Any]:
+        """Live snapshot for a single option contract.
+
+        Wraps Polygon's ``/v3/snapshot/options/{underlying}/{option_ticker}``. The
+        ``results.day`` block carries today's ``change`` / ``change_percent`` (per
+        share) — live during market hours, last close when the market is shut — so
+        callers get "today's change" without needing to know the session state.
+        """
+        path = f"/v3/snapshot/options/{underlying.upper()}/{option_ticker.upper()}"
+        return self._get(path, {})
