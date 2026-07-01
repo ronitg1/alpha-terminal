@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.9] — 2026-07-01
+
+### Added
+- **News & thesis-impact panel on the Market summary.** Recent headlines filtered to
+  the watchlist, each with a Claude one-liner on *what changed and whether it
+  supports / threatens / is neutral* to the thesis on that name (using the saved
+  thesis as context when available) — instead of a raw feed. All headlines go through
+  a single batched LLM call, cached per (ticker-set, day). Backend
+  `GET /news/thesis-impact`. Verified: correctly flags competitive/regulatory threats
+  and marks irrelevant cross-mentions neutral.
+
 ## [1.12.8] — 2026-07-01
 
 ### Changed

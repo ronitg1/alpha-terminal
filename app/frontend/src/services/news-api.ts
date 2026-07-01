@@ -30,10 +30,24 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface ThesisImpactItem {
+  ticker: string | null;
+  headline: string;
+  url: string;
+  source: string | null;
+  datetime: number | null;
+  impact: 'supports' | 'threatens' | 'neutral' | string;
+  line: string | null;
+}
+
 export const newsApi = {
   getFeed: (tickers: string[], hours = 168) =>
     getJSON<NewsFeed>(
       `/news/feed?tickers=${encodeURIComponent(tickers.join(','))}&hours=${hours}`,
+    ),
+  getThesisImpact: (tickers: string[], limit = 12) =>
+    getJSON<{ items: ThesisImpactItem[] }>(
+      `/news/thesis-impact?tickers=${encodeURIComponent(tickers.join(','))}&limit=${limit}`,
     ),
   getTickerNews: (ticker: string, hours = 168) =>
     getJSON<{ ticker: string; articles: NewsArticle[] }>(

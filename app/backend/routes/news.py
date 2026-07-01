@@ -67,6 +67,20 @@ async def get_ticker_news(ticker: str, hours: int = 168) -> dict[str, Any]:
     return {"ticker": symbol, "articles": articles}
 
 
+@router.get("/thesis-impact")
+async def get_thesis_impact(tickers: str = "", limit: int = 12) -> dict[str, Any]:
+    """Recent headlines for the given tickers, each with a one-line Claude read of
+    what changed and whether it supports / threatens / is neutral to the thesis.
+    One batched LLM call, cached per (ticker-set, day). Best-effort."""
+    from app.backend.services import news_impact
+
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not ticker_list:
+        return {"items": []}
+    items = await asyncio.to_thread(news_impact.build_impact, ticker_list, limit=limit)
+    return {"items": items}
+
+
 class _SummarizeRequest(BaseModel):
     title: str
     description: str = ""
