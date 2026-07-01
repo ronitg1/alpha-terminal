@@ -14,9 +14,10 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { sleevesApi } from '@/services/sleeves-api';
 import { portfolioApi } from '@/services/portfolio-api';
+import { marketApi, type SymbolMatch } from '@/services/market-api';
 import type { PortfolioAccount } from '@/types/portfolio';
 import { DashboardSection, Quote, WatchlistEntry } from '@/types/sleeves';
-import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Settings, Newspaper, FileText, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, DollarSign, LineChart, LayoutGrid, Activity, RefreshCw, MessageSquare, Pencil, Check, X, Plus, Search, Settings, Newspaper, FileText, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -81,6 +82,85 @@ function SectionHeader({
         <span className="text-[10px] opacity-60 font-normal normal-case">{count}</span>
       )}
     </button>
+  );
+}
+
+// ─── Universal ticker search ─────────────────────────────────────────────────
+
+/** Search any US-listed stock/ETF (Finnhub typeahead). Picking a result opens its
+ *  research card in the Market tab via ``onPick`` → setSelectedTicker. */
+function TickerSearch({ onPick }: { onPick: (ticker: string) => void }) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<SymbolMatch[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 1) { setResults([]); setOpen(false); setLoading(false); return; }
+    setLoading(true);
+    const h = setTimeout(() => {
+      marketApi.search(term)
+        .then((r) => { setResults(r.results); setOpen(true); setActive(0); })
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => clearTimeout(h);
+  }, [q]);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const pick = (t: string) => { if (!t) return; onPick(t.toUpperCase()); setQ(''); setResults([]); setOpen(false); };
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(results[active]?.ticker ?? q.trim()); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  return (
+    <div ref={ref} className="relative border-b border-border px-2 py-2">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onKey}
+          onFocus={() => { if (results.length) setOpen(true); }}
+          placeholder="Search any stock…"
+          className="w-full rounded-md border border-border bg-muted/40 py-1.5 pl-7 pr-2 text-xs uppercase outline-none focus:border-primary"
+        />
+      </div>
+      {open && (results.length > 0 || loading) && (
+        <div className="absolute left-2 right-2 top-full z-40 mt-1 max-h-72 overflow-y-auto rounded-md border border-border bg-background shadow-xl">
+          {loading && results.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+          )}
+          {results.map((r, i) => (
+            <button
+              key={r.ticker}
+              type="button"
+              onMouseEnter={() => setActive(i)}
+              onClick={() => pick(r.ticker)}
+              className={cn(
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left',
+                i === active ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
+              )}
+            >
+              <span className="font-mono text-xs font-semibold">{r.ticker}</span>
+              <span className="truncate text-[11px] text-muted-foreground">{r.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -426,6 +506,9 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
           </button>
         ))}
       </div>
+
+      {/* Universal stock search — pick a result to open its card in the Market tab */}
+      <TickerSearch onPick={(t) => { setSelectedTicker(t); onNavigate?.(); }} />
 
       {/* Scrollable list area */}
       <div className="flex-1 overflow-y-auto">

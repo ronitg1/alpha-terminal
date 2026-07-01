@@ -18,10 +18,16 @@ export interface Mover {
   readonly price: number | null;
 }
 
+export interface SymbolMatch {
+  readonly ticker: string;
+  readonly name: string;
+  readonly type: string;
+}
+
 const BASE = `${API_BASE_URL}/market`;
 
-async function req<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(30_000) });
+async function req<T>(path: string, timeoutMs = 30_000): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`Market request failed (${res.status})`);
   return res.json() as Promise<T>;
 }
@@ -29,4 +35,5 @@ async function req<T>(path: string): Promise<T> {
 export const marketApi = {
   getIndices: () => req<{ indices: IndexQuote[] }>('/indices'),
   getMovers: () => req<{ gainers: Mover[]; losers: Mover[] }>('/movers'),
+  search: (q: string) => req<{ results: SymbolMatch[] }>(`/search?q=${encodeURIComponent(q)}`, 8_000),
 };

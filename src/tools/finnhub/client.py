@@ -220,6 +220,10 @@ class FinnhubClient:
         """`/quote` — 20-min-delayed quote (free tier)."""
         return self._get("/quote", {"symbol": ticker.upper()})
 
+    def symbol_search(self, query: str) -> dict[str, Any]:
+        """`/search` — symbol/company typeahead lookup (free tier)."""
+        return self._get("/search", {"q": query})
+
     # ─── News ────────────────────────────────────────────────────────────────
 
     def company_news(

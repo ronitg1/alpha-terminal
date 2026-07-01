@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.2] — 2026-07-01
+
+### Added
+- **Universal stock search in the left nav.** A search bar above the Watchlists lets
+  you look up any US-listed stock/ETF (Finnhub typeahead, debounced, with keyboard
+  arrows/Enter); picking a result opens that ticker's research card in the Market
+  tab. Backend: `GET /market/search?q=`.
+
 ## [1.12.1] — 2026-07-01
 
 ### Fixed

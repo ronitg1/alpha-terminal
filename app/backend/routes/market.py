@@ -187,6 +187,43 @@ async def get_movers() -> dict[str, Any]:
     return await _cached("movers", _build_movers)
 
 
+@router.get("/search")
+async def search_symbols(q: str = "") -> dict[str, Any]:
+    """Symbol/company typeahead for the sidebar search. Returns US-listed common
+    stocks + ETFs matching the query, most-relevant first. Best-effort."""
+    query = q.strip()
+    if len(query) < 1:
+        return {"results": []}
+
+    def _fetch() -> list[dict[str, Any]]:
+        from src.tools.finnhub.client import FinnhubClient, is_finnhub_configured
+
+        if not is_finnhub_configured():
+            return []
+        try:
+            data = FinnhubClient().symbol_search(query)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Symbol search failed: %s", type(exc).__name__)
+            return []
+        rows = data.get("result") if isinstance(data, dict) else None
+        out: list[dict[str, Any]] = []
+        for r in rows or []:
+            sym = str(r.get("symbol") or "")
+            typ = str(r.get("type") or "")
+            # US-listed only (skip foreign suffixes like .SS/.T) and real equities/ETFs.
+            if not sym or "." in sym or ":" in sym:
+                continue
+            if typ and typ not in ("Common Stock", "ETP", "ETF", "ADR", "REIT"):
+                continue
+            out.append({"ticker": sym.upper(), "name": r.get("description") or "", "type": typ})
+            if len(out) >= 12:
+                break
+        return out
+
+    results = await asyncio.to_thread(_fetch)
+    return {"results": results}
+
+
 async def _build_movers() -> dict[str, Any]:
     try:
         gainers, losers = await asyncio.gather(
