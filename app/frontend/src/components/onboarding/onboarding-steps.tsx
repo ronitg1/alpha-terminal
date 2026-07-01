@@ -58,10 +58,10 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
         <p>The screen has three parts:</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>
-            <strong>Left sidebar</strong> — your watchlists, your portfolios
-            (from your connected brokerage accounts), and the sector list, plus
-            the section buttons (Market, Screening, Portfolio, Paper Trading,
-            News, Calls).
+            <strong>Left sidebar</strong> — a <strong>search box</strong> for any
+            stock, your watchlists, your portfolios (from your connected
+            brokerage accounts), and the sector list, plus the section buttons
+            (Market, Screening, Portfolio, Paper Trading, News, Calls).
           </li>
           <li>
             <strong>Center</strong> — the main workspace; its content changes
@@ -73,8 +73,8 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
           </li>
         </ul>
         <p className="mt-2 text-muted-foreground">
-          Click any ticker in the left sidebar to jump straight to its Market
-          page.
+          Search any ticker, or click one in the sidebar, to jump straight to its
+          research page.
         </p>
       </>
     ),
@@ -83,23 +83,37 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
   },
   {
     id: 'market',
-    title: 'Market — research any stock',
+    title: 'Market — the whole market at a glance',
     body: (
       <>
         <p>
-          The <strong>Market</strong> section is the deep-dive page for a single
-          stock. Pick a ticker and you get its price chart, a company overview,
-          the latest news, key financials, and a live quote snapshot — all in one
-          place.
+          The <strong>Market</strong> section opens on a live dashboard:
         </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>
+            A <strong>heatmap</strong> of the whole S&amp;P 500 — tiled by sector,
+            size = market cap, colour = performance — so you see where the day&apos;s
+            action is. Switch it to your watchlist from the dropdown.
+          </li>
+          <li>
+            A <strong>macro panel</strong> (indices, gold, oil, real Bitcoin),{' '}
+            <strong>market movers</strong>, and your watchlist&apos;s top gainers and
+            laggards.
+          </li>
+          <li>
+            A <strong>catalyst calendar</strong> (earnings + Fed / CPI / IRA-45X /
+            FEOC policy events) and a <strong>news feed</strong> where Claude tags
+            each headline as supporting or threatening the thesis.
+          </li>
+        </ul>
         <p className="mt-2 text-muted-foreground">
-          This is the best starting point when you want to understand one
-          company before acting on it.
+          Click any tile or search a ticker to open its full research page — price
+          chart, company overview, financials, and news.
         </p>
       </>
     ),
     image: '/onboarding/03-market.png',
-    imageAlt: 'Market view with price chart, overview, news and financials',
+    imageAlt: 'Market dashboard: S&P 500 heatmap, movers, catalyst calendar, news',
   },
   {
     id: 'patterns',
@@ -182,10 +196,14 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
         </p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li><strong>Summary</strong> — total value, day and total gain/loss, allocation by
-            sector (options fold into their underlying), top movers, upcoming earnings,
-            your holdings&apos; news, and the broad market.</li>
+            sector, top movers, upcoming earnings, your holdings&apos; news, the broad
+            market, and a <strong>13F ownership tracker</strong> showing how famous funds
+            (Berkshire, Burry, Bridgewater…) moved in your names last quarter.</li>
           <li><strong>Positions</strong> — every stock, ETF, and option with live prices,
-            gain/loss, cost basis, and 52-week range, grouped with subtotals.</li>
+            gain/loss, cost basis, and a 52-week range bar, grouped with subtotals.</li>
+          <li><strong>Thesis</strong> — run an AI analyst on any holding for a bull/bear
+            call grounded in a <strong>valuation football field</strong> (mini-DCF +
+            exit-multiple comps + the 52-week range).</li>
         </ul>
         <p className="mt-2 text-muted-foreground">
           Switch between accounts or view them all combined, and hide the dollar amounts

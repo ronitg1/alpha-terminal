@@ -59,7 +59,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.14.2",
+    version="1.14.3",
     lifespan=_lifespan,
 )
 
