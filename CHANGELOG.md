@@ -4,6 +4,21 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.2] — 2026-07-01
+
+### Changed
+- **Removed the standalone "Notable earnings this week" panel; folded it into the
+  catalyst calendar.** The calendar's earnings query now merges the watchlist with a
+  curated set of notable market-movers, so big prints (AAPL, NFLX, TSLA, JPM…) show
+  on the calendar alongside your names and the macro/policy events.
+- Thesis valuation still **hides the DCF bar when it lands far from the price**
+  (out of the sane window) rather than pinning a misleading bar at the edge.
+
+## [1.14.1] — 2026-07-01
+
+### Removed
+- The concentration / risk panel on the Portfolio summary (per request).
+
 ## [1.14.0] — 2026-07-01
 
 ### Changed

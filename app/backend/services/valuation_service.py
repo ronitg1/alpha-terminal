@@ -53,8 +53,9 @@ def _band(method: str, lo: float, mid: float, hi: float, price: float) -> dict[s
     lo, mid, hi = _clamp(lo, price), _clamp(mid, price), _clamp(hi, price)
     if not (lo <= mid <= hi) or mid <= 0 or (hi - lo) / mid > _MAX_REL_WIDTH:
         return None
-    # A band that collapsed to (near) zero width sits entirely at a clamp bound — the
-    # model's estimate is outside the sane window, so it's an unreliable outlier.
+    # A band that collapsed to (near) zero width sits entirely at a clamp bound — its
+    # estimate is outside the sane window (far from the price), so we drop it rather
+    # than show a misleading bar pinned at the edge.
     if (hi - lo) < price * 0.02:
         return None
     return {"method": method, "low": round(lo, 2), "mid": round(mid, 2), "high": round(hi, 2)}

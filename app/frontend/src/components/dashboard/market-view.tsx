@@ -17,7 +17,6 @@ import { MarketCards } from '@/components/dashboard/portfolio/market-cards';
 import { CatalystCalendar } from '@/components/dashboard/market/catalyst-calendar';
 import { TreemapHeatmap } from '@/components/dashboard/market/treemap-heatmap';
 import { NewsImpact } from '@/components/dashboard/market/news-impact';
-import { EarningsThisWeek } from '@/components/dashboard/market/earnings-week';
 import { sleevesApi } from '@/services/sleeves-api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -883,10 +882,7 @@ function MarketDashboard() {
         {/* News + thesis impact — headlines for these names with a Claude read */}
         <NewsImpact tickers={tickers} />
 
-        {/* Notable earnings this week — upcoming estimates + reported beat/miss */}
-        <EarningsThisWeek tickers={tickers} onTicker={setSelectedTicker} />
-
-        {/* Catalyst calendar — earnings + macro/policy events for these names */}
+        {/* Catalyst calendar — watchlist + notable earnings + macro/policy events */}
         <CatalystCalendar tickers={tickers} onTicker={setSelectedTicker} />
 
         {/* Manage watchlists & portfolios (collapsible — the old landing content) */}

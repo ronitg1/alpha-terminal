@@ -79,11 +79,21 @@ async def get_catalysts(tickers: str = "", days: int = 60) -> dict[str, Any]:
     today_iso, end_iso = today.isoformat(), end.isoformat()
 
     events: list[dict[str, Any]] = []
-    # Earnings (reuses the cached per-symbol Finnhub fetch). Cap the symbol count
-    # and time-box the call so a big watchlist can't stall the whole calendar — the
-    # macro/policy events below must always render even if earnings are slow. The
-    # per-symbol cache warms across calls, so earnings fill in on a later load.
-    capped = ",".join([t.strip() for t in tickers.split(",") if t.strip()][:30])
+    # Earnings (reuses the cached per-symbol Finnhub fetch). Merge the user's watchlist
+    # with a curated set of NOTABLE market-movers so the calendar surfaces the big
+    # prints too (the old separate "notable earnings" panel is folded in here). Cap the
+    # count + time-box the call so a big list can't stall the calendar — the macro/
+    # policy events below always render even if earnings are slow, and the per-symbol
+    # cache warms across calls.
+    from app.backend.services.earnings_week import _NOTABLE
+
+    seen_syms: set[str] = set()
+    merged: list[str] = []
+    for s in [t.strip().upper() for t in tickers.split(",") if t.strip()] + _NOTABLE:
+        if s and s not in seen_syms:
+            seen_syms.add(s)
+            merged.append(s)
+    capped = ",".join(merged[:34])
     if capped:
         try:
             payload = await asyncio.wait_for(get_earnings(tickers=capped, days=horizon), timeout=12.0)
