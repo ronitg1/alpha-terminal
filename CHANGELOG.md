@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.18] — 2026-07-01
+
+### Fixed
+- **Earnings calendar is fast again.** The per-symbol Finnhub queries were fired
+  concurrently, which tripped the free tier's rate limit and set off a 429 →
+  exponential-backoff storm (~16s, some symbols failing entirely) — so the calendar
+  looked broken. Reverted to sequential per-symbol calls (which respect Finnhub's
+  limiter) and added a per-(symbol, day) cache: the first load pays ~5s once, every
+  later Portfolio load is an instant dict lookup (verified 0ms cached).
+
 ## [1.11.17] — 2026-07-01
 
 ### Changed

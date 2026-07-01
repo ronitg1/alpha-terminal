@@ -25,58 +25,76 @@ async def get_overview() -> dict[str, Any]:
     return await portfolio_overview.build_overview()
 
 
+# Per-symbol earnings results cached for the day so re-opening the Portfolio tab
+# doesn't re-hit Finnhub. Keyed (symbol, iso-date) -> row|None; date bounds the TTL.
+_earnings_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
+
+
 @router.get("/earnings")
 async def get_earnings(tickers: str = "", days: int = 30) -> dict[str, Any]:
     """Upcoming earnings dates for the given holdings over the next ``days`` (via
     Finnhub). The frontend passes the underlyings it already has. Best-effort:
-    returns an empty list rather than erroring when Finnhub is unavailable."""
+    returns an empty list rather than erroring when Finnhub is unavailable.
+
+    Queries per-symbol (the shared-class alias problem: asking for GOOG returns
+    Finnhub symbol GOOGL, so a whole-calendar scan filtered by the user's exact
+    ticker silently drops it). Calls run CONCURRENTLY with bounded fan-out — the
+    old sequential loop took ~0.5s/holding, so a 20-name book stalled ~10s and
+    looked broken. Results are cached per (symbol, day)."""
     import asyncio
     import datetime
 
     from src.tools.finnhub.client import FinnhubClient, is_finnhub_configured
 
-    syms = {t.strip().upper() for t in tickers.split(",") if t.strip()}
+    syms = sorted({t.strip().upper() for t in tickers.split(",") if t.strip()})[:40]
     if not syms or not is_finnhub_configured():
         return {"earnings": []}
     days = max(1, min(int(days), 120))
     today = datetime.date.today()
+    today_iso = today.isoformat()
     end = today + datetime.timedelta(days=days)
+    end_iso = end.isoformat()
 
-    def _fetch() -> list[dict[str, Any]]:
-        # Query per-symbol. Two reasons: (1) the shared-class alias problem — asking
-        # for GOOG returns Finnhub symbol GOOGL, so a whole-calendar scan filtered by
-        # the user's exact ticker silently drops it; querying by the held ticker and
-        # labeling the row with *that* ticker keeps the attribution the user expects.
-        # (2) the free tier's full calendar is ~1,500 rows; per-symbol is cheaper.
+    def _fetch_all() -> list[dict[str, Any]]:
+        # SEQUENTIAL on purpose. Finnhub's free tier rate-limits hard; firing these
+        # concurrently triggers a 429 storm with exponential backoff that runs slower
+        # than doing them one at a time. The per-(symbol, day) cache means the whole
+        # loop only pays this cost once per day — every later Portfolio load is a
+        # dict lookup. Uncached symbols are the only ones that hit the network, so a
+        # returning user with a warm cache gets an instant response.
         client = FinnhubClient()
         out: list[dict[str, Any]] = []
-        for sym in sorted(syms)[:40]:
+        for sym in syms:
+            cache_key = (sym, today_iso)
+            if cache_key in _earnings_cache:
+                row = _earnings_cache[cache_key]
+                if row:
+                    out.append(row)
+                continue
             try:
-                data = client.earnings_calendar(
-                    start_date=today.isoformat(), end_date=end.isoformat(), ticker=sym
-                )
-            except Exception as exc:  # noqa: BLE001
+                data = client.earnings_calendar(start_date=today_iso, end_date=end_iso, ticker=sym)
+            except Exception as exc:  # noqa: BLE001 — transient; don't cache the failure
                 logger.warning("Earnings calendar (%s) failed: %s", sym, type(exc).__name__)
                 continue
             rows = data.get("earningsCalendar") if isinstance(data, dict) else None
-            if not rows:
-                continue
-            # Nearest upcoming date for this holding.
-            r = min(rows, key=lambda x: x.get("date") or "9999")
-            out.append({
-                "ticker": sym,  # the held ticker, not Finnhub's alias
-                "date": r.get("date"),
-                "hour": r.get("hour"),  # bmo | amc | dmh
-                "eps_estimate": r.get("epsEstimate"),
-                "revenue_estimate": r.get("revenueEstimate"),
-            })
+            row = None
+            if rows:
+                r = min(rows, key=lambda x: x.get("date") or "9999")  # nearest upcoming
+                row = {
+                    "ticker": sym,  # the held ticker, not Finnhub's alias (GOOG vs GOOGL)
+                    "date": r.get("date"),
+                    "hour": r.get("hour"),  # bmo | amc | dmh
+                    "eps_estimate": r.get("epsEstimate"),
+                    "revenue_estimate": r.get("revenueEstimate"),
+                }
+            _earnings_cache[cache_key] = row  # cache both hits and confirmed "no earnings"
+            if row:
+                out.append(row)
         out.sort(key=lambda e: (e.get("date") or "9999", e.get("ticker")))
         return out
 
     try:
-        # Per-symbol scan makes up to len(syms) sequential Finnhub calls, so give it
-        # more headroom than the old single-call budget.
-        earnings = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=25.0)
+        earnings = await asyncio.wait_for(asyncio.to_thread(_fetch_all), timeout=25.0)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Earnings fetch timed out/failed: %s", type(exc).__name__)
         earnings = []
