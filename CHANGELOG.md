@@ -4,6 +4,24 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.5] — 2026-07-01
+
+### Added
+- **Concentration & risk panel on the Portfolio summary.** Surfaces what allocation
+  alone doesn't: any single name ≥15% of the book (e.g. "NVDA is 22% — single-name
+  concentration"), a diversification callout when the top two sectors are ~half the
+  book, top-5 concentration, and a largest-positions bar. Sits next to Allocation.
+
+### Changed
+- **Thesis valuation now runs a Mini-DCF + exit-multiple comps, not just a P/E.**
+  The football field triangulates three methods: a mini-DCF (FCF/share grown and
+  discounted at a CAPM cost of equity via the name's beta, + terminal value), an
+  exit-multiple comps leg (project EPS 5y forward, apply a normalized terminal P/E,
+  discount back), and the 52-week range. Uses the real post-capex FCF (from EV/FCF)
+  so capex-heavy names aren't overstated; every band is sanity-clamped and fully
+  clamped/degenerate bands are dropped. The thesis prompt is fed the blended fair
+  value, so the call is grounded in valuation.
+
 ## [1.12.4] — 2026-07-01
 
 ### Added
