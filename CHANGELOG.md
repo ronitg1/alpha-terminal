@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.5] — 2026-07-01
+
+### Changed
+- **Onboarding walkthrough updated for the new features (M4).** New slides for the
+  **Portfolio** section (connect Fidelity/Robinhood via SnapTrade; Summary +
+  Positions; allocation, movers, events, news, markets; account switcher; hide
+  amounts) and **Paper Trading** (simulated $100k options account; add from the
+  Pattern Scanner). Layout + tour copy updated (P&L → Paper Trading). Screenshot
+  recapture still to do — the walkthrough shows a placeholder until then.
+
 ## [1.11.4] — 2026-07-01
 
 ### Changed

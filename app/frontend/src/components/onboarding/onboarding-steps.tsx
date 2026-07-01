@@ -58,9 +58,10 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
         <p>The screen has three parts:</p>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>
-            <strong>Left sidebar</strong> — your watchlists, portfolios, and
-            sector list, plus the six section buttons (Market, Screening,
-            Portfolio, P&amp;L, News, Calls).
+            <strong>Left sidebar</strong> — your watchlists, your portfolios
+            (from your connected brokerage accounts), and the sector list, plus
+            the section buttons (Market, Screening, Portfolio, Paper Trading,
+            News, Calls).
           </li>
           <li>
             <strong>Center</strong> — the main workspace; its content changes
@@ -170,24 +171,54 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
     imageAlt: 'AI research assistant panel',
   },
   {
-    id: 'portfolio-pnl',
-    title: 'Portfolio & P&L',
+    id: 'portfolio',
+    title: 'Portfolio — your real accounts',
     body: (
       <>
         <p>
-          <strong>Portfolio</strong> lets you group tickers into themed
-          &ldquo;sleeves&rdquo; and manage your watchlists. <strong>P&amp;L</strong>{' '}
-          lets you import your Fidelity positions (via CSV) to track gains and
-          losses over time.
+          The <strong>Portfolio</strong> section mirrors your real brokerage. Connect
+          Fidelity, Robinhood, and more through <strong>SnapTrade</strong> (read-only —
+          your login is never shared with the app) using the <em>Add account</em> button.
         </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li><strong>Summary</strong> — total value, day and total gain/loss, allocation by
+            sector (options fold into their underlying), top movers, upcoming earnings,
+            your holdings&apos; news, and the broad market.</li>
+          <li><strong>Positions</strong> — every stock, ETF, and option with live prices,
+            gain/loss, cost basis, and 52-week range, grouped with subtotals.</li>
+        </ul>
         <p className="mt-2 text-muted-foreground">
-          News and Calls round things out: a live news feed and earnings-call
-          transcripts for the names you follow.
+          Switch between accounts or view them all combined, and hide the dollar amounts
+          with the eye toggle when others are watching.
         </p>
       </>
     ),
-    image: '/onboarding/07-portfolio-pnl.png',
-    imageAlt: 'Portfolio and P&L sections',
+    image: '/onboarding/07-portfolio.png',
+    imageAlt: 'Portfolio summary and positions',
+  },
+  {
+    id: 'paper-trading',
+    title: 'Paper Trading — practice with options',
+    body: (
+      <>
+        <p>
+          <strong>Paper Trading</strong> is a simulated options account with a{' '}
+          <strong>$100,000</strong> starting balance — practice ideas with no real money.
+          It tracks your buying power, positions&apos; live P&amp;L, and realized gains.
+        </p>
+        <p className="mt-2">
+          Add contracts manually, or send a setup straight from the{' '}
+          <strong>Pattern Scanner</strong>: open a pattern&apos;s trade plan and hit{' '}
+          <em>Add to Paper Trading</em> to open it at the current price.
+        </p>
+        <p className="mt-2 text-muted-foreground">
+          News and Calls round things out: a live news feed and earnings-call transcripts
+          for the names you follow.
+        </p>
+      </>
+    ),
+    image: '/onboarding/07b-paper-trading.png',
+    imageAlt: 'Paper Trading simulated account',
   },
   {
     id: 'settings',
@@ -251,7 +282,7 @@ export const TOUR_STEPS: TourStep[] = [
     popover: {
       title: 'Move between sections',
       description:
-        'Switch between Market (research one stock), Screening (find patterns and options), Portfolio, P&L, News, and Calls.',
+        'Switch between Market (research one stock), Screening (find patterns and options), Portfolio (your connected accounts), Paper Trading, News, and Calls.',
       side: 'bottom',
       align: 'start',
     },
