@@ -4,6 +4,14 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.9] — 2026-07-01
+
+### Fixed
+- **Stock names now show under every holding.** Names came from Polygon's
+  best-effort company-name cache (often blank); we now use the security
+  description SnapTrade already sends (e.g. "NVIDIA CORP"), falling back to the
+  quote name only when the broker doesn't supply one.
+
 ## [1.10.8] — 2026-07-01
 
 ### Changed

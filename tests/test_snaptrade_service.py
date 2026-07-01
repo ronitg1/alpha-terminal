@@ -27,6 +27,13 @@ def test_underlying_of_option_uses_underlying_symbol():
     assert svc.underlying_of(pos) == "NVDA"
 
 
+def test_normalize_stock_position_extracts_name():
+    pos = {"symbol": {"symbol": {"symbol": "NVDA", "description": "NVIDIA CORP"}}, "units": 5, "price": 100.0}
+    out = svc.normalize_stock_position(pos)
+    assert out["symbol"] == "NVDA"
+    assert out["name"] == "NVIDIA CORP"
+
+
 def test_normalize_stock_position_computes_market_value():
     pos = {"symbol": {"symbol": {"symbol": "AAPL"}}, "units": 3, "price": 100.0}
     out = svc.normalize_stock_position(pos)

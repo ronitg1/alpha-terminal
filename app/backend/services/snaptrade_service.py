@@ -110,6 +110,23 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _symbol_name(value: Any) -> str | None:
+    """The human-readable security name/description from SnapTrade's nested symbol
+    object (e.g. "NVIDIA CORP"), so holdings show a name without a separate lookup.
+    Shapes vary by endpoint, so probe the common keys and recurse."""
+    if not isinstance(value, dict):
+        return None
+    for key in ("description", "name"):
+        text = value.get(key)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    for key in ("symbol", "raw_symbol", "underlying_symbol"):
+        nested = _symbol_name(value.get(key))
+        if nested:
+            return nested
+    return None
+
+
 def normalize_stock_position(position: dict[str, Any]) -> dict[str, Any]:
     ticker = underlying_of(position)
     units = _as_float(position.get("units")) or _as_float(position.get("fractional_units"))
@@ -121,6 +138,7 @@ def normalize_stock_position(position: dict[str, Any]) -> dict[str, Any]:
         "kind": "stock",
         "symbol": ticker,
         "underlying": ticker,
+        "name": _symbol_name(position.get("symbol")),
         "units": units,
         "price": price,
         "avg_cost": avg_cost,

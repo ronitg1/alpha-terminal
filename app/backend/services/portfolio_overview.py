@@ -52,11 +52,14 @@ def _enrich_position(pos: dict[str, Any], quote: dict[str, Any] | None) -> dict[
     qty = pos.get("units")
     last = pos.get("price")
     prev_close = None
-    name = None
+    # Prefer the broker-provided security name (SnapTrade sends it); fall back to
+    # the Polygon quote's name only if the broker didn't supply one.
+    name = pos.get("name") or None
     # A quote is for the underlying stock, so only apply its price to a stock
     # position — never override an option's premium with the underlying's price.
     if quote and kind == "stock":
-        name = quote.get("name") or None
+        if not name:
+            name = quote.get("name") or None
         if quote.get("last") is not None:
             last = quote.get("last")
         prev_close = quote.get("prev_close")
@@ -337,6 +340,7 @@ def _parse_robinhood_positions(payload: Any) -> list[dict[str, Any]]:
                 "kind": "stock",
                 "symbol": symbol,
                 "underlying": symbol,
+                "name": row.get("name") or row.get("instrument_name") or row.get("description"),
                 "units": qty,
                 "price": price,
                 "avg_cost": avg,
