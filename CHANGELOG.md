@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] — 2026-07-01
+
+### Changed
+- **Market heatmap rebuilt as a finviz-style treemap.** A proper squarified treemap
+  grouped by sector, tile size = market cap, tile colour = performance (red→green,
+  capped ±3%), with sector labels. **Defaults to the whole S&P 500** (~117 curated
+  constituents enriched with a single bulk snapshot for live perf); a dropdown
+  switches to a detailed view of the current watchlist (with the Today/Week/Month
+  toggle). Tap a tile to research. Replaces the previous flex sector-grid heatmap.
+  New backend `GET /market/sp500-heatmap` + curated constituents dataset.
+
 ## [1.13.1] — 2026-07-01
 
 ### Fixed

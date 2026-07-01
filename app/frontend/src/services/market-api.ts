@@ -47,11 +47,12 @@ export interface EarningsWeek {
 
 export interface HeatmapTile {
   readonly ticker: string;
-  readonly name: string;
+  readonly name?: string;
   readonly sector: string;
+  readonly industry?: string;
   readonly market_cap: number | null; // $ millions
   readonly pct_change: number | null;
-  readonly spark: readonly number[];
+  readonly spark?: readonly number[];
 }
 
 export interface Catalyst {
@@ -84,6 +85,7 @@ export const marketApi = {
     // Long timeout: the first (cold-cache) build does per-name Finnhub profile
     // lookups; once warmed (6h cache) it returns in a few seconds.
     req<{ tiles: HeatmapTile[] }>(`/heatmap?tickers=${encodeURIComponent(tickers.join(','))}`, 45_000),
+  getSp500Heatmap: () => req<{ tiles: HeatmapTile[] }>('/sp500-heatmap'),
   getEarningsWeek: (tickers: readonly string[]) =>
     req<EarningsWeek>(`/earnings-week?tickers=${encodeURIComponent(tickers.join(','))}`, 45_000),
 };

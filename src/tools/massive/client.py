@@ -340,6 +340,13 @@ class MassiveClient:
         d = "losers" if direction == "losers" else "gainers"
         return self._get(f"/v2/snapshot/locale/us/markets/stocks/{d}", {})
 
+    def get_snapshot_tickers(self, tickers: list[str]) -> dict[str, Any]:
+        """Full snapshot for a specific set of tickers in one call — each row carries
+        ``ticker``, ``todaysChangePerc``, and a ``day`` block. Wraps Polygon's
+        ``/v2/snapshot/locale/us/markets/stocks/tickers?tickers=...``."""
+        syms = ",".join(t.upper() for t in tickers if t)
+        return self._get("/v2/snapshot/locale/us/markets/stocks/tickers", {"tickers": syms})
+
     def get_option_contract_snapshot(self, underlying: str, option_ticker: str) -> dict[str, Any]:
         """Live snapshot for a single option contract.
 

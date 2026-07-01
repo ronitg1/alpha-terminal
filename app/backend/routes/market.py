@@ -158,6 +158,47 @@ async def get_earnings_week(tickers: str = "") -> dict[str, Any]:
         return {"week_of": None, "upcoming": [], "reported": []}
 
 
+@router.get("/sp500-heatmap")
+async def get_sp500_heatmap() -> dict[str, Any]:
+    """Finviz-style S&P 500 heatmap tiles: curated constituents (sector + sub-industry
+    + market cap) enriched with today's performance in one bulk snapshot. Cached ~90s."""
+    return await _cached("sp500", _build_sp500_heatmap)
+
+
+async def _build_sp500_heatmap() -> dict[str, Any]:
+    from app.backend.services.sp500_constituents import flat_constituents
+
+    consts = flat_constituents()
+    syms = [str(c["ticker"]) for c in consts]
+
+    def _perf_map() -> dict[str, float | None]:
+        from src.tools.massive.client import MassiveClient
+
+        try:
+            data = MassiveClient(timeout=10).get_snapshot_tickers(syms)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("S&P 500 snapshot failed: %s", type(exc).__name__)
+            return {}
+        out: dict[str, float | None] = {}
+        for r in (data.get("tickers") if isinstance(data, dict) else None) or []:
+            if not isinstance(r, dict):
+                continue
+            pct = r.get("todaysChangePerc")
+            if not pct:  # closed / pre-market → derive from prev close
+                day = r.get("day") or {}
+                prev = r.get("prevDay") or {}
+                last = day.get("c") or (r.get("lastTrade") or {}).get("p") or prev.get("c")
+                pc = prev.get("c")
+                if last and pc:
+                    pct = round((last - pc) / pc * 100, 2)
+            out[str(r.get("ticker", "")).upper()] = pct
+        return out
+
+    perf = await asyncio.to_thread(_perf_map)
+    tiles = [{**c, "pct_change": perf.get(str(c["ticker"]).upper())} for c in consts]
+    return {"tiles": tiles}
+
+
 @router.get("/heatmap")
 async def get_heatmap(tickers: str = "") -> dict[str, Any]:
     """Sector heatmap tiles for the given tickers: sector + market cap (Finnhub,

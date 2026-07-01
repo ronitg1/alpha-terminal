@@ -3,7 +3,7 @@
 # brand is "Alpha Terminal" (see README.md, LICENSE).
 [tool.poetry]
 name = "ai-hedge-fund"
-version = "1.13.1"
+version = "1.14.0"
 description = "Alpha Terminal — retail-investor research terminal. AI agent panels score your book, a realistic options backtester checks your strategies, and a market-news + earnings-call desk keeps you current."
 authors = ["Ronit Ganguly <ganguly.ronit@gmail.com>"]
 readme = "README.md"
