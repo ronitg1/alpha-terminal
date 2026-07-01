@@ -95,6 +95,17 @@ async def _run_for_user(sched: dict, today: str) -> None:
             logger.info("Pre-scan for %s: %d tickers -> %d signals", user_id, len(tickers), len(results))
         else:
             logger.info("Pre-scan for %s skipped: no watchlist tickers", user_id)
+
+        # Warm the portfolio overview cache on the same schedule so the Portfolio
+        # tab is instant when the user opens the app (the cron runs in-process, so
+        # this populates the very cache the app serves). Best-effort.
+        try:
+            from app.backend.services import portfolio_overview
+
+            await portfolio_overview.build_overview(force=True)
+        except Exception as exc:  # noqa: BLE001 — warming is best-effort
+            logger.warning("Pre-scan overview warm failed for %s: %s", user_id, type(exc).__name__)
+
         scan_schedule_service.mark_run(sched["id"], user_id, today)
     finally:
         if key_tokens is not None:

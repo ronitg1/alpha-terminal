@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.22] — 2026-07-01
+
+### Changed
+- **Scheduled pre-scan now also warms the portfolio.** On each due schedule the
+  background runner already pre-ran the pattern scan; it now also force-refreshes
+  the user's portfolio-overview cache (in the same process that serves it), so the
+  Portfolio tab is instant at the times you configured — not just the scanner.
+  Verified the scheduler picks up due schedules and runs end-to-end. (Still needs
+  `CRON_SECRET` set on the host + the GitHub Actions cron to actually fire.)
+
 ## [1.11.21] — 2026-07-01
 
 ### Added
