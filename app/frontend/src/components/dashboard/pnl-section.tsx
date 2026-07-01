@@ -16,6 +16,7 @@
 import { pnlApi } from '@/services/pnl-api';
 import { cn } from '@/lib/utils';
 import { RobinhoodPortfolioPull } from '@/components/dashboard/robinhood-portfolio-pull';
+import { SnapTradeConnect } from '@/components/dashboard/snaptrade-connect';
 import type { OptionLeg, PnlMark, PnlPosition, PnlSummary, PositionCreatePayload } from '@/types/pnl';
 import { ColorType, createChart, LineStyle } from 'lightweight-charts';
 import {
@@ -496,6 +497,7 @@ export function PnlSection() {
       {adding && <AddPositionForm onAdded={() => { setAdding(false); void reload(); }} onCancel={() => setAdding(false)} />}
 
       <RobinhoodPortfolioPull />
+      <SnapTradeConnect />
 
       {summary && <SummaryCards summary={summary} />}
       {summary && <EquityCurve points={summary.equity_curve} />}

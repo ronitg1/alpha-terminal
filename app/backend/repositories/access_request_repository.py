@@ -55,6 +55,17 @@ class AccessRequestRepository:
         self.db.refresh(row)
         return row
 
+    def delete(self, request_id: int) -> bool:
+        """Remove a request row entirely. Used for deny (drop a pending request)
+        and revoke (remove an approved user's shared access). True if a row was
+        deleted."""
+        row = self.db.query(AccessRequest).filter(AccessRequest.id == request_id).first()
+        if row is None:
+            return False
+        self.db.delete(row)
+        self.db.commit()
+        return True
+
     def is_email_approved(self, email: str) -> bool:
         """Whether an approved request exists for ``email`` (case-insensitive)."""
         e = email.strip().lower()

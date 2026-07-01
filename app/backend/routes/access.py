@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.backend.auth import get_current_user_id
 from app.backend.context import current_user_id
 from app.backend.database import get_db
+from app.backend.database.app_models import DEFAULT_USER_ID
 from app.backend.repositories.access_request_repository import AccessRequestRepository
 from app.backend.services.key_resolver import is_owner, is_shared_data_approved
 
@@ -76,12 +77,14 @@ async def list_requests(
     _user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """Owner-only: all access requests, newest first."""
+    """Owner-only: all access requests, newest first. The seed ``default`` row
+    (the owner's own local data) is never a real requester, so it is hidden."""
     _require_owner(request)
     rows = AccessRequestRepository(db).list_all()
     return [
         {"id": r.id, "user_id": r.user_id, "email": r.email, "status": r.status, "note": r.note}
         for r in rows
+        if r.user_id != DEFAULT_USER_ID
     ]
 
 
@@ -102,3 +105,20 @@ async def decide_request(
     if row is None:
         raise HTTPException(status_code=404, detail="Request not found")
     return {"id": row.id, "status": row.status}
+
+
+@router.delete("/requests/{request_id}")
+async def delete_request(
+    request_id: int,
+    request: Request,
+    _user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Owner-only: remove a request row entirely. Used both to deny a pending
+    request (it disappears, not kept as 'denied') and to revoke an approved
+    user's shared access (they lose it and drop off the list)."""
+    _require_owner(request)
+    removed = AccessRequestRepository(db).delete(request_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return {"deleted": True}

@@ -4,6 +4,44 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-07-01
+
+### Added
+- **SnapTrade → Fidelity read-only integration (Phase A).** Users connect a
+  brokerage through SnapTrade's hosted portal (credentials never touch the app)
+  and see stock + option positions. New signed `httpx` client (no SDK) with the
+  validated HMAC request signing; per-user SnapTrade `user_secret` stored
+  **encrypted at rest** (Fernet) in a new `snaptrade_connections` table (migration
+  `a7b8c9d0e1f2`) / local JSON. Routes `GET /snaptrade/status`, `POST
+  /snaptrade/connect`, `GET /snaptrade/portfolio`, `DELETE /snaptrade/connection`,
+  double-gated: dormant unless `SNAPTRADE_CLIENT_ID`/`SNAPTRADE_CONSUMER_KEY` are
+  set, and limited to owner/approved users (free-tier cost control). Frontend
+  connect card in the Portfolio tab. **Requires** `SNAPTRADE_CLIENT_ID` +
+  `SNAPTRADE_CONSUMER_KEY` on Railway (commercial keys) for production use.
+- **Unified Portfolio tab (M1).** The Portfolio nav tab is now a two-view
+  (**Summary** / **Positions**) experience with an **account switcher** and an
+  **"All accounts" combined** view. New `GET /portfolio/overview` merges every
+  connected brokerage (SnapTrade + Robinhood), enriches holdings with live quotes,
+  and computes value, day change, total gain/loss, % of account, and cost basis.
+  Summary shows totals + allocation + top/bottom movers; Positions is a full metric
+  grid that reflows to cards on iOS. Empty state prompts to connect a brokerage.
+  (Markets/market-movers cards, 52-week range, and the earnings calendar land in
+  follow-up milestones.)
+
+### Changed
+- **Settings dialog is now tabbed** — **API keys · Scheduled scans · Access** —
+  and height-capped with a scrolling body + fixed header, so Scheduled scans is
+  reachable instead of buried. Works on iOS (`dvh`, no horizontal overflow).
+- **Access-request management reworked (owner).** Two boxes: **Shared-key users**
+  (approved accounts, each removable to revoke access) and **Outstanding requests**
+  (pending). Approve moves a user up; deny/remove **deletes** the row entirely (no
+  "denied" limbo). The seed `default` account is hidden. New owner-only `DELETE
+  /access/requests/{id}`.
+
+### Conventions
+- **CLAUDE.md convention #8:** every UI change must work on iOS/mobile, not just
+  desktop (hard requirement).
+
 ## [1.9.0] — 2026-07-01
 
 ### Added (collaborator PRs, reviewed + integrated)

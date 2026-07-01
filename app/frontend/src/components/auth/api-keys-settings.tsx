@@ -17,6 +17,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API_BASE_URL } from '@/lib/api-base';
 import { ScheduledScansSettings } from './scheduled-scans-settings';
 
@@ -84,11 +85,24 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
     }
   }
 
-  async function decide(id: number, action: 'approve' | 'deny') {
+  async function approve(id: number) {
     try {
-      const res = await fetch(`${API_BASE_URL}/access/requests/${id}/${action}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/access/requests/${id}/approve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      toast.success(`Request ${action === 'approve' ? 'approved' : 'denied'}.`);
+      toast.success('Approved — moved to shared-key users.');
+      await loadAccess();
+    } catch (e) {
+      toast.error(`Couldn't approve request: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  // Deny (a pending request) and revoke (an approved user) are the same action:
+  // delete the row so the person drops off the list entirely.
+  async function removeRequest(id: number, verb: 'Denied' | 'Removed') {
+    try {
+      const res = await fetch(`${API_BASE_URL}/access/requests/${id}`, { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+      toast.success(`${verb}.`);
       await loadAccess();
     } catch (e) {
       toast.error(`Couldn't update request: ${e instanceof Error ? e.message : e}`);
@@ -216,18 +230,36 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
   const hasOpenRouterKey = present.has('openrouter');
   const selectedProviderLocked = modelProvider === 'OpenRouter' && !hasOpenRouterKey;
 
+  // Owner access panel: two boxes. Approved users get their own box (removable);
+  // pending requests get another. Denied rows no longer exist (deny deletes).
+  const approvedUsers = requests.filter((r) => r.status === 'approved');
+  const pendingRequests = requests.filter((r) => r.status === 'pending');
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>API keys</DialogTitle>
+      <DialogContent className="flex max-h-[85dvh] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="shrink-0 border-b border-border px-6 pb-4 pt-6">
+          <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Bring your own provider keys. Keys are encrypted and never shown again after saving.
+            Your API keys, scheduled scans{access?.is_owner ? ', and access approvals' : ''}. Keys are
+            encrypted and never shown again after saving.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
+        <Tabs defaultValue="keys" className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 overflow-x-auto px-6 pt-3">
+            <TabsList>
+              <TabsTrigger value="keys">API keys</TabsTrigger>
+              <TabsTrigger value="scheduled">Scheduled scans</TabsTrigger>
+              {access?.is_owner && <TabsTrigger value="access">Access</TabsTrigger>}
+            </TabsList>
+          </div>
+
+          <TabsContent
+            value="keys"
+            className="mt-0 min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-4"
+          >
           {PROVIDERS.map((p) => {
             const isSet = present.has(p.id);
             const isRequired =
@@ -367,34 +399,70 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             </div>
           )}
 
-          {/* Owner-only: review access requests (always shown to the owner). */}
-          {access?.is_owner && (
-            <div className="space-y-2 rounded-md border border-border p-3">
-              <p className="text-sm font-medium">Access requests</p>
-              {requests.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No requests yet. When someone asks for shared market-data access, they'll appear here to approve.
-                </p>
-              )}
-              {requests.map((r) => (
-                <div key={r.id} className="flex items-center gap-2 text-xs">
-                  <span className="truncate">{r.email ?? r.user_id}</span>
-                  <Badge variant={r.status === 'approved' ? 'success' : r.status === 'denied' ? 'destructive' : 'outline'} className="ml-auto">
-                    {r.status}
-                  </Badge>
-                  {r.status !== 'approved' && (
-                    <Button size="sm" variant="outline" onClick={() => decide(r.id, 'approve')}>Approve</Button>
-                  )}
-                  {r.status !== 'denied' && (
-                    <Button size="sm" variant="ghost" onClick={() => decide(r.id, 'deny')}>Deny</Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          </TabsContent>
 
-          <ScheduledScansSettings />
-        </div>
+          <TabsContent
+            value="scheduled"
+            className="mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4"
+          >
+            <ScheduledScansSettings />
+          </TabsContent>
+
+          {access?.is_owner && (
+            <TabsContent
+              value="access"
+              className="mt-0 min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
+            >
+              {/* Shared-key users: approved accounts. Remove revokes their access. */}
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <p className="text-sm font-medium">Shared-key users</p>
+                <p className="text-xs text-muted-foreground">
+                  Accounts you've approved to use your shared market-data keys.
+                </p>
+                {approvedUsers.length === 0 ? (
+                  <p className="text-xs italic text-muted-foreground">No one has shared access yet.</p>
+                ) : (
+                  approvedUsers.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2 text-xs">
+                      <span className="truncate">{r.email ?? r.user_id}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto text-muted-foreground hover:text-rose-500"
+                        onClick={() => removeRequest(r.id, 'Removed')}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Outstanding requests: approve moves up, deny deletes the row. */}
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <p className="text-sm font-medium">Outstanding requests</p>
+                {pendingRequests.length === 0 ? (
+                  <p className="text-xs italic text-muted-foreground">No pending requests.</p>
+                ) : (
+                  pendingRequests.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="truncate">{r.email ?? r.user_id}</div>
+                        {r.note && <div className="truncate text-[11px] text-muted-foreground">{r.note}</div>}
+                      </div>
+                      <Button size="sm" variant="outline" className="ml-auto" onClick={() => approve(r.id)}>
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => removeRequest(r.id, 'Denied')}>
+                        Deny
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

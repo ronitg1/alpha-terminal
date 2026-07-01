@@ -51,6 +51,7 @@ These aren't preferences — the existing code follows them. If you add code tha
 5. **Validate at import time.** Config files (e.g. `src/config/portfolio_config.py`) call their validator at module load so a bad edit fails loudly instead of at runtime two hours into a scan.
 6. **Tests pin behavior, not implementation.** Schema construction tests catch typos in `Literal` enum values. Aggregation tests use hand-crafted fixtures rather than mocks. See `tests/test_morning_scan.py` for the pattern.
 7. **No emojis in code or docs.** The user did not ask for them.
+8. **Every UI change MUST work on iOS / mobile, not just desktop.** This is a hard requirement, not a nice-to-have. The app is a real phone-usable web app. For any frontend change: verify it at a phone width (default breakpoint = mobile, `md:` = desktop, `max-md:` for mobile-only overrides), avoid horizontal overflow, use `dvh`/safe-area insets where height/edges matter (see `.app-vh` in `index.css`), and ensure tables/wide layouts scroll or reflow into cards on narrow screens. When you touch a component, leave it working on iOS Safari — no exceptions.
 
 ## Provider gotchas (Massive)
 

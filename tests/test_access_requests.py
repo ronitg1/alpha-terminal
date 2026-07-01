@@ -176,3 +176,49 @@ def test_owner_me_flags(db, auth_on, rsa_keypair, monkeypatch):
 
 def test_requires_auth(db, auth_on):
     assert client.get("/access/me").status_code == 401
+
+
+def test_owner_deny_deletes_request(db, auth_on, rsa_keypair, monkeypatch):
+    monkeypatch.setenv("OWNER_EMAIL", "boss@example.com")
+    user = _bearer(rsa_keypair, "user_friend", "friend@example.com", verified=True)
+    owner = _bearer(rsa_keypair, "user_boss", "boss@example.com", verified=True)
+
+    client.post("/access/request", json={}, headers=user)
+    rid = client.get("/access/requests", headers=owner).json()[0]["id"]
+
+    # Deny = delete: the row is gone, not kept as 'denied'.
+    assert client.delete(f"/access/requests/{rid}", headers=owner).status_code == 200
+    assert client.get("/access/requests", headers=owner).json() == []
+    me = client.get("/access/me", headers=user).json()
+    assert me["request_status"] is None and me["shared_data_approved"] is False
+
+
+def test_owner_revoke_approved_user(db, auth_on, rsa_keypair, monkeypatch):
+    monkeypatch.setenv("OWNER_EMAIL", "boss@example.com")
+    user = _bearer(rsa_keypair, "user_friend", "friend@example.com", verified=True)
+    owner = _bearer(rsa_keypair, "user_boss", "boss@example.com", verified=True)
+
+    client.post("/access/request", json={}, headers=user)
+    rid = client.get("/access/requests", headers=owner).json()[0]["id"]
+    client.post(f"/access/requests/{rid}/approve", headers=owner)
+    assert client.get("/access/me", headers=user).json()["shared_data_approved"] is True
+
+    # Revoke = delete an approved row: the user loses shared access.
+    assert client.delete(f"/access/requests/{rid}", headers=owner).status_code == 200
+    assert client.get("/access/me", headers=user).json()["shared_data_approved"] is False
+
+
+def test_delete_requires_owner(db, auth_on, rsa_keypair):
+    user = _bearer(rsa_keypair, "user_friend", "friend@example.com", verified=True)
+    assert client.delete("/access/requests/1", headers=user).status_code == 403
+
+
+def test_list_excludes_default_user(db, auth_on, rsa_keypair, monkeypatch):
+    monkeypatch.setenv("OWNER_EMAIL", "boss@example.com")
+    owner = _bearer(rsa_keypair, "user_boss", "boss@example.com", verified=True)
+    s = db()
+    try:
+        AccessRequestRepository(s).upsert_for_user("default", "owner@local")
+    finally:
+        s.close()
+    assert client.get("/access/requests", headers=owner).json() == []

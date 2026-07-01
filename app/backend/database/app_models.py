@@ -268,3 +268,26 @@ class PrescanResult(Base):
     timeframe = Column(String(8), nullable=False, default="day")
     ticker_count = Column(Integer, nullable=False, default=0)
     computed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SnapTradeConnection(Base):
+    """A user's SnapTrade registration for read-only brokerage sync (Fidelity).
+
+    SnapTrade issues a per-user ``user_secret`` from ``registerUser`` that, paired
+    with the app's owner-level client credentials, grants read access to that
+    user's connected brokerage accounts. It is a bearer-equivalent secret, so it
+    is stored **encrypted at rest** (Fernet, same as ``api_keys.key_value``); the
+    plaintext is only ever returned by the connection service's explicit decrypt
+    path, never by a REST route. One row per user.
+
+    ``snaptrade_user_id`` is the id we pass to SnapTrade at registration (the
+    user's own id) so it can be reproduced without a lookup, but it is persisted
+    so a future id scheme change doesn't orphan existing connections."""
+
+    __tablename__ = "snaptrade_connections"
+
+    user_id = Column(String(255), primary_key=True)                 # our (Clerk) user id
+    snaptrade_user_id = Column(String(255), nullable=False)         # id registered with SnapTrade
+    user_secret = Column(Text, nullable=False)                      # Fernet-encrypted SnapTrade userSecret
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
