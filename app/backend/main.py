@@ -28,6 +28,7 @@ async def _lifespan(app: FastAPI):
     _check_auth_encryption()
     _check_required_keys()
     _prewarm_catalyst_earnings()
+    _start_internal_cron()
     # The Ollama probe is for local-model users; on a cloud box with no Ollama
     # it just wastes startup time on a connection attempt. Skip it when
     # SKIP_OLLAMA_CHECK is set (recommended in container deploys).
@@ -60,7 +61,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.15.2",
+    version="1.15.4",
     lifespan=_lifespan,
 )
 
@@ -93,6 +94,77 @@ def _prewarm_catalyst_earnings() -> None:
 
     try:
         asyncio.get_running_loop().create_task(_warm())
+    except RuntimeError:
+        # No running loop (shouldn't happen inside lifespan) — skip silently.
+        pass
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _internal_cron_minutes() -> int:
+    """How often the in-process scheduled-scan cron ticks (minutes). Default 15."""
+    try:
+        return max(1, int(os.environ.get("INTERNAL_CRON_MINUTES", "15")))
+    except ValueError:
+        return 15
+
+
+def _internal_cron_enabled() -> bool:
+    """Whether to run the scheduled pre-scans from inside the app on a timer.
+
+    On by default for the DB/cloud backend — that's where the scheduled-scan
+    tenants live — and off for the local file backend so a dev server doesn't
+    start firing scans. Force on anywhere with ``ENABLE_INTERNAL_CRON`` (handy for
+    testing) or off with ``DISABLE_INTERNAL_CRON`` (e.g. to fall back to the
+    external GitHub-Actions cron)."""
+    from app.backend.services._storage import use_db
+
+    if _truthy_env("DISABLE_INTERNAL_CRON"):
+        return False
+    return use_db() or _truthy_env("ENABLE_INTERNAL_CRON")
+
+
+def _start_internal_cron() -> None:
+    """Launch the in-process scheduled-pre-scan cron as a background task.
+
+    Replaces reliance on the external GitHub-Actions cron, which fires reliably
+    only every few hours on the free tier (so a "10 AM" scan could sit unrun for
+    hours) and clips each run at a 180s HTTP timeout. Running ``run_due`` in-process
+    on a timer fixes both: timing is exact, and a scan can take as long as it needs
+    with no HTTP cutoff. It's self-healing — each tick runs any schedule whose local
+    time has passed today and hasn't run yet, so a restart just catches up on the
+    next tick. The GitHub cron is kept as a harmless backup (now a fast no-op once
+    the internal run has marked the day's schedules done).
+
+    ``run_due`` is awaited sequentially in the loop, so ticks never overlap. Errors
+    are logged and swallowed so a bad tick never kills the loop. Best-effort."""
+    import asyncio
+
+    if not _internal_cron_enabled():
+        return
+    minutes = _internal_cron_minutes()
+
+    async def _loop() -> None:
+        from app.backend.services import prescan_runner
+
+        await asyncio.sleep(30)  # let startup (checks + prewarm) settle first
+        while True:
+            try:
+                summary = await prescan_runner.run_due()
+                if summary.get("ran"):
+                    logger.info(
+                        "Internal cron: ran %d due pre-scan(s) (checked %d, %d error(s)).",
+                        summary.get("ran", 0), summary.get("checked", 0), summary.get("errors", 0),
+                    )
+            except Exception as exc:  # noqa: BLE001 — one bad tick must not stop the loop
+                logger.warning("Internal cron tick failed: %s", type(exc).__name__)
+            await asyncio.sleep(minutes * 60)
+
+    try:
+        asyncio.get_running_loop().create_task(_loop())
+        logger.info("Internal pre-scan cron enabled (every %d min).", minutes)
     except RuntimeError:
         # No running loop (shouldn't happen inside lifespan) — skip silently.
         pass

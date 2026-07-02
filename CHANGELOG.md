@@ -4,6 +4,24 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.4] — 2026-07-02
+
+### Added
+- **In-process scheduler for scheduled pre-scans — replaces reliance on the external
+  GitHub-Actions cron.** GitHub's free scheduled cron is throttled to firing every
+  few hours (so a "10 AM" scan could sit unrun until early afternoon) and clips each
+  run at a 180s HTTP timeout. The backend now runs `prescan_runner.run_due()` itself
+  on a timer (default every 15 min, `INTERNAL_CRON_MINUTES`): timing is exact and a
+  scan can take as long as it needs with no HTTP cutoff. It's self-healing — each
+  tick runs any schedule whose local time has passed today and hasn't run yet, so a
+  restart just catches up on the next tick. Enabled automatically on the DB/cloud
+  backend (where the scheduled-scan tenants live) and off for the local file backend;
+  override with `ENABLE_INTERNAL_CRON` / `DISABLE_INTERNAL_CRON`. The GitHub-Actions
+  cron is kept as a harmless backup — now a fast no-op once the internal run has
+  marked the day's schedules done, so it no longer reports timeouts as failures.
+  Verified end-to-end: a due schedule ran on the first tick (200 tickers -> 3246
+  signals) and its `last_run_on` was marked so it didn't re-run.
+
 ## [1.15.3] — 2026-07-02
 
 ### Fixed
