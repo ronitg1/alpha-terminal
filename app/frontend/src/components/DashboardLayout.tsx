@@ -19,6 +19,7 @@ import { useState } from 'react';
 import { Menu } from 'lucide-react';
 
 import { DashboardProvider, useDashboard } from '@/contexts/dashboard-context';
+import { PatternScanProvider } from '@/contexts/pattern-scan-context';
 import { SleevesProvider } from '@/contexts/sleeves-context';
 import { cn } from '@/lib/utils';
 import type { DashboardSection } from '@/types/sleeves';
@@ -98,7 +99,10 @@ export function DashboardLayout() {
   return (
     <SleevesProvider>
       <DashboardProvider>
-        <DashboardShell />
+        {/* Above MainContent, so a running pattern scan survives navigation. */}
+        <PatternScanProvider>
+          <DashboardShell />
+        </PatternScanProvider>
       </DashboardProvider>
     </SleevesProvider>
   );

@@ -4,6 +4,23 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] — 2026-07-02
+
+### Changed
+- **Pattern Scanner runs its scan in the background.** Kicking off a scan and then
+  navigating to another section (or another Screening sub-tab) no longer discards
+  the in-flight scan and resets the tab. The scan lifecycle — results, the
+  in-progress flag, the win-rate backfill, and the adopted pre-scan — moved out of
+  the (unmountable) `PatternsTab` into a new `PatternScanProvider`
+  (`app/frontend/src/contexts/pattern-scan-context.tsx`) mounted above
+  `MainContent` in `DashboardLayout`, so it survives navigation. When a background
+  scan finishes while you're elsewhere, a toast reports the signal count with a
+  **View** action that jumps back to the results; returning to the Pattern Scanner
+  shows the completed results instead of a blank form. Overlapping scans are
+  single-flighted (only the most-recent response lands). (Scope: survives in-app
+  navigation with the tab open; a full page reload still loses an in-flight
+  on-demand scan — only scheduled pre-scans persist server-side.)
+
 ## [1.15.0] — 2026-07-01
 
 ### Added

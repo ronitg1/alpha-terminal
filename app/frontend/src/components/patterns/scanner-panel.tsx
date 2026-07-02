@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { scanTickers } from '@/services/patterns-api';
+import { usePatternScan } from '@/contexts/pattern-scan-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
-import type { PatternTimeframe, ScanResult } from '@/types/patterns';
+import type { PatternTimeframe } from '@/types/patterns';
 
 const ALL_PATTERNS = [
   'Bullish Flag', 'Bull Pennant', 'Double Bottom', 'Inverse Head and Shoulders',
@@ -71,12 +71,6 @@ const TIMEFRAME_OPTIONS: {
 
 type TabId = 'watchlist' | 'sleeves' | 'custom';
 
-interface ScannerPanelProps {
-  onResults: (results: ScanResult[], timeframe: PatternTimeframe) => void;
-  isScanning: boolean;
-  setIsScanning: (v: boolean) => void;
-}
-
 function dedupe(arr: string[]): string[] {
   return [...new Set(arr.map((t) => t.toUpperCase().trim()).filter(Boolean))];
 }
@@ -85,8 +79,9 @@ function parseCustomTickers(text: string): string[] {
   return dedupe(text.split(/[\s,;]+/));
 }
 
-export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPanelProps) {
+export function ScannerPanel() {
   const { watchlists, config } = useSleevesContext();
+  const { isScanning, runScan } = usePatternScan();
 
   const [tab, setTab] = useState<TabId>('watchlist');
   const [selectedWatchlist, setSelectedWatchlist] = useState<string>('all');
@@ -149,7 +144,7 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
     setSelectedPatterns((prev) => (prev.length === ALL_PATTERNS.length ? [] : [...ALL_PATTERNS]));
   };
 
-  const handleScan = async () => {
+  const handleScan = () => {
     const tickers = resolvedTickers();
     if (tickers.length === 0) {
       toast.error('No tickers selected. Add tickers to a watchlist, portfolio, or enter them manually.');
@@ -159,26 +154,9 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
       toast.error('Select at least one pattern.');
       return;
     }
-    setIsScanning(true);
-    // Big universes (hundreds of names) take a while against a rate-limited
-    // provider — set expectations so a long wait doesn't read as a hang.
-    if (tickers.length > 120) {
-      toast.info(`Scanning ${tickers.length} names — large scans can take a minute or two.`);
-    }
-    try {
-      const results = await scanTickers(tickers, selectedPatterns, lookback, timeframe);
-      onResults(results, timeframe);
-    } catch (err) {
-      console.warn('Scan failed:', err);
-      const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
-      toast.error(
-        isTimeout
-          ? `Scan timed out on ${tickers.length} names — try fewer tickers or a single watchlist.`
-          : 'Scan failed — check that the backend is running.',
-      );
-    } finally {
-      setIsScanning(false);
-    }
+    // Hand off to the provider, which runs the scan detached from this component
+    // so it keeps going (and lands its results) even if you navigate away.
+    runScan({ tickers, patterns: selectedPatterns, lookback, timeframe });
   };
 
   return (
@@ -389,7 +367,7 @@ export function ScannerPanel({ onResults, isScanning, setIsScanning }: ScannerPa
         {/* ── Scan button ── */}
         <button
           type="button"
-          onClick={() => void handleScan()}
+          onClick={handleScan}
           disabled={isScanning || tickerCount === 0}
           className="w-full py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-500 text-white"
         >

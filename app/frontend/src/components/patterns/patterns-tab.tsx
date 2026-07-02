@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getSignalAnalysis } from '@/services/patterns-api';
-import { scheduledApi } from '@/services/scheduled-api';
-import type { HistoricalStats, PatternTimeframe, ScanResult } from '@/types/patterns';
+import { useState } from 'react';
+import { usePatternScan } from '@/contexts/pattern-scan-context';
+import type { ScanResult } from '@/types/patterns';
 import { ScannerPanel } from './scanner-panel';
 import { ResultsTable } from './results-table';
 import { ChartModal } from './chart-modal';
@@ -73,75 +72,13 @@ function QuickStats({
 }
 
 export function PatternsTab() {
+  // Scan lifecycle (results, in-progress flag, win rates, pre-scan) lives in the
+  // PatternScanProvider mounted above MainContent, so a running scan and its
+  // results survive navigating away from this tab. This component only owns the
+  // view-local UI: the Scanner/Backtest toggle and the open chart modal.
   const [view, setView] = useState<'scanner' | 'backtest'>('scanner');
-  const [results, setResults] = useState<ScanResult[]>([]);
-  const [timeframe, setTimeframe] = useState<PatternTimeframe>('day');
-  const [isScanning, setIsScanning] = useState(false);
   const [chart, setChart] = useState<ChartTarget | null>(null);
-  const [winRates, setWinRates] = useState<Map<string, HistoricalStats>>(new Map());
-  const [prescanAt, setPrescanAt] = useState<string | null>(null);
-
-  const handleResults = (rows: ScanResult[], tf: PatternTimeframe) => {
-    setTimeframe(tf);
-    setResults(rows);
-    setPrescanAt(null); // a manual scan supersedes the background pre-scan
-  };
-
-  // On first open, if the user hasn't scanned yet, show their latest background
-  // pre-scan so results are ready instantly.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pre = await scheduledApi.getPrescan();
-        if (cancelled || !pre || !pre.results?.length) return;
-        setResults((cur) => (cur.length ? cur : pre.results));
-        setTimeframe((pre.timeframe as PatternTimeframe) ?? 'day');
-        setPrescanAt(pre.computed_at);
-      } catch {
-        // no pre-scan, or not signed in — ignore
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Background-fetch win rates for all unique ticker+pattern pairs after a scan
-  useEffect(() => {
-    if (results.length === 0) { setWinRates(new Map()); return; }
-
-    const seen = new Set<string>();
-    const pairs: { ticker: string; pattern: string; key: string }[] = [];
-    for (const r of results) {
-      const key = `${r.ticker}:${r.pattern}`;
-      if (!seen.has(key)) { seen.add(key); pairs.push({ ticker: r.ticker, pattern: r.pattern, key }); }
-    }
-
-    let cancelled = false;
-    setWinRates(new Map());
-
-    const fetchAll = async () => {
-      const BATCH = 5;
-      for (let i = 0; i < pairs.length && !cancelled; i += BATCH) {
-        await Promise.all(
-          pairs.slice(i, i + BATCH).map(async ({ ticker, pattern, key }) => {
-            try {
-              const data = await getSignalAnalysis(ticker, pattern, timeframe);
-              if (!cancelled)
-                setWinRates((prev) => new Map(prev).set(key, data.historical));
-            } catch {
-              // skip on error — non-critical
-            }
-          })
-        );
-      }
-    };
-
-    fetchAll();
-    return () => { cancelled = true; };
-    // timeframe is set atomically with results in handleResults, so results
-    // is the only trigger that matters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results]);
+  const { results, timeframe, isScanning, winRates, prescanAt } = usePatternScan();
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
@@ -177,11 +114,7 @@ export function PatternsTab() {
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 p-3 md:p-4 overflow-y-auto md:overflow-hidden">
         {/* Left: scanner + stats */}
         <div className="space-y-4 md:overflow-y-auto md:pr-1">
-          <ScannerPanel
-            onResults={handleResults}
-            isScanning={isScanning}
-            setIsScanning={setIsScanning}
-          />
+          <ScannerPanel />
           {results.length > 0 && (
             <QuickStats
               results={results}
