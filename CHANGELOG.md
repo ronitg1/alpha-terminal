@@ -4,6 +4,30 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.2] — 2026-07-02
+
+### Fixed
+- **Market catalyst calendar showed no earnings.** Three compounding causes, all fixed:
+  1. **Cold-cache timeout.** Earnings are fetched from Finnhub per-symbol and
+     sequentially (rate limit), so a cold fetch of the merged watchlist + notable
+     set ran ~13-18s — past the route's old 12s cap, which dropped the earnings
+     entirely and left only macro events. The calendar looked earnings-empty until
+     the cache happened to warm.
+  2. **Notable set crowded out by a big watchlist.** The old code merged watchlist +
+     notable into one 34-symbol call; a default watchlist like "Market Cap Leaders"
+     (139 names) filled all 34 slots, excluding the curated big-prints AND blowing
+     the time budget. Earnings are now two independent, time-boxed calls — the
+     prewarmed **notable set always renders**, with a bounded slice of the user's
+     watchlist added best-effort on top, so a slow watchlist fetch can't drop the
+     marquee earnings.
+  3. **Opened on a macro-only week.** The week view auto-anchored to the earliest
+     catalyst of any kind, which could be a macro event (e.g. a jobs report) in a
+     week with no earnings — so even when earnings were present they weren't visible
+     by default. It now anchors to the earliest upcoming **earnings**.
+- Added a **startup prewarm** of the notable-earnings cache (`main.py`) so a fresh /
+  cold backend instance serves earnings on the very first Market load instead of
+  timing out.
+
 ## [1.15.1] — 2026-07-02
 
 ### Changed

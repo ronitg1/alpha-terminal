@@ -27,6 +27,7 @@ async def _lifespan(app: FastAPI):
     """Startup checks: auth/encryption invariant, required API keys, then Ollama."""
     _check_auth_encryption()
     _check_required_keys()
+    _prewarm_catalyst_earnings()
     # The Ollama probe is for local-model users; on a cloud box with no Ollama
     # it just wastes startup time on a connection attempt. Skip it when
     # SKIP_OLLAMA_CHECK is set (recommended in container deploys).
@@ -59,9 +60,42 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.14.3",
+    version="1.15.2",
     lifespan=_lifespan,
 )
+
+
+def _prewarm_catalyst_earnings() -> None:
+    """Warm the notable-earnings cache in the background so the Market catalyst
+    calendar shows earnings on the very first load.
+
+    A cold Finnhub fetch of the ~24 curated notable symbols is sequential (the
+    free tier rate-limits, so it can't fan out) and runs longer than the calendar
+    route's per-request budget — without this, a fresh/cold instance's first
+    Market load times out to macro-only and looks like "no earnings." This kicks
+    the same cached fetch off at boot, off the request path. Fire-and-forget and
+    fully best-effort: it never blocks or fails startup, and it reads the shared
+    ``FINNHUB_API_KEY`` from the environment (no request context needed)."""
+    import asyncio
+
+    if not os.environ.get("FINNHUB_API_KEY", "").strip():
+        return
+
+    async def _warm() -> None:
+        try:
+            from app.backend.routes.portfolio import get_earnings
+            from app.backend.services.earnings_week import _NOTABLE
+
+            await get_earnings(tickers=",".join(_NOTABLE), days=60)
+            logger.info("Prewarmed catalyst earnings cache (%d notable symbols).", len(_NOTABLE))
+        except Exception as exc:  # noqa: BLE001 — best-effort; must never break boot
+            logger.warning("Catalyst earnings prewarm skipped: %s", type(exc).__name__)
+
+    try:
+        asyncio.get_running_loop().create_task(_warm())
+    except RuntimeError:
+        # No running loop (shouldn't happen inside lifespan) — skip silently.
+        pass
 
 
 def _check_auth_encryption() -> None:

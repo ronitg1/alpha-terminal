@@ -79,36 +79,58 @@ async def get_catalysts(tickers: str = "", days: int = 60) -> dict[str, Any]:
     today_iso, end_iso = today.isoformat(), end.isoformat()
 
     events: list[dict[str, Any]] = []
-    # Earnings (reuses the cached per-symbol Finnhub fetch). Merge the user's watchlist
-    # with a curated set of NOTABLE market-movers so the calendar surfaces the big
-    # prints too (the old separate "notable earnings" panel is folded in here). Cap the
-    # count + time-box the call so a big list can't stall the calendar — the macro/
-    # policy events below always render even if earnings are slow, and the per-symbol
-    # cache warms across calls.
+    # Earnings (reuses the cached per-symbol Finnhub fetch). The calendar shows the
+    # curated NOTABLE market-movers (the big prints — AAPL, TSLA, JPM…) plus the
+    # user's own watchlist names. These are fetched as TWO independent, time-boxed
+    # calls so the marquee earnings can't be dropped by a slow watchlist fetch:
+    #   1. NOTABLE — prewarmed at startup (see main.py), so this is ~instant cache
+    #      hits and its earnings always render.
+    #   2. Watchlist — a bounded set on top, best-effort; if it's cold/slow and
+    #      times out, only the extra watchlist names are lost, never the notable
+    #      ones (nor the macro/policy events below).
+    # The old design merged both into one 34-symbol call under a single timeout —
+    # a big watchlist crowded out the notable set AND blew the budget, so the whole
+    # earnings block timed out and the calendar showed no earnings at all.
     from app.backend.services.earnings_week import _NOTABLE
 
-    seen_syms: set[str] = set()
-    merged: list[str] = []
-    for s in [t.strip().upper() for t in tickers.split(",") if t.strip()] + _NOTABLE:
-        if s and s not in seen_syms:
-            seen_syms.add(s)
-            merged.append(s)
-    capped = ",".join(merged[:34])
-    if capped:
+    async def _earnings_events(syms: list[str], budget: float) -> list[dict[str, Any]]:
+        if not syms:
+            return []
         try:
-            payload = await asyncio.wait_for(get_earnings(tickers=capped, days=horizon), timeout=12.0)
-            for e in payload.get("earnings", []):
-                if e.get("date"):
-                    events.append({
-                        "date": e["date"],
-                        "category": "earnings",
-                        "title": f"{e['ticker']} earnings",
-                        "ticker": e["ticker"],
-                        "hour": e.get("hour"),
-                        "eps_estimate": e.get("eps_estimate"),
-                    })
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Catalyst earnings fetch failed: %s", type(exc).__name__)
+            payload = await asyncio.wait_for(
+                get_earnings(tickers=",".join(syms), days=horizon), timeout=budget
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; macro events still render
+            logger.warning("Catalyst earnings fetch (%d syms) failed: %s", len(syms), type(exc).__name__)
+            return []
+        return [
+            {
+                "date": e["date"],
+                "category": "earnings",
+                "title": f"{e['ticker']} earnings",
+                "ticker": e["ticker"],
+                "hour": e.get("hour"),
+                "eps_estimate": e.get("eps_estimate"),
+            }
+            for e in payload.get("earnings", [])
+            if e.get("date")
+        ]
+
+    notable_set = set(_NOTABLE)
+    watch_extra = [
+        s
+        for s in dict.fromkeys(t.strip().upper() for t in tickers.split(",") if t.strip())
+        if s not in notable_set
+    ][:15]
+
+    notable_events = await _earnings_events(list(_NOTABLE), 20.0)
+    watch_events = await _earnings_events(watch_extra, 15.0)
+    seen_ev: set[tuple[str, str]] = set()
+    for e in notable_events + watch_events:
+        key = (e["ticker"], e["date"])
+        if key not in seen_ev:
+            seen_ev.add(key)
+            events.append(e)
 
     # Curated macro / policy events within the window.
     for m in _MACRO_CATALYSTS:

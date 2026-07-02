@@ -79,10 +79,16 @@ export function CatalystCalendar({ tickers, onTicker }: { tickers: string[]; onT
     return map;
   }, [items]);
 
-  // Open on the period containing the earliest upcoming catalyst (once).
+  // Open on the period containing the earliest upcoming EARNINGS (once), so
+  // earnings are visible by default rather than landing on a macro-only week.
+  // Falls back to the earliest catalyst of any kind when there are no earnings.
   useEffect(() => {
     if (pinned || items.length === 0) return;
-    const earliest = items.map((c) => c.date).filter(Boolean).sort()[0];
+    const earliestEarnings = items
+      .filter((c) => c.category === 'earnings' && c.date)
+      .map((c) => c.date)
+      .sort()[0];
+    const earliest = earliestEarnings ?? items.map((c) => c.date).filter(Boolean).sort()[0];
     if (earliest) {
       const [y, mo, d] = earliest.split('-').map(Number);
       setAnchor(new Date(y, mo - 1, d));
