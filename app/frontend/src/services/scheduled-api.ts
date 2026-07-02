@@ -14,6 +14,8 @@ export interface ScanSchedule {
   timezone: string;
   enabled: boolean;
   last_run_on: string | null;
+  timeframe: string; // week | day | 1h | 15m
+  lookback_days: number;
 }
 
 export interface PrescanResult {
@@ -52,10 +54,21 @@ export const scheduledApi = {
   listSchedules: () =>
     req<{ schedules: ScanSchedule[] }>('/scheduled/schedules').then((r) => r.schedules),
 
-  addSchedule: (timeOfDay: string, timezone: string) =>
+  addSchedule: (timeOfDay: string, timezone: string, timeframe: string, lookbackDays: number) =>
     req<ScanSchedule>('/scheduled/schedules', {
       method: 'POST',
-      body: JSON.stringify({ time_of_day: timeOfDay, timezone }),
+      body: JSON.stringify({
+        time_of_day: timeOfDay,
+        timezone,
+        timeframe,
+        lookback_days: lookbackDays,
+      }),
+    }),
+
+  updateSchedule: (id: number, timeframe: string, lookbackDays: number) =>
+    req<ScanSchedule>(`/scheduled/schedules/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ timeframe, lookback_days: lookbackDays }),
     }),
 
   toggleSchedule: (id: number, enabled: boolean) =>
@@ -67,6 +80,9 @@ export const scheduledApi = {
   deleteSchedule: (id: number) =>
     req<{ ok: boolean }>(`/scheduled/schedules/${id}`, { method: 'DELETE' }),
 
-  getPrescan: () =>
-    req<{ prescan: PrescanResult | null }>('/scheduled/prescan').then((r) => r.prescan),
+  /** The pre-scan for a timeframe, or the most recent one when omitted. */
+  getPrescan: (timeframe?: string) =>
+    req<{ prescan: PrescanResult | null }>(
+      `/scheduled/prescan${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ''}`,
+    ).then((r) => r.prescan),
 };

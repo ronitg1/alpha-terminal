@@ -10,6 +10,7 @@ import { Clock, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { browserTimezone, scheduledApi, type ScanSchedule } from '@/services/scheduled-api';
+import { SCAN_TIMEFRAMES, timeframeConfig } from '@/lib/scan-timeframes';
 
 /** "15:30" -> "3:30 PM" for display. */
 function fmt12(t: string): string {
@@ -20,12 +21,23 @@ function fmt12(t: string): string {
   return `${h12}:${m} ${ampm}`;
 }
 
+const selectCls = 'bg-background border border-border rounded px-1.5 py-1 text-xs';
+
 export function ScheduledScansSettings() {
   const [schedules, setSchedules] = useState<ScanSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTime, setNewTime] = useState('08:00');
+  const [newTf, setNewTf] = useState('day');
+  const [newLookback, setNewLookback] = useState(180);
   const [busy, setBusy] = useState(false);
   const tz = browserTimezone();
+
+  // Picking a timeframe resets the lookback to that timeframe's default (the old
+  // value is usually out of range for the new bar size).
+  const selectNewTf = (tf: string) => {
+    setNewTf(tf);
+    setNewLookback(timeframeConfig(tf).defaultLookback);
+  };
 
   const load = async () => {
     try {
@@ -44,13 +56,22 @@ export function ScheduledScansSettings() {
   const add = async () => {
     setBusy(true);
     try {
-      await scheduledApi.addSchedule(newTime, tz);
+      await scheduledApi.addSchedule(newTime, tz, newTf, newLookback);
       toast.success(`Scan scheduled for ${fmt12(newTime)}`);
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to add time');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const editConfig = async (s: ScanSchedule, timeframe: string, lookbackDays: number) => {
+    try {
+      await scheduledApi.updateSchedule(s.id, timeframe, lookbackDays);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update scan');
     }
   };
 
@@ -88,9 +109,32 @@ export function ScheduledScansSettings() {
             <p className="text-xs italic text-muted-foreground">No scheduled times yet.</p>
           )}
           {schedules.map((s) => (
-            <div key={s.id} className="flex items-center gap-2 text-xs">
+            <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="font-mono">{fmt12(s.time_of_day)}</span>
+              {/* Per-schedule timeframe + lookback (editable inline). */}
+              <select
+                value={s.timeframe}
+                onChange={(e) =>
+                  void editConfig(s, e.target.value, timeframeConfig(e.target.value).defaultLookback)
+                }
+                className={selectCls}
+                aria-label="Timeframe"
+              >
+                {SCAN_TIMEFRAMES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+              <select
+                value={s.lookback_days}
+                onChange={(e) => void editConfig(s, s.timeframe, Number(e.target.value))}
+                className={selectCls}
+                aria-label="Lookback"
+              >
+                {timeframeConfig(s.timeframe).lookbacks.map((l) => (
+                  <option key={l.value} value={l.value}>{l.label}</option>
+                ))}
+              </select>
               {!s.enabled && (
                 <Badge variant="outline" className="text-[10px]">
                   off
@@ -113,18 +157,38 @@ export function ScheduledScansSettings() {
             </div>
           ))}
 
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             <input
               type="time"
               value={newTime}
               onChange={(e) => setNewTime(e.target.value)}
               className="bg-background border border-border rounded px-2 py-1 text-xs"
             />
+            <select value={newTf} onChange={(e) => selectNewTf(e.target.value)} className={selectCls} aria-label="New timeframe">
+              {SCAN_TIMEFRAMES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <select
+              value={newLookback}
+              onChange={(e) => setNewLookback(Number(e.target.value))}
+              className={selectCls}
+              aria-label="New lookback"
+            >
+              {timeframeConfig(newTf).lookbacks.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </select>
             <Button size="sm" onClick={() => void add()} disabled={busy}>
               <Plus className="mr-1 h-3.5 w-3.5" />
-              {busy ? 'Adding…' : 'Add time'}
+              {busy ? 'Adding…' : 'Add'}
             </Button>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            Each scheduled scan runs its own timeframe + lookback (e.g. a daily 2yr premarket scan
+            and a 1h 30d intraday scan). The Pattern Scanner shows the saved pre-scan for whichever
+            timeframe you select.
+          </p>
         </>
       )}
     </div>

@@ -81,7 +81,7 @@ function parseCustomTickers(text: string): string[] {
 
 export function ScannerPanel() {
   const { watchlists, config } = useSleevesContext();
-  const { isScanning, runScan } = usePatternScan();
+  const { isScanning, runScan, viewPrescan, timeframe: displayedTimeframe } = usePatternScan();
 
   const [tab, setTab] = useState<TabId>('watchlist');
   const [selectedWatchlist, setSelectedWatchlist] = useState<string>('all');
@@ -94,13 +94,34 @@ export function ScannerPanel() {
 
   const tfConfig = TIMEFRAME_OPTIONS.find((t) => t.value === timeframe) ?? TIMEFRAME_OPTIONS[0];
 
-  const selectTimeframe = (tf: PatternTimeframe) => {
+  // The user has changed the timeframe at least once, after which we stop
+  // auto-syncing the form to the displayed pre-scan's timeframe.
+  const touchedTimeframe = useRef(false);
+
+  const applyTimeframe = (tf: PatternTimeframe) => {
     setTimeframe(tf);
     const cfg = TIMEFRAME_OPTIONS.find((t) => t.value === tf);
     // Reset lookback to the timeframe's default — the previous value is
     // usually out of range for the new bar size.
     if (cfg) setLookback(cfg.defaultLookback);
   };
+
+  const selectTimeframe = (tf: PatternTimeframe) => {
+    touchedTimeframe.current = true;
+    applyTimeframe(tf);
+    // Show the saved pre-scan for the newly selected timeframe (or an empty
+    // state if none) so the results reflect the chosen bar size.
+    viewPrescan(tf);
+  };
+
+  // On first load, match the form's timeframe to whatever pre-scan is being
+  // shown (the most recent across timeframes), until the user picks one.
+  useEffect(() => {
+    if (!touchedTimeframe.current && displayedTimeframe && displayedTimeframe !== timeframe) {
+      applyTimeframe(displayedTimeframe);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedTimeframe]);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 

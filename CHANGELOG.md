@@ -4,6 +4,28 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] — 2026-07-02
+
+### Added
+- **Scheduled pre-scans can set their own timeframe + lookback.** Each scheduled scan
+  now carries a chart timeframe (Weekly / Daily / 1h / 15m) and a lookback window,
+  set in Settings → Scheduled scans, so you can run e.g. a **daily 2yr** premarket
+  scan and a **1h 30d** intraday scan on different schedules. The runner uses each
+  schedule's own values instead of the old hardcoded daily/180d. Lookbacks are
+  clamped to each timeframe's server-side max.
+- **Pre-scans are kept per timeframe** so those different-timeframe scans coexist
+  instead of overwriting each other. The Pattern Scanner shows the saved pre-scan
+  for whichever timeframe you select (and an empty "run a scan" state when a
+  timeframe has none); on load it adopts the most recently computed one.
+
+### Changed
+- `prescan_results` is re-keyed from `(user_id)` to `(user_id, timeframe)` and
+  `scan_schedules` gains `timeframe` + `lookback_days` (Alembic migration
+  `b8c9d0e1f2a3`; defaults match the old behavior, so existing schedules keep
+  scanning daily/180d). New `PUT /scheduled/schedules/{id}` to edit a schedule's
+  timeframe/lookback, and `GET /scheduled/prescan?timeframe=` to fetch a specific
+  one. The file backend transparently migrates the old single-slot pre-scan shape.
+
 ## [1.15.4] — 2026-07-02
 
 ### Added

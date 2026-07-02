@@ -49,6 +49,34 @@ def _valid_tz(timezone: str) -> str:
     return tz
 
 
+def validate_timeframe_lookback(timeframe: str, lookback_days: int) -> tuple[str, int]:
+    """Validate a schedule's timeframe and clamp its lookback to that timeframe's
+    server-side max, mirroring the live scanner. Lazy import of the timeframe
+    registry avoids a routes->services->routes import cycle."""
+    from app.backend.routes.patterns import _TIMEFRAMES
+
+    tf = (timeframe or "day").strip()
+    if tf not in _TIMEFRAMES:
+        raise ValueError(f"Unknown timeframe '{tf}'. Use one of: {', '.join(_TIMEFRAMES)}.")
+    try:
+        days = int(lookback_days)
+    except (TypeError, ValueError):
+        raise ValueError("lookback_days must be a whole number of days.")
+    if days < 1:
+        raise ValueError("lookback_days must be positive.")
+    return tf, min(days, int(_TIMEFRAMES[tf]["max_lookback_days"]))
+
+
+def _normalize_user_prescans(entry: Any) -> dict[str, dict]:
+    """A user's stored pre-scans as ``{timeframe: prescan-dict}``, tolerating the
+    old single-slot shape (a flat dict with a top-level ``results`` key)."""
+    if not isinstance(entry, dict):
+        return {}
+    if "results" in entry:  # legacy flat shape → one slot keyed by its timeframe
+        return {entry.get("timeframe") or "day": entry}
+    return {k: v for k, v in entry.items() if isinstance(v, dict)}
+
+
 # ─── file-backend helpers ────────────────────────────────────────────────────
 
 def _read_json(path: Path) -> dict:
@@ -82,6 +110,15 @@ def _next_id(store: dict) -> int:
     return (max(ids) + 1) if ids else 1
 
 
+def _ensure_cfg(row: dict[str, Any]) -> dict[str, Any]:
+    """Backfill timeframe/lookback defaults on a file-backend row that predates
+    those fields, so the API shape is uniform (the DB backend gets them via the
+    migration's server_default)."""
+    row.setdefault("timeframe", "day")
+    row.setdefault("lookback_days", 180)
+    return row
+
+
 # ─── per-user schedule CRUD ──────────────────────────────────────────────────
 
 def list_schedules() -> list[dict[str, Any]]:
@@ -89,15 +126,18 @@ def list_schedules() -> list[dict[str, Any]]:
         with session_scope() as db:
             return ScheduleRepository(db, current_user_id()).list_schedules()
     store = _read_json(_SCHED_PATH)
-    return sorted(store.get(current_user_id(), []), key=lambda s: s["time_of_day"])
+    return [_ensure_cfg(s) for s in sorted(store.get(current_user_id(), []), key=lambda s: s["time_of_day"])]
 
 
-def add_schedule(time_of_day: str, timezone: str) -> dict[str, Any]:
+def add_schedule(
+    time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180
+) -> dict[str, Any]:
     t = validate_time(time_of_day)
     tz = _valid_tz(timezone)
+    tf, lookback = validate_timeframe_lookback(timeframe, lookback_days)
     if use_db():
         with session_scope() as db:
-            return ScheduleRepository(db, current_user_id()).add_schedule(t, tz)
+            return ScheduleRepository(db, current_user_id()).add_schedule(t, tz, tf, lookback)
     store = _read_json(_SCHED_PATH)
     uid = current_user_id()
     mine = store.setdefault(uid, [])
@@ -105,10 +145,29 @@ def add_schedule(time_of_day: str, timezone: str) -> dict[str, Any]:
         raise ValueError(f"At most {_MAX_SCHEDULES_PER_USER} scheduled times allowed.")
     if any(s["time_of_day"] == t for s in mine):
         raise ValueError(f"A scan is already scheduled at {t}.")
-    row = {"id": _next_id(store), "time_of_day": t, "timezone": tz, "enabled": True, "last_run_on": None}
+    row = {
+        "id": _next_id(store), "time_of_day": t, "timezone": tz, "enabled": True,
+        "last_run_on": None, "timeframe": tf, "lookback_days": lookback,
+    }
     mine.append(row)
     _write_json(_SCHED_PATH, store)
     return row
+
+
+def update_schedule(schedule_id: int, timeframe: str, lookback_days: int) -> dict[str, Any]:
+    """Change a schedule's timeframe + lookback (validated together — the lookback
+    clamps to the timeframe's max). Callers pass both since they're interdependent."""
+    tf, lookback = validate_timeframe_lookback(timeframe, lookback_days)
+    if use_db():
+        with session_scope() as db:
+            return ScheduleRepository(db, current_user_id()).update_schedule(schedule_id, tf, lookback)
+    store = _read_json(_SCHED_PATH)
+    for s in store.get(current_user_id(), []):
+        if s["id"] == schedule_id:
+            s["timeframe"], s["lookback_days"] = tf, lookback
+            _write_json(_SCHED_PATH, store)
+            return s
+    raise LookupError(f"No schedule {schedule_id}.")
 
 
 def set_schedule_enabled(schedule_id: int, enabled: bool) -> dict[str, Any]:
@@ -120,7 +179,7 @@ def set_schedule_enabled(schedule_id: int, enabled: bool) -> dict[str, Any]:
         if s["id"] == schedule_id:
             s["enabled"] = enabled
             _write_json(_SCHED_PATH, store)
-            return s
+            return _ensure_cfg(s)
     raise LookupError(f"No schedule {schedule_id}.")
 
 
@@ -139,11 +198,18 @@ def delete_schedule(schedule_id: int) -> None:
     _write_json(_SCHED_PATH, store)
 
 
-def get_prescan() -> dict[str, Any] | None:
+def get_prescan(timeframe: str | None = None) -> dict[str, Any] | None:
+    """The user's pre-scan for ``timeframe``, or — when ``timeframe`` is None — the
+    most recently computed one across all timeframes (initial-load default)."""
     if use_db():
         with session_scope() as db:
-            return ScheduleRepository(db, current_user_id()).get_prescan()
-    return _read_json(_PRESCAN_PATH).get(current_user_id())
+            return ScheduleRepository(db, current_user_id()).get_prescan(timeframe)
+    prescans = _normalize_user_prescans(_read_json(_PRESCAN_PATH).get(current_user_id()))
+    if not prescans:
+        return None
+    if timeframe:
+        return prescans.get(timeframe)
+    return max(prescans.values(), key=lambda p: p.get("computed_at") or "")
 
 
 # ─── cross-user helpers for the scheduler (used by prescan_runner) ────────────
@@ -157,7 +223,15 @@ def all_enabled_schedules() -> list[dict[str, Any]]:
     for uid, lst in store.items():
         for s in lst:
             if s.get("enabled", True):
-                out.append({**{k: s[k] for k in ("id", "time_of_day", "timezone", "last_run_on")}, "user_id": uid})
+                out.append({
+                    "id": s["id"],
+                    "user_id": uid,
+                    "time_of_day": s["time_of_day"],
+                    "timezone": s["timezone"],
+                    "last_run_on": s.get("last_run_on"),
+                    "timeframe": s.get("timeframe", "day"),
+                    "lookback_days": s.get("lookback_days", 180),
+                })
     return out
 
 
@@ -182,11 +256,13 @@ def set_prescan_for(user_id: str, results: list[dict], timeframe: str, ticker_co
     import datetime
 
     store = _read_json(_PRESCAN_PATH)
-    store[user_id] = {
+    prescans = _normalize_user_prescans(store.get(user_id))
+    prescans[timeframe] = {
         "results": results,
         "timeframe": timeframe,
         "ticker_count": ticker_count,
         # file backend has no DB timestamp; stamp here for shape parity
         "computed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
+    store[user_id] = prescans
     _write_json(_PRESCAN_PATH, store)

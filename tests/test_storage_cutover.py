@@ -13,6 +13,8 @@ mirroring ``tests/test_db_repositories.py``; we monkeypatch the service layer's
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -752,6 +754,105 @@ def test_schedule_rejects_bad_time(db_backend):
         scan_schedule_service.add_schedule("8am", "America/New_York")
     with pytest.raises(ValueError):
         scan_schedule_service.add_schedule("25:00", "America/New_York")
+
+
+def _exercise_schedule_config() -> dict:
+    """Per-schedule timeframe + lookback: create, clamp, update, list."""
+    out: dict = {}
+    created = scan_schedule_service.add_schedule("07:00", "America/New_York", "1h", 30)
+    out["created"] = (created["timeframe"], created["lookback_days"])
+    # 1h's server-side max lookback is 90d, so 999 clamps to 90.
+    clamped = scan_schedule_service.add_schedule("08:00", "America/New_York", "1h", 999)
+    out["clamped_lookback"] = clamped["lookback_days"]
+    updated = scan_schedule_service.update_schedule(clamped["id"], "day", 730)
+    out["updated"] = (updated["timeframe"], updated["lookback_days"])
+    out["listed"] = sorted(
+        (s["time_of_day"], s["timeframe"], s["lookback_days"])
+        for s in scan_schedule_service.list_schedules()
+    )
+    return out
+
+
+def test_schedule_config_db_backend(db_backend):
+    r = _exercise_schedule_config()
+    assert r["created"] == ("1h", 30)
+    assert r["clamped_lookback"] == 90
+    assert r["updated"] == ("day", 730)
+    assert ("07:00", "1h", 30) in r["listed"]
+    assert ("08:00", "day", 730) in r["listed"]
+
+
+def test_schedule_config_backends_shape_identical(db_backend, monkeypatch, tmp_path):
+    db_result = _exercise_schedule_config()
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(scan_schedule_service, "_SCHED_PATH", tmp_path / "sched.json")
+    file_result = _exercise_schedule_config()
+    assert db_result == file_result
+
+
+def test_schedule_rejects_bad_timeframe_and_lookback(db_backend):
+    with pytest.raises(ValueError):
+        scan_schedule_service.add_schedule("09:00", "America/New_York", "5s", 30)
+    with pytest.raises(ValueError):
+        scan_schedule_service.add_schedule("09:00", "America/New_York", "day", 0)
+
+
+def _exercise_prescan_keying(uid: str) -> dict:
+    """Two pre-scans with different timeframes must coexist, not overwrite."""
+    scan_schedule_service.set_prescan_for(uid, [{"ticker": "AAA"}], "day", 5)
+    scan_schedule_service.set_prescan_for(uid, [{"ticker": "BBB"}, {"ticker": "CCC"}], "1h", 8)
+    day = scan_schedule_service.get_prescan("day")
+    hour = scan_schedule_service.get_prescan("1h")
+    return {
+        "day": (day["timeframe"], len(day["results"]), day["ticker_count"]),
+        "hour": (hour["timeframe"], len(hour["results"]), hour["ticker_count"]),
+        "missing": scan_schedule_service.get_prescan("15m"),
+    }
+
+
+def test_prescan_keyed_by_timeframe_db(db_backend):
+    from app.backend.services._storage import current_user_id
+
+    r = _exercise_prescan_keying(current_user_id())
+    assert r["day"] == ("day", 1, 5)
+    assert r["hour"] == ("1h", 2, 8)
+    assert r["missing"] is None
+
+
+def test_prescan_keyed_by_timeframe_file(monkeypatch, tmp_path):
+    from app.backend.services._storage import current_user_id
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(scan_schedule_service, "_PRESCAN_PATH", tmp_path / "prescan.json")
+    uid = current_user_id()
+    r = _exercise_prescan_keying(uid)
+    assert r["day"] == ("day", 1, 5)
+    assert r["hour"] == ("1h", 2, 8)
+    assert r["missing"] is None
+    # No timeframe requested -> the most-recently-written slot (1h, written last;
+    # the file backend stamps distinct microsecond timestamps).
+    assert scan_schedule_service.get_prescan()["timeframe"] == "1h"
+
+
+def test_prescan_file_migrates_legacy_flat_shape(monkeypatch, tmp_path):
+    """A pre-existing single-slot prescan file is read as the {timeframe: ...} map."""
+    from app.backend.services._storage import current_user_id
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    path = tmp_path / "prescan.json"
+    monkeypatch.setattr(scan_schedule_service, "_PRESCAN_PATH", path)
+    uid = current_user_id()
+    # Old flat shape written by a pre-1.16 backend.
+    path.write_text(
+        json.dumps({uid: {"results": [{"ticker": "OLD"}], "timeframe": "day",
+                          "ticker_count": 1, "computed_at": "2026-07-01T00:00:00+00:00"}}),
+        encoding="utf-8",
+    )
+    assert scan_schedule_service.get_prescan("day")["results"] == [{"ticker": "OLD"}]
+    # Writing a new timeframe keeps the migrated 'day' slot.
+    scan_schedule_service.set_prescan_for(uid, [{"ticker": "NEW"}], "1h", 1)
+    assert scan_schedule_service.get_prescan("day")["results"] == [{"ticker": "OLD"}]
+    assert scan_schedule_service.get_prescan("1h")["results"] == [{"ticker": "NEW"}]
 
 
 def test_prescan_due_logic():

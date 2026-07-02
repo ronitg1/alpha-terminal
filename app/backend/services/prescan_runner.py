@@ -25,8 +25,10 @@ from src.tools import key_context
 
 logger = logging.getLogger(__name__)
 
-_TIMEFRAME = "day"
-_LOOKBACK_DAYS = 180
+# Defaults for a schedule that predates per-schedule timeframe/lookback (old rows
+# whose columns/keys aren't populated). Match the historical hardcoded behavior.
+_DEFAULT_TIMEFRAME = "day"
+_DEFAULT_LOOKBACK_DAYS = 180
 _MAX_SCHEDULES_PER_RUN = 25   # safety cap so one trigger can't run unbounded work
 _MAX_TICKERS = 200            # cap per user's scan
 
@@ -88,11 +90,16 @@ async def _run_for_user(sched: dict, today: str) -> None:
             # Imported here to avoid any import cycle with the routes module.
             from app.backend.routes.patterns import PATTERN_DETECTORS, run_pattern_scan
 
+            timeframe = sched.get("timeframe") or _DEFAULT_TIMEFRAME
+            lookback = sched.get("lookback_days") or _DEFAULT_LOOKBACK_DAYS
             results = await run_pattern_scan(
-                tickers, list(PATTERN_DETECTORS.keys()), _TIMEFRAME, _LOOKBACK_DAYS
+                tickers, list(PATTERN_DETECTORS.keys()), timeframe, lookback
             )
-            scan_schedule_service.set_prescan_for(user_id, results, _TIMEFRAME, len(tickers))
-            logger.info("Pre-scan for %s: %d tickers -> %d signals", user_id, len(tickers), len(results))
+            scan_schedule_service.set_prescan_for(user_id, results, timeframe, len(tickers))
+            logger.info(
+                "Pre-scan for %s: %d tickers -> %d signals (%s / %dd)",
+                user_id, len(tickers), len(results), timeframe, lookback,
+            )
         else:
             logger.info("Pre-scan for %s skipped: no watchlist tickers", user_id)
 

@@ -47,6 +47,8 @@ interface PatternScanContextType {
   prescanAt: string | null;
   /** Start a scan. Fire-and-forget — it keeps running if you navigate away. */
   runScan: (args: RunScanArgs) => void;
+  /** Show the saved pre-scan for a timeframe (or an empty state if none). */
+  viewPrescan: (tf: PatternTimeframe) => void;
 }
 
 const PatternScanContext = createContext<PatternScanContextType | null>(null);
@@ -72,6 +74,9 @@ export function PatternScanProvider({ children }: { children: ReactNode }) {
   const viewing = section === 'screening' && screeningSubTab === 'patterns';
   const viewingRef = useRef(viewing);
   viewingRef.current = viewing;
+
+  const isScanningRef = useRef(isScanning);
+  isScanningRef.current = isScanning;
 
   const runScan = useCallback(
     ({ tickers, patterns, lookback, timeframe: tf }: RunScanArgs) => {
@@ -134,6 +139,26 @@ export function PatternScanProvider({ children }: { children: ReactNode }) {
     },
     [setSection, setScreeningSubTab],
   );
+
+  // Show the saved pre-scan for a timeframe — used when the user switches the
+  // scanner's timeframe, so the selected timeframe drives what's shown. Replaces
+  // the current view with that timeframe's pre-scan, or an empty "run a scan"
+  // state when there is none. Skipped while a scan is running (don't interrupt).
+  const viewPrescan = useCallback(async (tf: PatternTimeframe) => {
+    if (isScanningRef.current) return;
+    // A deliberate view change: stop the initial "adopt latest" load from later
+    // clobbering it, and re-point the display at this timeframe.
+    manualStarted.current = true;
+    setTimeframe(tf);
+    try {
+      const pre = await scheduledApi.getPrescan(tf);
+      setResults(pre?.results ?? []);
+      setPrescanAt(pre?.computed_at ?? null);
+    } catch {
+      setResults([]);
+      setPrescanAt(null);
+    }
+  }, []);
 
   // On first app load, adopt the user's latest background pre-scan so results
   // are ready instantly — unless they've already started a manual scan. Runs
@@ -205,7 +230,7 @@ export function PatternScanProvider({ children }: { children: ReactNode }) {
 
   return (
     <PatternScanContext.Provider
-      value={{ results, timeframe, isScanning, scanningCount, winRates, prescanAt, runScan }}
+      value={{ results, timeframe, isScanning, scanningCount, winRates, prescanAt, runScan, viewPrescan }}
     >
       {children}
     </PatternScanContext.Provider>

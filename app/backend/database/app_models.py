@@ -248,6 +248,11 @@ class ScanSchedule(Base):
     timezone = Column(String(64), nullable=False, default="America/New_York")  # IANA tz
     enabled = Column(Boolean, nullable=False, default=True, server_default=func.true())
     last_run_on = Column(String(10), nullable=True)            # YYYY-MM-DD in `timezone`, dedupe
+    # Which chart timeframe + lookback this schedule scans (e.g. a daily 2yr
+    # premarket scan vs a 1h 30d intraday scan). Defaults match the old hardcoded
+    # runner values so existing schedules are unchanged.
+    timeframe = Column(String(8), nullable=False, default="day", server_default="day")
+    lookback_days = Column(Integer, nullable=False, default=180, server_default="180")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -256,16 +261,17 @@ class ScanSchedule(Base):
 
 
 class PrescanResult(Base):
-    """The latest pre-computed pattern-scan results for a user (one row per user),
-    written by the scheduled background scan and read by the Pattern Scanner so it
-    loads instantly. ``results`` is the same list[ScanResult-dict] the live
-    ``/patterns/scan`` returns."""
+    """The latest pre-computed pattern-scan results for a user, keyed by timeframe
+    (one row per (user, timeframe)) so a daily-2yr and an intraday-1h pre-scan can
+    coexist instead of overwriting each other. Written by the scheduled background
+    scan and read by the Pattern Scanner so it loads instantly. ``results`` is the
+    same list[ScanResult-dict] the live ``/patterns/scan`` returns."""
 
     __tablename__ = "prescan_results"
 
     user_id = Column(String(255), primary_key=True)
+    timeframe = Column(String(8), primary_key=True, default="day")
     results = Column(_JSONList, nullable=False, default=list)  # list[pattern scan result dict]
-    timeframe = Column(String(8), nullable=False, default="day")
     ticker_count = Column(Integer, nullable=False, default=0)
     computed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

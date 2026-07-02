@@ -37,6 +37,8 @@ class ScheduleRepository:
             "timezone": s.timezone,
             "enabled": bool(s.enabled),
             "last_run_on": s.last_run_on,
+            "timeframe": s.timeframe,
+            "lookback_days": s.lookback_days,
         }
 
     def list_schedules(self) -> list[dict[str, Any]]:
@@ -48,7 +50,9 @@ class ScheduleRepository:
         )
         return [self._to_dict(s) for s in rows]
 
-    def add_schedule(self, time_of_day: str, timezone: str) -> dict[str, Any]:
+    def add_schedule(
+        self, time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180
+    ) -> dict[str, Any]:
         existing = (
             self.db.query(ScanSchedule)
             .filter(ScanSchedule.user_id == self.user_id, ScanSchedule.time_of_day == time_of_day)
@@ -57,7 +61,8 @@ class ScheduleRepository:
         if existing is not None:
             raise ValueError(f"A scan is already scheduled at {time_of_day}.")
         row = ScanSchedule(
-            user_id=self.user_id, time_of_day=time_of_day, timezone=timezone, enabled=True
+            user_id=self.user_id, time_of_day=time_of_day, timezone=timezone, enabled=True,
+            timeframe=timeframe, lookback_days=lookback_days,
         )
         self.db.add(row)
         self.db.commit()
@@ -66,6 +71,13 @@ class ScheduleRepository:
     def set_enabled(self, schedule_id: int, enabled: bool) -> dict[str, Any]:
         row = self._owned(schedule_id)
         row.enabled = enabled
+        self.db.commit()
+        return self._to_dict(row)
+
+    def update_schedule(self, schedule_id: int, timeframe: str, lookback_days: int) -> dict[str, Any]:
+        row = self._owned(schedule_id)
+        row.timeframe = timeframe
+        row.lookback_days = lookback_days
         self.db.commit()
         return self._to_dict(row)
 
@@ -86,8 +98,12 @@ class ScheduleRepository:
 
     # ─── per-user pre-scan results ────────────────────────────────────────────
 
-    def get_prescan(self) -> dict[str, Any] | None:
-        row = self.db.query(PrescanResult).filter(PrescanResult.user_id == self.user_id).first()
+    def get_prescan(self, timeframe: str | None = None) -> dict[str, Any] | None:
+        q = self.db.query(PrescanResult).filter(PrescanResult.user_id == self.user_id)
+        if timeframe:
+            row = q.filter(PrescanResult.timeframe == timeframe).first()
+        else:  # most recently computed across timeframes (initial-load default)
+            row = q.order_by(PrescanResult.computed_at.desc()).first()
         if row is None:
             return None
         return {
@@ -109,6 +125,8 @@ class ScheduleRepository:
                 "time_of_day": s.time_of_day,
                 "timezone": s.timezone,
                 "last_run_on": s.last_run_on,
+                "timeframe": s.timeframe,
+                "lookback_days": s.lookback_days,
             }
             for s in rows
         ]
@@ -122,11 +140,14 @@ class ScheduleRepository:
     def set_prescan_for(
         self, user_id: str, results: list[dict], timeframe: str, ticker_count: int
     ) -> None:
-        row = self.db.query(PrescanResult).filter(PrescanResult.user_id == user_id).first()
+        row = (
+            self.db.query(PrescanResult)
+            .filter(PrescanResult.user_id == user_id, PrescanResult.timeframe == timeframe)
+            .first()
+        )
         if row is None:
-            row = PrescanResult(user_id=user_id)
+            row = PrescanResult(user_id=user_id, timeframe=timeframe)
             self.db.add(row)
         row.results = results
-        row.timeframe = timeframe
         row.ticker_count = ticker_count
         self.db.commit()

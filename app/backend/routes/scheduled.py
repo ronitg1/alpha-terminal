@@ -30,10 +30,17 @@ router = APIRouter(prefix="/scheduled", tags=["scheduled"])
 class AddScheduleBody(BaseModel):
     time_of_day: str = Field(..., description="24-hour HH:MM, local to timezone")
     timezone: str = Field("America/New_York", description="IANA timezone")
+    timeframe: str = Field("day", description="Chart timeframe: week | day | 1h | 15m")
+    lookback_days: int = Field(180, description="Lookback window (clamped to the timeframe's max)")
 
 
 class ToggleBody(BaseModel):
     enabled: bool
+
+
+class UpdateScheduleBody(BaseModel):
+    timeframe: str = Field(..., description="Chart timeframe: week | day | 1h | 15m")
+    lookback_days: int = Field(..., description="Lookback window (clamped to the timeframe's max)")
 
 
 @router.get("/schedules")
@@ -44,7 +51,9 @@ async def list_schedules(user_id: str = Depends(get_current_user_id)) -> dict:
 @router.post("/schedules")
 async def add_schedule(body: AddScheduleBody, user_id: str = Depends(get_current_user_id)) -> dict:
     try:
-        return scan_schedule_service.add_schedule(body.time_of_day, body.timezone)
+        return scan_schedule_service.add_schedule(
+            body.time_of_day, body.timezone, body.timeframe, body.lookback_days
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -59,6 +68,19 @@ async def toggle_schedule(
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@router.put("/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: int, body: UpdateScheduleBody, user_id: str = Depends(get_current_user_id)
+) -> dict:
+    """Change a schedule's timeframe + lookback."""
+    try:
+        return scan_schedule_service.update_schedule(schedule_id, body.timeframe, body.lookback_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.delete("/schedules/{schedule_id}")
 async def delete_schedule(schedule_id: int, user_id: str = Depends(get_current_user_id)) -> dict:
     try:
@@ -69,8 +91,12 @@ async def delete_schedule(schedule_id: int, user_id: str = Depends(get_current_u
 
 
 @router.get("/prescan")
-async def get_prescan(user_id: str = Depends(get_current_user_id)) -> dict:
-    return {"prescan": scan_schedule_service.get_prescan()}
+async def get_prescan(
+    timeframe: str | None = None, user_id: str = Depends(get_current_user_id)
+) -> dict:
+    """The user's pre-scan for ``timeframe`` (e.g. ``1h``), or the most recently
+    computed one across timeframes when ``timeframe`` is omitted."""
+    return {"prescan": scan_schedule_service.get_prescan(timeframe)}
 
 
 @router.post("/run-due")
