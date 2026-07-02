@@ -195,9 +195,18 @@ interface ResultsTableProps {
   onRowClick: (row: ScanResult) => void;
   winRates: Map<string, HistoricalStats>;
   timeframe: PatternTimeframe;
+  isScanning?: boolean;
+  scanningCount?: number;
 }
 
-export function ResultsTable({ results, onRowClick, winRates, timeframe }: ResultsTableProps) {
+export function ResultsTable({
+  results,
+  onRowClick,
+  winRates,
+  timeframe,
+  isScanning = false,
+  scanningCount = 0,
+}: ResultsTableProps) {
   // Default: today's plays first, highest confidence within each day.
   const [sortMode, setSortMode] = useState<SortMode>('fresh');
   const [sortAsc, setSortAsc] = useState(false);
@@ -321,12 +330,25 @@ export function ResultsTable({ results, onRowClick, winRates, timeframe }: Resul
           in the stacked single-column layout (a flex-1 child would collapse). */}
       <div className="overflow-auto flex-1 max-md:flex-none max-md:overflow-visible">
         {results.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-600">
-            <svg className="w-12 h-12 mb-3 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1}>
-              <path strokeLinecap="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <p className="text-sm">No results yet — run a scan to find patterns</p>
-          </div>
+          isScanning ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+              <svg className="animate-spin h-8 w-8 mb-3 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <p className="text-sm">
+                Scanning{scanningCount ? ` ${scanningCount} name${scanningCount === 1 ? '' : 's'}` : ''}…
+              </p>
+              <p className="mt-1 text-xs text-gray-600">This runs in the background — you can keep using the app.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-600">
+              <svg className="w-12 h-12 mb-3 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1}>
+                <path strokeLinecap="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <p className="text-sm">No results yet — run a scan to find patterns</p>
+            </div>
+          )
         ) : sorted.length === 0 ? (
           <div className="py-12 text-center text-gray-500 text-sm">No matches for current filters</div>
         ) : (

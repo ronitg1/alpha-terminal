@@ -79,6 +79,13 @@ export function PatternScanProvider({ children }: { children: ReactNode }) {
       manualStarted.current = true;
       setIsScanning(true);
       setScanningCount(tickers.length);
+      // A manual scan supersedes any shown pre-scan straight away: drop the
+      // "pre-scan from yesterday" banner and clear the old rows now, so a slow
+      // scan (still running when you navigate back) or a failed one never leaves
+      // yesterday's pre-scan results on screen looking like this scan's output.
+      setPrescanAt(null);
+      setResults([]);
+      setWinRates(new Map());
       if (tickers.length > 120) {
         toast.info(
           `Scanning ${tickers.length} names — large scans can take a minute or two. ` +

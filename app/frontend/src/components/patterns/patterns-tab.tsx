@@ -78,7 +78,7 @@ export function PatternsTab() {
   // view-local UI: the Scanner/Backtest toggle and the open chart modal.
   const [view, setView] = useState<'scanner' | 'backtest'>('scanner');
   const [chart, setChart] = useState<ChartTarget | null>(null);
-  const { results, timeframe, isScanning, winRates, prescanAt } = usePatternScan();
+  const { results, timeframe, isScanning, scanningCount, winRates, prescanAt } = usePatternScan();
 
   return (
     <div className="h-full flex flex-col bg-background overflow-hidden">
@@ -131,6 +131,8 @@ export function PatternsTab() {
           }
           winRates={winRates}
           timeframe={timeframe}
+          isScanning={isScanning}
+          scanningCount={scanningCount}
         />
         </div>
       </div>
