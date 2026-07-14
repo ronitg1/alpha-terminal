@@ -372,6 +372,86 @@ async def get_valuation(ticker: str) -> dict[str, Any]:
         return _err(exc, "get_valuation")
 
 
+@tool
+async def get_watchlists() -> dict[str, Any]:
+    """List the user's saved watchlists and the tickers in each.
+
+    Use this whenever the user mentions "my watchlist" or "my watchlists" — it is
+    the correct source for the tickers they follow (distinct from their brokerage
+    portfolio holdings).
+    """
+    try:
+        from app.backend.services import watchlists_service
+
+        wls = await asyncio.to_thread(watchlists_service.get_all)
+        out = []
+        for wl in wls[:_MAX_LIST]:
+            tickers = [
+                (t.get("ticker") if isinstance(t, dict) else str(t))
+                for t in (wl.get("tickers") or [])
+            ]
+            out.append({"name": wl.get("name"), "tickers": [t for t in tickers if t][:60]})
+        return {"watchlists": out}
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc, "get_watchlists")
+
+
+@tool
+async def scan_watchlist(watchlist: str = "", timeframe: str = "day", lookback_days: int = 180) -> dict[str, Any]:
+    """Scan the user's watchlist(s) for chart patterns in one call.
+
+    Use this when the user asks "what patterns are on my watchlist(s)". Resolves
+    the watchlist tickers and runs the pattern scan — no need to call get_watchlists
+    then scan_patterns separately.
+
+    Args:
+        watchlist: Name of a specific watchlist, or empty to scan ALL watchlists.
+        timeframe: One of "week", "day", "1h", "15m".
+        lookback_days: How many calendar days of history to scan (default 180).
+
+    Returns the top detected signals across the watchlist tickers, sorted by confidence.
+    """
+    try:
+        from app.backend.routes.patterns import run_pattern_scan
+        from app.backend.services import watchlists_service
+        from src.patterns.patterns import PATTERN_DETECTORS
+
+        wls = await asyncio.to_thread(watchlists_service.get_all)
+        want = watchlist.strip().lower()
+        tickers: list[str] = []
+        for wl in wls:
+            if want and str(wl.get("name") or "").lower() != want:
+                continue
+            for t in wl.get("tickers") or []:
+                sym = ((t.get("ticker") if isinstance(t, dict) else str(t)) or "").strip().upper()
+                if sym and sym not in tickers:
+                    tickers.append(sym)
+        if not tickers:
+            label = f" '{watchlist}'" if watchlist.strip() else "s"
+            return {"error": f"No tickers found in watchlist{label}."}
+        tickers = tickers[:40]  # bound the scan
+        results = await run_pattern_scan(tickers, list(PATTERN_DETECTORS), timeframe, int(lookback_days))
+        top = [
+            {
+                "ticker": r.get("ticker"),
+                "pattern": r.get("pattern"),
+                "confidence": r.get("confidence"),
+                "bullish": r.get("bullish"),
+                "end_date": r.get("end_date"),
+            }
+            for r in results[:_MAX_LIST]
+        ]
+        return {
+            "watchlist": watchlist or "all",
+            "tickers_scanned": len(tickers),
+            "timeframe": timeframe,
+            "total_signals": len(results),
+            "signals": top,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc, "scan_watchlist")
+
+
 def _compact_backtest(result: dict[str, Any]) -> dict[str, Any]:
     """Headline metrics + validation + trade count (drop the big equity/trade arrays)."""
     metrics = result.get("metrics") or {}
@@ -520,6 +600,8 @@ def build_agent_tools() -> list[BaseTool]:
     """All read-only tools exposed to the agent loop, in stable order."""
     return [
         get_quotes,
+        get_watchlists,
+        scan_watchlist,
         scan_patterns,
         get_signal_win_rate,
         get_trade_plan,

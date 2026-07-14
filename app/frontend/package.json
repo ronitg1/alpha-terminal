@@ -32,8 +32,10 @@
     "next-themes": "^0.4.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^9.1.0",
     "react-resizable-panels": "^3.0.1",
     "react-syntax-highlighter": "^15.6.1",
+    "remark-gfm": "^4.0.1",
     "shadcn-ui": "^0.9.5",
     "sonner": "^2.0.5",
     "tailwind-merge": "^3.2.0"

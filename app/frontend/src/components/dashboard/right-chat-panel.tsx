@@ -15,9 +15,10 @@ import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
 import { streamAgentChat, streamChat, type ChatContext } from '@/services/sleeves-api';
 import { ChatMessage } from '@/types/sleeves';
-import { Bot, ChevronRight, Send, Wrench, X } from 'lucide-react';
+import { Bot, ChevronRight, Maximize2, Minimize2, Send, Wrench, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { ChatMarkdown } from './chat-markdown';
 
 // ─── Local message shape (adds streaming + tool activity) ───────────────────
 
@@ -63,7 +64,7 @@ function getSuggestions(ticker: string | null, section: string): string[] {
 
 // ─── Message bubble ──────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: PanelMessage }) {
+function MessageBubble({ msg, expanded }: { msg: PanelMessage; expanded: boolean }) {
   const isUser = msg.role === 'user';
   return (
     <div className={cn('flex gap-2 mb-3', isUser && 'flex-row-reverse')}>
@@ -74,10 +75,9 @@ function MessageBubble({ msg }: { msg: PanelMessage }) {
       )}
       <div
         className={cn(
-          'rounded-lg px-3 py-2 text-xs leading-relaxed max-w-[85%]',
-          isUser
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-muted text-foreground',
+          'rounded-lg px-3 py-2 leading-relaxed min-w-0',
+          expanded ? 'text-sm max-w-[90%]' : 'text-xs max-w-[85%]',
+          isUser ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground',
         )}
       >
         {!isUser && msg.tools && msg.tools.length > 0 && (
@@ -98,7 +98,11 @@ function MessageBubble({ msg }: { msg: PanelMessage }) {
             ))}
           </div>
         )}
-        {msg.content}
+        {isUser ? (
+          <span className="whitespace-pre-wrap">{msg.content}</span>
+        ) : (
+          msg.content && <ChatMarkdown content={msg.content} />
+        )}
         {(msg as { streaming?: boolean }).streaming && (
           <span className="inline-block w-1 h-3 bg-current animate-pulse ml-0.5 align-middle" />
         )}
@@ -123,6 +127,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
   const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -287,7 +292,14 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
   const suggestions = getSuggestions(selectedTicker, section);
 
   return (
-    <div className="flex flex-col bg-background h-full w-full md:w-80 md:border-l md:border-border md:flex-shrink-0 max-md:fixed max-md:inset-0 max-md:z-50 max-md:safe-top">
+    <div
+      className={cn(
+        'flex flex-col bg-background',
+        expanded
+          ? 'fixed inset-0 z-50 safe-top'
+          : 'h-full w-full md:w-80 md:border-l md:border-border md:flex-shrink-0 max-md:fixed max-md:inset-0 max-md:z-50 max-md:safe-top',
+      )}
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <Bot className="h-4 w-4 text-primary flex-shrink-0" />
@@ -299,6 +311,15 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
         )}
         <button
           type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="hidden md:inline-flex text-muted-foreground hover:text-foreground transition-colors"
+          title={expanded ? 'Collapse chat' : 'Expand chat to full screen'}
+          aria-label={expanded ? 'Collapse chat' : 'Expand chat'}
+        >
+          {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </button>
+        <button
+          type="button"
           onClick={toggleChat}
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
@@ -307,7 +328,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
       </div>
 
       {/* Message thread */}
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div className={cn('flex-1 overflow-y-auto px-3 py-3', expanded && 'w-full max-w-3xl mx-auto')}>
         {messages.length === 0 ? (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
@@ -332,7 +353,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
         ) : (
           <div>
             {messages.map((m, i) => (
-              <MessageBubble key={i} msg={m} />
+              <MessageBubble key={i} msg={m} expanded={expanded} />
             ))}
             <div ref={bottomRef} />
           </div>
@@ -340,7 +361,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
       </div>
 
       {/* Input */}
-      <div className="border-t border-border p-3 safe-bottom">
+      <div className={cn('border-t border-border p-3 safe-bottom w-full', expanded && 'max-w-3xl mx-auto')}>
         {messages.length > 0 && (
           <button
             type="button"

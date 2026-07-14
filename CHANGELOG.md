@@ -4,6 +4,22 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.1] — 2026-07-14
+
+### Changed
+- **Assistant chat now renders markdown + goes full screen.** Now that the agent
+  returns rich answers (tables, bold, lists), the chat renders proper markdown
+  (GFM tables scroll instead of overflowing) instead of raw `**`/`|` text, and a
+  new expand button in the chat header opens it **full screen** on desktop (with a
+  comfortable centered reading width and larger text). Verified live: a streamed
+  markdown table renders as a real table.
+
+### Added
+- **`get_watchlists` + `scan_watchlist` agent tools.** The agent can now read your
+  saved watchlists and scan them for patterns directly — previously it had no
+  watchlist tool and fell back to your portfolio holdings when asked about "my
+  watchlist." 17 agent tools total.
+
 ## [1.18.0] — 2026-07-14
 
 ### Added
