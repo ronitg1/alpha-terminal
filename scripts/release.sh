@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release script for ai-hedge-fund
+# Release script for Alpha Terminal
 # Usage: bash scripts/release.sh [version]
 # If no version is provided, defaults to today's date as YYYY.M.D
 

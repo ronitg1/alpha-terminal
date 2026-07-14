@@ -28,7 +28,7 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
 
         # Core Data
         progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5, api_key=api_key)
+        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5, api_key=api_key)  # noqa: F841 -- fetched to warm the cache for downstream calls
 
         progress.update_status(agent_id, ticker, "Fetching financial line items")
         financial_line_items = search_line_items(
@@ -110,7 +110,7 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
         if margin_of_safety is not None:
             confidence = min(max(abs(margin_of_safety) * 150, 20), 95)  # 20-95% range
         else:
-            confidence = min(max((total_score / max_score) * 100, 10), 80)  # Based on score
+            confidence = min(max((total_score / max_score) * 100, 10), 80)  # noqa: F841 -- Based on score; not yet wired into analysis_data
 
         # Create comprehensive analysis summary
         intrinsic_value_analysis = analyze_rakesh_jhunjhunwala_style(

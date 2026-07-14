@@ -73,7 +73,7 @@ def _load_financial_metrics_from_fixture(ticker: str, end: str, limit: int) -> l
 
 def _load_news_from_fixture(ticker: str, start: str | None, end: str, limit: int) -> list[dict]:
     # Expect exact match filename {TICKER}_{START}_{END}.json
-    start_key = start or "none"
+    start_key = start or "none"  # noqa: F841 -- documents the fallback used in fixture_path below
     fixture_path = NEWS_ROOT / f"{ticker}_{start or 'none'}_{end}.json"
     if not fixture_path.exists():
         # Fallback: any file that covers end

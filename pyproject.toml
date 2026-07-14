@@ -3,7 +3,7 @@
 # brand is "Alpha Terminal" (see README.md, LICENSE).
 [tool.poetry]
 name = "ai-hedge-fund"
-version = "1.14.3"
+version = "1.21.0"
 description = "Alpha Terminal — retail-investor research terminal. AI agent panels score your book, a realistic options backtester checks your strategies, and a market-news + earnings-call desk keeps you current."
 authors = ["Ronit Ganguly <ganguly.ronit@gmail.com>"]
 readme = "README.md"
@@ -54,6 +54,7 @@ pytest = "^7.4.0"
 black = "^23.7.0"
 isort = "^5.12.0"
 flake8 = "^6.1.0"
+ruff = "^0.15.8"
 
 [build-system]
 requires = ["poetry-core"]
@@ -67,6 +68,21 @@ include = '\.pyi?$'
 [tool.isort]
 profile = "black"
 force_alphabetical_sort_within_sections = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+# E501: this repo's existing formatter convention is `[tool.black] line-length = 420`
+#   (see above) — the codebase was never wrapped to 120 cols, so enforcing E501 here
+#   would require a repo-wide reformat, which is out of scope for this change.
+# E402: several modules intentionally do sys.path/dotenv setup before imports.
+# I001: existing imports were never run through an isort pass matching this profile;
+#   enforcing it would mean reordering imports across ~100+ files, also out of scope.
+# Revisit these once a dedicated formatting pass is scheduled.
+ignore = ["E501", "E402", "I001"]
 
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"

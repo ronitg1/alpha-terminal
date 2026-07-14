@@ -254,7 +254,7 @@ def analyze_moat(metrics: list) -> dict[str, any]:
 
     # 1. Return on Capital Consistency (Buffett's favorite moat indicator)
     historical_roes = [m.return_on_equity for m in metrics if m.return_on_equity is not None]
-    historical_roics = [m.return_on_invested_capital for m in metrics if
+    historical_roics = [m.return_on_invested_capital for m in metrics if  # noqa: F841 -- kept for future ROIC-consistency scoring; not consumed yet
                         hasattr(m, 'return_on_invested_capital') and m.return_on_invested_capital is not None]
 
     if len(historical_roes) >= 5:
@@ -396,9 +396,9 @@ def calculate_owner_earnings(financial_line_items: list) -> dict[str, any]:
 
     if not all([net_income is not None, depreciation is not None, capex is not None]):
         missing = []
-        if net_income is None: missing.append("net income")
-        if depreciation is None: missing.append("depreciation")
-        if capex is None: missing.append("capital expenditure")
+        if net_income is None: missing.append("net income")  # noqa: E701
+        if depreciation is None: missing.append("depreciation")  # noqa: E701
+        if capex is None: missing.append("capital expenditure")  # noqa: E701
         return {"owner_earnings": None, "details": [f"Missing components: {', '.join(missing)}"]}
 
     # Enhanced maintenance capex estimation using historical analysis

@@ -4,8 +4,11 @@
 version: 2
 updates:
   - package-ecosystem: 'npm'
+    directory: '/app/frontend'
+    schedule:
+      interval: 'weekly'
+
+  - package-ecosystem: 'pip'
     directory: '/'
     schedule:
-      interval: 'daily'
-    allow:
-      - dependency-name: '@xyflow/react'
+      interval: 'weekly'

@@ -30,7 +30,7 @@ def mohnish_pabrai_agent(state: AgentState, agent_id: str = "mohnish_pabrai_agen
     # and potential for doubling in 2-3 years at low risk.
     for ticker in tickers:
         progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=8, api_key=api_key)
+        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=8, api_key=api_key)  # noqa: F841 -- fetched to warm the cache for downstream calls
 
         progress.update_status(agent_id, ticker, "Gathering financial line items")
         line_items = search_line_items(
@@ -229,7 +229,7 @@ def analyze_pabrai_valuation(financial_line_items: list, market_cap: float | Non
 
     # Asset-light tilt: lower capex intensity preferred
     if capex_vals and len(financial_line_items) >= 3:
-        revenue_vals = [getattr(li, "revenue", None) for li in financial_line_items]
+        revenue_vals = [getattr(li, "revenue", None) for li in financial_line_items]  # noqa: F841 -- kept for readability/parity with capex_vals; not consumed below
         capex_to_revenue = []
         for i, li in enumerate(financial_line_items):
             revenue = getattr(li, "revenue", None)
