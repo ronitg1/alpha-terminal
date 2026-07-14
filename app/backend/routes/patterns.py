@@ -693,6 +693,52 @@ async def trade_plan(
     }
 
 
+async def signal_context(ticker: str, pattern: str, timeframe: str = "day") -> dict | None:
+    """Compact trade context for one (ticker, pattern) — current price, entry,
+    target, and the recommended option contract — by reusing the ``/trade-plan``
+    logic so the Telegram bot and alerts agree with the app's Contract button.
+
+    Best-effort: returns ``None`` on any failure (bad ticker, no data, empty
+    chain) so callers can fall back to the pattern's own levels."""
+    try:
+        tp = await trade_plan(ticker, pattern, timeframe=timeframe)
+    except Exception:  # noqa: BLE001 — enrichment is best-effort, never fatal
+        return None
+    plan = tp.get("plan") or {}
+    return {
+        "current_price": tp.get("current_price"),
+        "entry": plan.get("entry"),
+        "target": plan.get("target"),
+        "option": tp.get("option") or None,
+    }
+
+
+def format_option_contract(opt: dict | None) -> str | None:
+    """One-line option summary, e.g. ``CALL $95 · exp 2026-08-15 (27 DTE) · ~$3.20``.
+    Returns ``None`` when the contract is missing its essentials."""
+    if not opt:
+        return None
+    typ = str(opt.get("type") or "").upper()
+    strike = opt.get("strike")
+    exp = opt.get("expiration")
+    if not (typ and strike and exp):
+        return None
+    try:
+        out = f"{typ} ${float(strike):g} · exp {exp}"
+    except (TypeError, ValueError):
+        return None
+    dte = opt.get("dte")
+    if isinstance(dte, (int, float)):
+        out += f" ({int(dte)} DTE)"
+    mid = opt.get("current_mid")
+    try:
+        if mid:
+            out += f" · ~${float(mid):.2f}"
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 @router.get("/patterns")
 async def list_patterns() -> dict:
     """List all supported pattern names and the bullish subset."""

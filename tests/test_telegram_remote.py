@@ -77,16 +77,31 @@ def test_scan_command_routes_and_formats(file_settings, monkeypatch):
                 "bullish": True, "end_date": "2026-07-13",
                 "key_levels": {"resistance": 94.29, "support_at_start": 80.0},
             },
-            {"ticker": "AMD", "pattern": "Double Top", "confidence": 88, "bullish": False},
+            {"ticker": "AMD", "pattern": "Double Top", "confidence": 88, "bullish": False,
+             "end_date": "2026-07-11", "key_levels": {"neckline": 131.54, "top_1": 150.0, "top_2": 149.0}},
         ]
 
+    async def _fake_context(ticker, pattern, timeframe="day"):
+        # NVDA gets a live context + option contract; AMD returns None (levels fallback).
+        if ticker == "NVDA":
+            return {
+                "current_price": 92.10, "entry": 94.29, "target": 108.58,
+                "option": {"type": "call", "strike": 95.0, "expiration": "2026-08-15",
+                           "dte": 27, "current_mid": 3.20},
+            }
+        return None
+
     monkeypatch.setattr("app.backend.routes.patterns.run_pattern_scan", _fake_scan)
+    monkeypatch.setattr("app.backend.routes.patterns.signal_context", _fake_context)
     out = asyncio.run(telegram_remote.process_text("u1", "/scan NVDA amd"))
     assert "NVDA" in out and "Ascending Triangle" in out and "91%" in out
     assert "AMD" in out and "Double Top" in out
-    # Signal date + suggested entry (breakout trigger) now render for a real pattern.
-    assert "2026-07-13" in out
+    # Signal date + entry render for both (NVDA from live ctx, AMD from levels fallback).
+    assert "2026-07-13" in out and "2026-07-11" in out
     assert "94.29" in out and "entry" in out.lower()
+    # NVDA carries live stock price + option contract with expiry.
+    assert "92.10" in out and "stock" in out.lower()
+    assert "CALL" in out and "$95" in out and "exp 2026-08-15" in out and "27 DTE" in out
 
 
 def test_scan_without_tickers_shows_usage(file_settings):

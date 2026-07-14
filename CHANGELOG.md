@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.2] — 2026-07-14
+
+### Changed
+- **`/scan` in the Telegram bot now includes the live stock price and a recommended
+  option contract.** Each of the top hits gains the current underlying price, the
+  breakout entry + measured-move target, and a suggested contract with expiry
+  (type · strike · expiration · DTE · ~mid), reusing the same trade-plan/contract
+  logic as the app's Contract button (best-effort; falls back to the pattern's own
+  levels if the live lookup fails). Backend-only; re-text `/scan` after deploy.
+
 ## [1.21.1] — 2026-07-14
 
 ### Fixed
