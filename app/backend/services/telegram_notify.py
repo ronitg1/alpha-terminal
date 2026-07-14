@@ -28,12 +28,17 @@ async def send_message(token: str, chat_id: str, text: str, *, parse_mode: str =
     if not token or not chat_id or not text:
         return False
     url = f"{_API}/bot{token}/sendMessage"
-    payload = {
+    payload: dict[str, object] = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": parse_mode,
         "disable_web_page_preview": True,
     }
+    # Only send parse_mode when a real mode is requested. Remote-control replies
+    # are arbitrary agent text sent as plain (parse_mode=""), and omitting the
+    # field is the unambiguous "no formatting" contract — passing an empty string
+    # risks a 400 on some Bot API versions. HTML alert callers keep their mode.
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             for attempt in range(_MAX_ATTEMPTS):
