@@ -185,6 +185,29 @@ export interface PatternBacktestTrade {
   contract: string | null;
 }
 
+/** Statistical validation of a backtest's realized trades (walk-forward /
+ *  Monte-Carlo / bootstrap), matching the vibe-engine's rigor. */
+export interface BacktestValidation {
+  available: boolean;
+  reason?: string;
+  metrics?: {
+    sharpe: number;
+    sortino: number;
+    calmar: number;
+    max_drawdown: number;
+    total_return: number;
+    annual_return: number;
+    win_rate: number;
+    profit_factor: number | null;
+    n_trades: number;
+  };
+  validation?: {
+    monte_carlo?: { p_value_sharpe?: number; actual_sharpe?: number; n_trades?: number; error?: string };
+    bootstrap?: { observed_sharpe?: number; ci_lower?: number; ci_upper?: number; prob_positive?: number; error?: string };
+    walk_forward?: { consistency_rate?: number; profitable_windows?: number; n_windows?: number; error?: string };
+  };
+}
+
 export interface PatternBacktestSummary {
   mode: 'single' | 'optimize';
   timeframe: PatternTimeframe;
@@ -196,6 +219,8 @@ export interface PatternBacktestSummary {
   trades: PatternBacktestTrade[];
   tickers: string[];
   patterns: string[];
+  /** Statistical validation of the best config's trades. */
+  validation?: BacktestValidation;
   /** The actual window replayed (clamped to the timeframe's max). */
   lookback_days?: number;
   start_date?: string;

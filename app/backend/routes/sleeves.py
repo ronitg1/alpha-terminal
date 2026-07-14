@@ -2928,6 +2928,19 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
             by_exit_reason: dict[str, int] = {}
             for t in trades:
                 by_exit_reason[t.exit_reason] = by_exit_reason.get(t.exit_reason, 0) + 1
+            # Statistical validation (walk-forward / Monte-Carlo / bootstrap +
+            # risk-adjusted metrics) from the realized trades, matching the
+            # Vibe-Trading backtester's rigor. Capital base = avg per-share entry
+            # cost so per-trade returns track return_pct.
+            from src.backtesting.trade_stats import rigorous_stats
+
+            _costs = [t.entry_premium for t in trades if t.entry_premium]
+            _cap = (sum(_costs) / len(_costs)) if _costs else 1.0
+            validation = rigorous_stats(
+                [t.pnl for t in trades],
+                initial_capital=max(_cap, 0.01),
+                dates=[t.close_date for t in trades],
+            )
             yield CompleteEvent(data={
                 "n_trades": n,
                 "n_wins": wins,
@@ -2936,6 +2949,7 @@ async def backtest_options_strategy(req: OptionsBacktestRequest, request: Reques
                 "avg_return_pct": avg_return,
                 "by_conviction": conviction_summary,
                 "by_exit_reason": by_exit_reason,
+                "validation": validation,
                 "trades": [t.model_dump() for t in trades],
                 "pricing": req.pricing,
                 "n_synthetic": n_synthetic,

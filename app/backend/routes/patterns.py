@@ -1100,6 +1100,21 @@ async def backtest_patterns(req: PatternBacktestRequest, request: Request):
                             best_trades = [_trade_dict(t) for t in per_config[ci]]
                             break
 
+            # Statistical validation of the best config's realized trades, so the
+            # result is as rigorous as the Vibe-Trading backtester (walk-forward
+            # consistency, Monte-Carlo permutation p-value, bootstrap Sharpe CI +
+            # risk-adjusted metrics). Capital base = the average per-contract cost,
+            # so per-trade returns track the trades' own return_pct.
+            from src.backtesting.trade_stats import rigorous_stats
+
+            _costs = [t.get("entry_premium", 0) * 100 for t in best_trades if t.get("entry_premium")]
+            _cap = (sum(_costs) / len(_costs)) if _costs else 10_000.0
+            validation = rigorous_stats(
+                [t["pnl"] for t in best_trades],
+                initial_capital=max(_cap, 1.0),
+                dates=[t.get("close_date") for t in best_trades],
+            )
+
             yield _sse("complete", {"data": {
                 "mode": req.mode,
                 "timeframe": req.timeframe,
@@ -1109,6 +1124,7 @@ async def backtest_patterns(req: PatternBacktestRequest, request: Request):
                 "truncated": truncated,
                 "configs": rows,
                 "trades": best_trades,
+                "validation": validation,
                 "tickers": tickers,
                 "patterns": sel_patterns,
                 # The actual window replayed (clamped to the timeframe's max).

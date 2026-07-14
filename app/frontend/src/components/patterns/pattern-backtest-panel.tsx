@@ -23,6 +23,7 @@ import type {
   PatternBacktestTrade,
   PatternTimeframe,
 } from '@/types/patterns';
+import { BacktestValidationCard } from './backtest-validation-card';
 import { parseUniverse, UniversePicker } from '../sleeves/universe-picker';
 import { Histogram } from '../sleeves/charts/histogram';
 import { LineChart, LinePoint } from '../sleeves/charts/line-chart';
@@ -595,6 +596,9 @@ function Results({
           />
         </div>
       </section>
+
+      {/* Vibe-Trading-grade statistical validation of the realized trades. */}
+      {summary.validation && <BacktestValidationCard v={summary.validation} />}
 
       <section>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">

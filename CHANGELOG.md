@@ -4,6 +4,20 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] — 2026-07-14
+
+### Added
+- **Statistical validation on the pattern + options backtests** — they already
+  modeled execution realistically (real option chains + slippage + profit/stop/DTE
+  exits); now they carry the same rigor as the Vibe-Trading engine. Both
+  `/patterns/backtest` and `/sleeves/backtest/options-strategy` compute, from their
+  realized trades, a **walk-forward consistency rate, a Monte-Carlo permutation
+  p-value, and a bootstrap Sharpe confidence interval**, plus Sharpe / Sortino /
+  Calmar / max-drawdown / profit-factor (`src/backtesting/trade_stats.py`, reusing
+  the ported `vibe_engine` validators). The Backtest tab shows a "Statistical
+  validation" card with a plain-English verdict ("p=0.03 — unlikely to be luck"),
+  mobile-friendly.
+
 ## [1.18.1] — 2026-07-14
 
 ### Changed
