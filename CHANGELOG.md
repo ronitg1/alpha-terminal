@@ -4,6 +4,41 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] — 2026-07-14
+
+### Added
+- **Agentic AI assistant (tool-calling).** The chat is now an agent that calls live
+  tools to ground its answers instead of a one-shot text model. It can pull quotes,
+  scan patterns, fetch win-rates / trade plans, market movers & snapshot, the
+  catalyst calendar, ticker news, your portfolio overview & Sharpe stats, 13F
+  ownership, valuations — and run backtests. Built on LangGraph's `create_react_agent`
+  (already a dependency; **no new deps**). Tool activity streams into the chat as
+  small inline "using <tool>" chips; answers stream token-by-token over a typed-SSE
+  endpoint (`POST /sleeves/chat/agent/stream`). The old text chat is kept as an
+  automatic fallback. The agent loop runs on DeepSeek **V3** (reliable tool-calling);
+  a saved R1 preference is auto-swapped to V3 for the loop, and OpenRouter BYOK models
+  pass through for stronger tool-callers.
+- **Backtesting with statistical validation.** A real event-driven backtest engine
+  (ported from the MIT-licensed HKUDS/Vibe-Trading, `src/backtesting/vibe_engine/`,
+  attribution in `THIRD_PARTY_NOTICES.md`) turns chart-pattern detections into a
+  next-bar-open strategy and reports Sharpe/Sortino/Calmar/max-drawdown/win-rate plus
+  **walk-forward consistency, a Monte-Carlo permutation p-value, and a bootstrap Sharpe
+  confidence interval**. Exposed to the assistant as `backtest_strategy` (any tickers)
+  and `backtest_portfolio` (your held names). Daily bars (intraday pending a Massive
+  intraday-aggregates method). Look-ahead-safe (signals fill on the next bar's open;
+  proven by a shift-invariance test).
+- **"Analyze my portfolio" agent tool** — one call composes holdings + weights +
+  sectors, Sharpe/risk stats, 13F ownership changes, and fair-value estimates for your
+  top holdings, so the assistant can synthesize a portfolio read on request.
+- **First-login tutorial covers alerts** — a new welcome slide walks through Settings →
+  Scheduled scans + Settings → Alerts (connect Telegram, set confidence threshold +
+  timeframes), and the interactive tour's Settings step now mentions phone alerts.
+
+### Notes
+- Verified live: the agent fired `get_quotes` for a price question and answered over
+  real data; a 3-ticker/1-year backtest returned 55 trades + full metrics + all three
+  validation blocks. 489 tests pass (+24). No new dependencies.
+
 ## [1.17.0] — 2026-07-14
 
 ### Added

@@ -239,6 +239,38 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
     imageAlt: 'Paper Trading simulated account',
   },
   {
+    id: 'alerts',
+    title: 'Get high-confidence alerts on your phone',
+    body: (
+      <>
+        <p>
+          Alpha Terminal can <strong>message your phone</strong> the moment a scan finds a
+          strong setup — so you don&apos;t have to keep the app open.
+        </p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>
+            In <strong>Settings &rarr; Scheduled scans</strong>, pick times for the app to
+            auto-run your Pattern Scanner (e.g. a daily 2-year scan before the open and a 1-hour
+            30-day scan midday).
+          </li>
+          <li>
+            In <strong>Settings &rarr; Alerts</strong>, connect your own <strong>Telegram</strong>{' '}
+            bot (a 2-minute, one-time setup — the steps are right there), then choose your{' '}
+            <strong>confidence threshold</strong> (default 90%) and which{' '}
+            <strong>timeframes</strong> should alert you.
+          </li>
+        </ul>
+        <p className="mt-2 text-muted-foreground">
+          When a scheduled scan turns up a signal at or above your threshold, it&apos;s pushed
+          straight to Telegram — e.g. &ldquo;NVDA — Bull Flag · 93%&rdquo;. Change the threshold,
+          timeframes, or turn it off anytime in <strong>Settings &rarr; Alerts</strong>.
+        </p>
+      </>
+    ),
+    image: '/onboarding/09-alerts.png',
+    imageAlt: 'Settings Alerts tab: connect Telegram, set confidence threshold and timeframes',
+  },
+  {
     id: 'settings',
     title: 'One setup step: your API keys',
     body: (
@@ -328,9 +360,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     element: '[data-tour="settings"]',
     popover: {
-      title: 'Add your API keys',
+      title: 'Keys, scans & phone alerts',
       description:
-        'Open Settings to add your DeepSeek key (needed for the AI assistant) and request market-data access.',
+        'Open Settings to add your DeepSeek key (for the AI assistant), schedule background scans, and set up Telegram alerts so high-confidence signals are pushed to your phone.',
       side: 'left',
       align: 'start',
     },

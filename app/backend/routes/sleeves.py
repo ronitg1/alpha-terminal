@@ -2130,6 +2130,77 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
     )
 
 
+@router.post("/chat/agent/stream")
+async def chat_agent_stream(req: _ChatRequest, request: Request) -> StreamingResponse:
+    """Stream the tool-calling agent chat as typed SSE frames.
+
+    Mirrors the hedge-fund run pattern: the agent loop pumps typed events into
+    an ``asyncio.Queue`` while a watcher detects client disconnects so an
+    abandoned request cancels the loop (and its in-flight LLM/tool calls).
+
+    Frames (``event:`` + JSON ``data:``): ``text_delta`` {token} /
+    ``tool_call`` {name, args} / ``tool_result`` {name, ok} / ``error``
+    {message} / ``end`` {}. The plain ``/chat/stream`` route remains available
+    as a non-agent fallback.
+    """
+    from app.backend.services.agent_chat import stream_agent
+
+    messages = [m.model_dump() for m in req.messages[-20:]]
+    context = req.context.model_dump()
+
+    async def wait_for_disconnect() -> bool:
+        try:
+            while True:
+                message = await request.receive()
+                if message["type"] == "http.disconnect":
+                    return True
+        except Exception:  # noqa: BLE001 — any receive failure means gone
+            return True
+
+    async def event_gen():
+        queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for event_type, data in stream_agent(messages, context):
+                    queue.put_nowait((event_type, data))
+            except Exception as exc:  # noqa: BLE001 — stream_agent shouldn't raise, belt and braces
+                logger.warning("Agent chat pump error: %s", llm_exception_summary(exc))
+                queue.put_nowait(("error", {"message": LLM_USER_ERROR}))
+                queue.put_nowait(("end", {}))
+            finally:
+                queue.put_nowait(None)
+
+        pump_task = asyncio.create_task(pump())
+        disconnect_task = asyncio.create_task(wait_for_disconnect())
+        try:
+            while True:
+                if disconnect_task.done():
+                    logger.info("Client disconnected, cancelling agent chat")
+                    pump_task.cancel()
+                    return
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if item is None:
+                    return
+                event_type, data = item
+                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        except asyncio.CancelledError:
+            return
+        finally:
+            for task in (pump_task, disconnect_task):
+                if not task.done():
+                    task.cancel()
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── /sleeves/backtest/options-strategy (BSM-proxy SSE) ─────────────────────
 
 # Why a BSM proxy and not real historical chains: constructing valid Polygon

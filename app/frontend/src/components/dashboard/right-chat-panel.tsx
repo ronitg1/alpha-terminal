@@ -5,16 +5,29 @@
  * screener/scan data (passed from the app-level state).  Each new ticker
  * selection resets the suggested prompts.
  *
- * Uses POST /sleeves/chat/stream (SSE) with DeepSeek V3.
+ * Uses POST /sleeves/chat/agent/stream (typed SSE, tool-calling agent) and
+ * falls back to POST /sleeves/chat/stream (plain DeepSeek V3) when the agent
+ * endpoint is unreachable. Tool activity renders as inline chips inside the
+ * streaming assistant bubble.
  */
 
 import { useDashboard } from '@/contexts/dashboard-context';
 import { useSleevesContext } from '@/contexts/sleeves-context';
-import { streamChat } from '@/services/sleeves-api';
+import { streamAgentChat, streamChat, type ChatContext } from '@/services/sleeves-api';
 import { ChatMessage } from '@/types/sleeves';
-import { Bot, ChevronRight, Send, X } from 'lucide-react';
+import { Bot, ChevronRight, Send, Wrench, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+
+// ─── Local message shape (adds streaming + tool activity) ───────────────────
+
+interface ToolStatus {
+  name: string;
+  done: boolean;
+  ok?: boolean;
+}
+
+type PanelMessage = ChatMessage & { streaming?: boolean; tools?: ToolStatus[] };
 
 // ─── Suggested prompts ──────────────────────────────────────────────────────
 
@@ -50,7 +63,7 @@ function getSuggestions(ticker: string | null, section: string): string[] {
 
 // ─── Message bubble ──────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: ChatMessage & { streaming?: boolean } }) {
+function MessageBubble({ msg }: { msg: PanelMessage }) {
   const isUser = msg.role === 'user';
   return (
     <div className={cn('flex gap-2 mb-3', isUser && 'flex-row-reverse')}>
@@ -67,6 +80,24 @@ function MessageBubble({ msg }: { msg: ChatMessage & { streaming?: boolean } }) 
             : 'bg-muted text-foreground',
         )}
       >
+        {!isUser && msg.tools && msg.tools.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {msg.tools.map((t, i) => (
+              <span
+                key={`${t.name}-${i}`}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full border border-border bg-background/60 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground',
+                  !t.done && 'animate-pulse',
+                  t.done && t.ok === false && 'opacity-60 line-through',
+                )}
+                title={t.done ? (t.ok === false ? `${t.name} failed` : `used ${t.name}`) : `using ${t.name}`}
+              >
+                <Wrench className="h-2.5 w-2.5 flex-shrink-0" />
+                {t.name}
+              </span>
+            ))}
+          </div>
+        )}
         {msg.content}
         {(msg as { streaming?: boolean }).streaming && (
           <span className="inline-block w-1 h-3 bg-current animate-pulse ml-0.5 align-middle" />
@@ -89,7 +120,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
   const { section, selectedTicker, chatOpen, toggleChat } = useDashboard();
   const { latestScan } = useSleevesContext();
 
-  const [messages, setMessages] = useState<(ChatMessage & { streaming?: boolean })[]>([]);
+  const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -120,67 +151,128 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
     };
   }, [latestScan]);
 
+  /** Immutable update applied to the trailing streaming assistant message. */
+  const patchStreaming = useCallback((fn: (last: PanelMessage) => PanelMessage) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last?.streaming) return prev;
+      return [...prev.slice(0, -1), fn(last)];
+    });
+  }, []);
+
+  /** Freeze the trailing streaming message (drop the cursor, keep tool chips). */
+  const finalizeStreaming = useCallback(() => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last?.streaming) return prev;
+      return [...prev.slice(0, -1), { role: 'assistant', content: last.content, tools: last.tools }];
+    });
+    setLoading(false);
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || loading) return;
 
       const userMsg: ChatMessage = { role: 'user', content: trimmed };
-      const newHistory: ChatMessage[] = [...messages.filter((m) => !m.streaming), userMsg];
+      const newHistory: ChatMessage[] = [
+        ...messages.filter((m) => !m.streaming).map((m) => ({ role: m.role, content: m.content })),
+        userMsg,
+      ];
       setMessages([...newHistory, { role: 'assistant', content: '', streaming: true }]);
       setInput('');
       setLoading(true);
 
       abortRef.current?.abort();
       abortRef.current = new AbortController();
+      const signal = abortRef.current.signal;
 
-      try {
+      const context: ChatContext = {
+        section,
+        selectedTicker,
+        screenerSnapshot: screenerSnapshot ?? null,
+        patternSnapshot: patternSnapshot ?? null,
+        scanSnapshot: buildScanSnapshot() as Record<string, unknown> | null,
+      };
+
+      // Legacy plain-chat stream — used when the agent endpoint is unreachable.
+      const fallbackToPlainChat = async () => {
         await streamChat(
           newHistory,
+          context,
+          (token) => patchStreaming((last) => ({ ...last, content: last.content + token })),
+          finalizeStreaming,
+          signal,
+        );
+      };
+
+      let gotOutput = false;
+      try {
+        await streamAgentChat(
+          newHistory,
+          context,
           {
-            section,
-            selectedTicker,
-            screenerSnapshot: screenerSnapshot ?? null,
-            patternSnapshot: patternSnapshot ?? null,
-            scanSnapshot: buildScanSnapshot() as Record<string, unknown> | null,
+            onToken: (token) => {
+              gotOutput = true;
+              patchStreaming((last) => ({ ...last, content: last.content + token }));
+            },
+            onToolCall: (name) => {
+              gotOutput = true;
+              patchStreaming((last) => ({
+                ...last,
+                tools: [...(last.tools ?? []), { name, done: false }],
+              }));
+            },
+            onToolResult: (name, ok) => {
+              patchStreaming((last) => {
+                const tools = [...(last.tools ?? [])];
+                const idx = tools.findIndex((t) => t.name === name && !t.done);
+                if (idx >= 0) tools[idx] = { ...tools[idx], done: true, ok };
+                return { ...last, tools };
+              });
+            },
+            onError: (message) => {
+              patchStreaming((last) => ({
+                ...last,
+                content: last.content || message,
+              }));
+              gotOutput = true;
+            },
+            onDone: finalizeStreaming,
           },
-          (token) => {
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last?.streaming) {
-                return [...prev.slice(0, -1), { ...last, content: last.content + token }];
-              }
-              return prev;
-            });
-          },
-          () => {
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last?.streaming) {
-                return [...prev.slice(0, -1), { role: 'assistant', content: last.content }];
-              }
-              return prev;
-            });
-            setLoading(false);
-          },
-          abortRef.current.signal,
+          signal,
         );
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.streaming) {
-            return [
-              ...prev.slice(0, -1),
-              { role: 'assistant', content: 'Connection error — check that the backend is running.' },
-            ];
+        // Agent endpoint failed before producing anything — fall back to the
+        // plain (non-agent) chat stream so the panel keeps working.
+        if (!gotOutput) {
+          try {
+            await fallbackToPlainChat();
+            return;
+          } catch (fallbackErr) {
+            if ((fallbackErr as Error).name === 'AbortError') return;
           }
-          return prev;
-        });
-        setLoading(false);
+        }
+        patchStreaming((last) => ({
+          ...last,
+          content: last.content || 'Connection error — check that the backend is running.',
+        }));
+        finalizeStreaming();
       }
     },
-    [loading, messages, section, selectedTicker, screenerSnapshot, patternSnapshot, buildScanSnapshot],
+    [
+      loading,
+      messages,
+      section,
+      selectedTicker,
+      screenerSnapshot,
+      patternSnapshot,
+      buildScanSnapshot,
+      patchStreaming,
+      finalizeStreaming,
+    ],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -279,7 +371,7 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
           </button>
         </div>
         <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
-          DeepSeek V3 · ~$0.001/message
+          Agent with live data tools · DeepSeek
         </p>
       </div>
     </div>

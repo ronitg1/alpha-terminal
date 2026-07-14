@@ -283,6 +283,67 @@ export async function streamChat(
   onDone();
 }
 
+// ─── Agent chat stream (tool-calling assistant) ─────────────────────────────
+
+export interface AgentStreamHandlers {
+  /** Partial assistant text token. */
+  onToken: (token: string) => void;
+  /** The agent started running a tool. */
+  onToolCall: (name: string) => void;
+  /** A tool finished; `ok` is false when it returned an error payload. */
+  onToolResult: (name: string, ok: boolean) => void;
+  /** Stream finished (fires exactly once, including after an error frame). */
+  onDone: () => void;
+  /** Backend-reported error (user-safe message). */
+  onError?: (message: string) => void;
+}
+
+/** Stream the agentic (tool-calling) chat response as typed SSE frames.
+ *  Uses POST /sleeves/chat/agent/stream; the plain streamChat above remains
+ *  the non-agent fallback. */
+export async function streamAgentChat(
+  messages: ChatMessage[],
+  context: ChatContext,
+  handlers: AgentStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let done = false;
+  const finish = () => {
+    if (!done) {
+      done = true;
+      handlers.onDone();
+    }
+  };
+  await postSse(
+    '/sleeves/chat/agent/stream',
+    { messages, context },
+    (event, data) => {
+      const d = (data ?? {}) as Record<string, unknown>;
+      switch (event) {
+        case 'text_delta':
+          if (typeof d.token === 'string') handlers.onToken(d.token);
+          break;
+        case 'tool_call':
+          handlers.onToolCall(typeof d.name === 'string' ? d.name : 'tool');
+          break;
+        case 'tool_result':
+          handlers.onToolResult(typeof d.name === 'string' ? d.name : 'tool', d.ok !== false);
+          break;
+        case 'error':
+          handlers.onError?.(typeof d.message === 'string' ? d.message : 'Agent request failed.');
+          break;
+        case 'end':
+          finish();
+          break;
+        default:
+          break;
+      }
+    },
+    signal,
+  );
+  finish();
+}
+
 export async function postSse(
   path: string,
   body: unknown,
