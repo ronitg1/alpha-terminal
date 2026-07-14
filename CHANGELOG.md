@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.5] — 2026-07-14
+
+### Fixed
+- **Option contracts never appeared in Telegram `/scan` or alert messages.** The
+  enrichment helper `signal_context` called the `trade_plan` route function in-process
+  without passing `risk`, so it received FastAPI's `Query("moderate")` **object**
+  instead of the string; `normalize_risk` then threw, `trade_plan` raised, and
+  `signal_context` swallowed it and returned `None` — leaving only the levels-based
+  entry/target (which is why entry/target showed but the contract never did). Now it
+  passes `risk="moderate"` explicitly; contracts render again (verified live: NVDA →
+  CALL $220 · exp 2026-08-14 · 31 DTE). Regression test added.
+
 ## [1.22.4] — 2026-07-14
 
 ### Changed

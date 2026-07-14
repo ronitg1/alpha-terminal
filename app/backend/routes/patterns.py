@@ -666,7 +666,9 @@ async def signal_context(ticker: str, pattern: str, timeframe: str = "day") -> d
     Best-effort: returns ``None`` on any failure (bad ticker, no data, empty
     chain) so callers can fall back to the pattern's own levels."""
     try:
-        tp = await trade_plan(ticker, pattern, timeframe=timeframe)
+        # Pass risk/timeframe explicitly: trade_plan is a route fn whose defaults are
+        # FastAPI Query() objects, so calling it in-process without them would blow up.
+        tp = await trade_plan(ticker, pattern, risk="moderate", timeframe=timeframe)
     except Exception:  # noqa: BLE001 — enrichment is best-effort, never fatal
         return None
     plan = tp.get("plan") or {}
