@@ -23,12 +23,26 @@ function fmt12(t: string): string {
 
 const selectCls = 'bg-background border border-border rounded px-1.5 py-1 text-xs';
 
+// Frequency options: 0 = classic once-daily at a time; 60/120/240 = recurring.
+const FREQ_CHOICES: { value: number; label: string }[] = [
+  { value: 0, label: 'Daily' },
+  { value: 60, label: 'Every 1h' },
+  { value: 120, label: 'Every 2h' },
+  { value: 240, label: 'Every 4h' },
+];
+
+/** Short label for a schedule's frequency. */
+function freqLabel(s: ScanSchedule): string {
+  return s.interval_minutes ? `Every ${s.interval_minutes / 60}h` : fmt12(s.time_of_day);
+}
+
 export function ScheduledScansSettings() {
   const [schedules, setSchedules] = useState<ScanSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTime, setNewTime] = useState('08:00');
   const [newTf, setNewTf] = useState('day');
   const [newLookback, setNewLookback] = useState(180);
+  const [newInterval, setNewInterval] = useState(0); // 0 = daily
   const [busy, setBusy] = useState(false);
   const tz = browserTimezone();
 
@@ -56,19 +70,31 @@ export function ScheduledScansSettings() {
   const add = async () => {
     setBusy(true);
     try {
-      await scheduledApi.addSchedule(newTime, tz, newTf, newLookback);
-      toast.success(`Scan scheduled for ${fmt12(newTime)}`);
+      // Interval schedules use the time as a daily start anchor; default it so two
+      // interval schedules don't collide on the unique (user, time) key.
+      const interval = newInterval || null;
+      const anchor = interval ? newTime : newTime;
+      await scheduledApi.addSchedule(anchor, tz, newTf, newLookback, interval);
+      toast.success(interval ? `Scan scheduled every ${interval / 60}h` : `Scan scheduled for ${fmt12(newTime)}`);
       await load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to add time');
+      toast.error(e instanceof Error ? e.message : 'Failed to add scan');
     } finally {
       setBusy(false);
     }
   };
 
-  const editConfig = async (s: ScanSchedule, timeframe: string, lookbackDays: number) => {
+  const editConfig = async (
+    s: ScanSchedule,
+    opts: { timeframe?: string; lookbackDays?: number; intervalMinutes?: number | null } = {},
+  ) => {
     try {
-      await scheduledApi.updateSchedule(s.id, timeframe, lookbackDays);
+      await scheduledApi.updateSchedule(
+        s.id,
+        opts.timeframe ?? s.timeframe,
+        opts.lookbackDays ?? s.lookback_days,
+        opts.intervalMinutes !== undefined ? opts.intervalMinutes : s.interval_minutes,
+      );
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to update scan');
@@ -111,12 +137,26 @@ export function ScheduledScansSettings() {
           {schedules.map((s) => (
             <div key={s.id} className="flex flex-wrap items-center gap-2 text-xs">
               <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="font-mono">{fmt12(s.time_of_day)}</span>
+              <span className="font-mono min-w-[4.5rem]">{freqLabel(s)}</span>
+              {/* Frequency (daily-at-time vs recurring), editable inline. */}
+              <select
+                value={s.interval_minutes ?? 0}
+                onChange={(e) => void editConfig(s, { intervalMinutes: Number(e.target.value) || null })}
+                className={selectCls}
+                aria-label="Frequency"
+              >
+                {FREQ_CHOICES.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
               {/* Per-schedule timeframe + lookback (editable inline). */}
               <select
                 value={s.timeframe}
                 onChange={(e) =>
-                  void editConfig(s, e.target.value, timeframeConfig(e.target.value).defaultLookback)
+                  void editConfig(s, {
+                    timeframe: e.target.value,
+                    lookbackDays: timeframeConfig(e.target.value).defaultLookback,
+                  })
                 }
                 className={selectCls}
                 aria-label="Timeframe"
@@ -127,7 +167,7 @@ export function ScheduledScansSettings() {
               </select>
               <select
                 value={s.lookback_days}
-                onChange={(e) => void editConfig(s, s.timeframe, Number(e.target.value))}
+                onChange={(e) => void editConfig(s, { lookbackDays: Number(e.target.value) })}
                 className={selectCls}
                 aria-label="Lookback"
               >
@@ -158,11 +198,22 @@ export function ScheduledScansSettings() {
           ))}
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
+            <select
+              value={newInterval}
+              onChange={(e) => setNewInterval(Number(e.target.value))}
+              className={selectCls}
+              aria-label="New frequency"
+            >
+              {FREQ_CHOICES.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
             <input
               type="time"
               value={newTime}
               onChange={(e) => setNewTime(e.target.value)}
               className="bg-background border border-border rounded px-2 py-1 text-xs"
+              title={newInterval ? 'Start from this time each day' : 'Run at this time'}
             />
             <select value={newTf} onChange={(e) => selectNewTf(e.target.value)} className={selectCls} aria-label="New timeframe">
               {SCAN_TIMEFRAMES.map((t) => (
@@ -185,9 +236,11 @@ export function ScheduledScansSettings() {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Each scheduled scan runs its own timeframe + lookback (e.g. a daily 2yr premarket scan
-            and a 1h 30d intraday scan). The Pattern Scanner shows the saved pre-scan for whichever
-            timeframe you select.
+            Each scan runs its own frequency (once <strong>Daily</strong> at a time, or recurring{' '}
+            <strong>Every 1h/2h/4h</strong> from that start time), timeframe, and lookback — e.g. a
+            daily 2yr premarket scan plus an hourly 1h/30d intraday scan. The Pattern Scanner shows
+            the saved pre-scan for whichever timeframe you select, and high-confidence hits can be
+            pushed to your phone (Alerts tab).
           </p>
         </>
       )}

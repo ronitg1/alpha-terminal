@@ -110,12 +110,29 @@ def _next_id(store: dict) -> int:
     return (max(ids) + 1) if ids else 1
 
 
+_VALID_INTERVALS = {60, 120, 240}  # 1h / 2h / 4h
+
+
+def validate_interval(interval_minutes: int | None) -> int | None:
+    """Validate a recurring-interval choice. None = classic daily schedule."""
+    if interval_minutes in (None, 0):
+        return None
+    try:
+        n = int(interval_minutes)
+    except (TypeError, ValueError):
+        raise ValueError("interval_minutes must be a whole number of minutes.")
+    if n not in _VALID_INTERVALS:
+        raise ValueError(f"interval_minutes must be one of {sorted(_VALID_INTERVALS)} (1h/2h/4h).")
+    return n
+
+
 def _ensure_cfg(row: dict[str, Any]) -> dict[str, Any]:
-    """Backfill timeframe/lookback defaults on a file-backend row that predates
-    those fields, so the API shape is uniform (the DB backend gets them via the
-    migration's server_default)."""
+    """Backfill newer fields on a file-backend row that predates them, so the API
+    shape is uniform (the DB backend gets them via the migration defaults)."""
     row.setdefault("timeframe", "day")
     row.setdefault("lookback_days", 180)
+    row.setdefault("interval_minutes", None)
+    row.setdefault("last_run_at", None)
     return row
 
 
@@ -130,14 +147,16 @@ def list_schedules() -> list[dict[str, Any]]:
 
 
 def add_schedule(
-    time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180
+    time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180,
+    interval_minutes: int | None = None,
 ) -> dict[str, Any]:
     t = validate_time(time_of_day)
     tz = _valid_tz(timezone)
     tf, lookback = validate_timeframe_lookback(timeframe, lookback_days)
+    interval = validate_interval(interval_minutes)
     if use_db():
         with session_scope() as db:
-            return ScheduleRepository(db, current_user_id()).add_schedule(t, tz, tf, lookback)
+            return ScheduleRepository(db, current_user_id()).add_schedule(t, tz, tf, lookback, interval)
     store = _read_json(_SCHED_PATH)
     uid = current_user_id()
     mine = store.setdefault(uid, [])
@@ -148,25 +167,29 @@ def add_schedule(
     row = {
         "id": _next_id(store), "time_of_day": t, "timezone": tz, "enabled": True,
         "last_run_on": None, "timeframe": tf, "lookback_days": lookback,
+        "interval_minutes": interval, "last_run_at": None,
     }
     mine.append(row)
     _write_json(_SCHED_PATH, store)
     return row
 
 
-def update_schedule(schedule_id: int, timeframe: str, lookback_days: int) -> dict[str, Any]:
-    """Change a schedule's timeframe + lookback (validated together — the lookback
-    clamps to the timeframe's max). Callers pass both since they're interdependent."""
+def update_schedule(
+    schedule_id: int, timeframe: str, lookback_days: int, interval_minutes: int | None = None
+) -> dict[str, Any]:
+    """Change a schedule's timeframe + lookback (validated together), and its
+    recurring interval (None = daily-at-time)."""
     tf, lookback = validate_timeframe_lookback(timeframe, lookback_days)
+    interval = validate_interval(interval_minutes)
     if use_db():
         with session_scope() as db:
-            return ScheduleRepository(db, current_user_id()).update_schedule(schedule_id, tf, lookback)
+            return ScheduleRepository(db, current_user_id()).update_schedule(schedule_id, tf, lookback, interval)
     store = _read_json(_SCHED_PATH)
     for s in store.get(current_user_id(), []):
         if s["id"] == schedule_id:
-            s["timeframe"], s["lookback_days"] = tf, lookback
+            s["timeframe"], s["lookback_days"], s["interval_minutes"] = tf, lookback, interval
             _write_json(_SCHED_PATH, store)
-            return s
+            return _ensure_cfg(s)
     raise LookupError(f"No schedule {schedule_id}.")
 
 
@@ -231,19 +254,27 @@ def all_enabled_schedules() -> list[dict[str, Any]]:
                     "last_run_on": s.get("last_run_on"),
                     "timeframe": s.get("timeframe", "day"),
                     "lookback_days": s.get("lookback_days", 180),
+                    "interval_minutes": s.get("interval_minutes"),
+                    "last_run_at": s.get("last_run_at"),
                 })
     return out
 
 
 def mark_run(schedule_id: int, user_id: str, ran_on: str) -> None:
+    """Record that a schedule fired: stamp last_run_on (daily dedupe) AND
+    last_run_at (interval gating). Both are harmless to the other mode."""
+    import datetime
+
+    ran_at = datetime.datetime.now(datetime.timezone.utc)
     if use_db():
         with session_scope() as db:
-            ScheduleRepository(db).mark_run(schedule_id, ran_on)
+            ScheduleRepository(db).mark_run(schedule_id, ran_on, ran_at)
             return
     store = _read_json(_SCHED_PATH)
     for s in store.get(user_id, []):
         if s["id"] == schedule_id:
             s["last_run_on"] = ran_on
+            s["last_run_at"] = ran_at.isoformat()
             _write_json(_SCHED_PATH, store)
             return
 

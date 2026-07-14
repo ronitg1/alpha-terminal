@@ -39,6 +39,8 @@ class ScheduleRepository:
             "last_run_on": s.last_run_on,
             "timeframe": s.timeframe,
             "lookback_days": s.lookback_days,
+            "interval_minutes": s.interval_minutes,
+            "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
         }
 
     def list_schedules(self) -> list[dict[str, Any]]:
@@ -51,7 +53,8 @@ class ScheduleRepository:
         return [self._to_dict(s) for s in rows]
 
     def add_schedule(
-        self, time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180
+        self, time_of_day: str, timezone: str, timeframe: str = "day", lookback_days: int = 180,
+        interval_minutes: int | None = None,
     ) -> dict[str, Any]:
         existing = (
             self.db.query(ScanSchedule)
@@ -62,7 +65,7 @@ class ScheduleRepository:
             raise ValueError(f"A scan is already scheduled at {time_of_day}.")
         row = ScanSchedule(
             user_id=self.user_id, time_of_day=time_of_day, timezone=timezone, enabled=True,
-            timeframe=timeframe, lookback_days=lookback_days,
+            timeframe=timeframe, lookback_days=lookback_days, interval_minutes=interval_minutes,
         )
         self.db.add(row)
         self.db.commit()
@@ -74,10 +77,13 @@ class ScheduleRepository:
         self.db.commit()
         return self._to_dict(row)
 
-    def update_schedule(self, schedule_id: int, timeframe: str, lookback_days: int) -> dict[str, Any]:
+    def update_schedule(
+        self, schedule_id: int, timeframe: str, lookback_days: int, interval_minutes: int | None = None
+    ) -> dict[str, Any]:
         row = self._owned(schedule_id)
         row.timeframe = timeframe
         row.lookback_days = lookback_days
+        row.interval_minutes = interval_minutes
         self.db.commit()
         return self._to_dict(row)
 
@@ -127,14 +133,18 @@ class ScheduleRepository:
                 "last_run_on": s.last_run_on,
                 "timeframe": s.timeframe,
                 "lookback_days": s.lookback_days,
+                "interval_minutes": s.interval_minutes,
+                "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
             }
             for s in rows
         ]
 
-    def mark_run(self, schedule_id: int, ran_on: str) -> None:
+    def mark_run(self, schedule_id: int, ran_on: str, ran_at: Any | None = None) -> None:
         row = self.db.query(ScanSchedule).filter(ScanSchedule.id == schedule_id).first()
         if row is not None:
             row.last_run_on = ran_on
+            if ran_at is not None:
+                row.last_run_at = ran_at
             self.db.commit()
 
     def set_prescan_for(

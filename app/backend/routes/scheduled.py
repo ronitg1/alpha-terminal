@@ -28,10 +28,13 @@ router = APIRouter(prefix="/scheduled", tags=["scheduled"])
 
 
 class AddScheduleBody(BaseModel):
-    time_of_day: str = Field(..., description="24-hour HH:MM, local to timezone")
+    time_of_day: str = Field(..., description="24-hour HH:MM, local to timezone (start anchor)")
     timezone: str = Field("America/New_York", description="IANA timezone")
     timeframe: str = Field("day", description="Chart timeframe: week | day | 1h | 15m")
     lookback_days: int = Field(180, description="Lookback window (clamped to the timeframe's max)")
+    interval_minutes: int | None = Field(
+        None, description="Recurring interval (60/120/240); null = once daily at time_of_day"
+    )
 
 
 class ToggleBody(BaseModel):
@@ -41,6 +44,9 @@ class ToggleBody(BaseModel):
 class UpdateScheduleBody(BaseModel):
     timeframe: str = Field(..., description="Chart timeframe: week | day | 1h | 15m")
     lookback_days: int = Field(..., description="Lookback window (clamped to the timeframe's max)")
+    interval_minutes: int | None = Field(
+        None, description="Recurring interval (60/120/240); null = once daily at time_of_day"
+    )
 
 
 @router.get("/schedules")
@@ -52,7 +58,7 @@ async def list_schedules(user_id: str = Depends(get_current_user_id)) -> dict:
 async def add_schedule(body: AddScheduleBody, user_id: str = Depends(get_current_user_id)) -> dict:
     try:
         return scan_schedule_service.add_schedule(
-            body.time_of_day, body.timezone, body.timeframe, body.lookback_days
+            body.time_of_day, body.timezone, body.timeframe, body.lookback_days, body.interval_minutes
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -72,9 +78,11 @@ async def toggle_schedule(
 async def update_schedule(
     schedule_id: int, body: UpdateScheduleBody, user_id: str = Depends(get_current_user_id)
 ) -> dict:
-    """Change a schedule's timeframe + lookback."""
+    """Change a schedule's timeframe + lookback + recurring interval."""
     try:
-        return scan_schedule_service.update_schedule(schedule_id, body.timeframe, body.lookback_days)
+        return scan_schedule_service.update_schedule(
+            schedule_id, body.timeframe, body.lookback_days, body.interval_minutes
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except LookupError as exc:

@@ -10,12 +10,14 @@ import type { ScanResult } from '@/types/patterns';
 
 export interface ScanSchedule {
   id: number;
-  time_of_day: string; // "HH:MM" 24-hour, local to `timezone`
+  time_of_day: string; // "HH:MM" 24-hour, local to `timezone` (start anchor)
   timezone: string;
   enabled: boolean;
   last_run_on: string | null;
   timeframe: string; // week | day | 1h | 15m
   lookback_days: number;
+  interval_minutes: number | null; // null = daily-at-time; 60/120/240 = recurring
+  last_run_at: string | null;
 }
 
 export interface PrescanResult {
@@ -54,7 +56,10 @@ export const scheduledApi = {
   listSchedules: () =>
     req<{ schedules: ScanSchedule[] }>('/scheduled/schedules').then((r) => r.schedules),
 
-  addSchedule: (timeOfDay: string, timezone: string, timeframe: string, lookbackDays: number) =>
+  addSchedule: (
+    timeOfDay: string, timezone: string, timeframe: string, lookbackDays: number,
+    intervalMinutes: number | null = null,
+  ) =>
     req<ScanSchedule>('/scheduled/schedules', {
       method: 'POST',
       body: JSON.stringify({
@@ -62,13 +67,16 @@ export const scheduledApi = {
         timezone,
         timeframe,
         lookback_days: lookbackDays,
+        interval_minutes: intervalMinutes,
       }),
     }),
 
-  updateSchedule: (id: number, timeframe: string, lookbackDays: number) =>
+  updateSchedule: (
+    id: number, timeframe: string, lookbackDays: number, intervalMinutes: number | null = null,
+  ) =>
     req<ScanSchedule>(`/scheduled/schedules/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ timeframe, lookback_days: lookbackDays }),
+      body: JSON.stringify({ timeframe, lookback_days: lookbackDays, interval_minutes: intervalMinutes }),
     }),
 
   toggleSchedule: (id: number, enabled: boolean) =>

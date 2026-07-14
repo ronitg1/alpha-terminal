@@ -260,6 +260,12 @@ class ScanSchedule(Base):
     # runner values so existing schedules are unchanged.
     timeframe = Column(String(8), nullable=False, default="day", server_default="day")
     lookback_days = Column(Integer, nullable=False, default=180, server_default="180")
+    # Recurring interval scans. NULL = the classic once-daily-at-time_of_day
+    # schedule. When set (e.g. 60/120/240), the scan runs every N minutes on/after
+    # time_of_day (which acts as the daily start anchor), gated by last_run_at
+    # rather than the per-day last_run_on.
+    interval_minutes = Column(Integer, nullable=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

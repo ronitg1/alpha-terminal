@@ -44,17 +44,46 @@ def _user_email(user_id: str) -> str | None:
         return None
 
 
+def _parse_dt(v: object) -> datetime.datetime | None:
+    """Parse a stored last_run_at (datetime or ISO string) into an aware UTC dt."""
+    if v is None:
+        return None
+    if isinstance(v, datetime.datetime):
+        return v if v.tzinfo else v.replace(tzinfo=datetime.timezone.utc)
+    try:
+        dt = datetime.datetime.fromisoformat(str(v))
+        return dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+
+
 def _is_due(sched: dict, now_utc: datetime.datetime) -> tuple[bool, str]:
-    """Return (due, today_local_date). Due = the local time has reached the
-    scheduled time today and it hasn't already run today (once-per-day)."""
+    """Return (due, today_local_date).
+
+    Daily schedule (interval_minutes unset): due once the local time has reached
+    time_of_day today and it hasn't run today. Interval schedule (interval_minutes
+    set): due every ``interval_minutes`` on/after time_of_day, gated by last_run_at
+    rather than the per-day flag."""
     tz = ZoneInfo(sched.get("timezone") or "America/New_York")
     now_local = now_utc.astimezone(tz)
     today = now_local.date().isoformat()
-    if sched.get("last_run_on") == today:
-        return False, today
-    hh, mm = sched["time_of_day"].split(":")
+    hh, mm = (sched.get("time_of_day") or "00:00").split(":")
     sched_minutes = int(hh) * 60 + int(mm)
     now_minutes = now_local.hour * 60 + now_local.minute
+
+    interval = sched.get("interval_minutes")
+    if interval and int(interval) > 0:
+        if now_minutes < sched_minutes:  # before the daily start anchor
+            return False, today
+        last_at = _parse_dt(sched.get("last_run_at"))
+        if last_at is None:
+            return True, today
+        elapsed_min = (now_utc - last_at).total_seconds() / 60.0
+        # 1-min slack so the ~15-min cron tick still fires when a hair short.
+        return elapsed_min >= int(interval) - 1, today
+
+    if sched.get("last_run_on") == today:
+        return False, today
     return now_minutes >= sched_minutes, today
 
 

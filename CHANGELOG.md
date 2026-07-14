@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] — 2026-07-14
+
+### Added
+- **Recurring "every N hours" scheduled scans.** Schedules were once-a-day at a set
+  time; now each can instead run **Every 1h / 2h / 4h** (from a daily start anchor).
+  Pick the frequency in Settings → Scheduled scans. The in-process scheduler already
+  ticks every 15 min, so hourly scans "just work"; a new `interval_minutes` +
+  `last_run_at` gate the recurrence (`_is_due`) instead of the per-day flag. Pairs
+  naturally with hourly Telegram alerts — the dedup keys on the signal's bar, so an
+  hourly 1h scan only pings you on genuinely new breakouts. Alembic `d0e1f2a3b4c5`
+  (additive/nullable). Dual-backend, mobile-friendly UI.
+
 ## [1.19.0] — 2026-07-14
 
 ### Added

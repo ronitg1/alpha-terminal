@@ -875,6 +875,49 @@ def test_alert_settings_and_dedup_db_backend(db_backend):
     assert telegram_alerts._filter_unnotified(uid, ["k1", "k2"]) == ["k2"]
 
 
+def test_interval_schedule_roundtrip_db(db_backend):
+    from app.backend.services import scan_schedule_service as svc
+
+    created = svc.add_schedule("09:30", "America/New_York", "1h", 30, interval_minutes=60)
+    assert created["interval_minutes"] == 60
+    assert created["last_run_at"] is None
+    assert any(s["interval_minutes"] == 60 for s in svc.list_schedules())
+    with pytest.raises(ValueError):
+        svc.add_schedule("10:00", "America/New_York", "1h", 30, interval_minutes=45)
+
+
+def test_interval_schedule_roundtrip_file(monkeypatch, tmp_path):
+    from app.backend.services import scan_schedule_service as svc
+
+    monkeypatch.setenv("STORAGE_BACKEND", "file")
+    monkeypatch.setattr(svc, "_SCHED_PATH", tmp_path / "sched.json")
+    created = svc.add_schedule("09:30", "America/New_York", "1h", 30, interval_minutes=120)
+    assert created["interval_minutes"] == 120 and created["last_run_at"] is None
+
+
+def test_interval_due_logic():
+    """An interval schedule is gated by last_run_at + the daily anchor, not last_run_on."""
+    import datetime
+
+    from app.backend.services import prescan_runner
+
+    now = datetime.datetime(2026, 7, 14, 20, 0, tzinfo=datetime.timezone.utc)  # 16:00 EDT
+    sched = {"time_of_day": "09:30", "timezone": "America/New_York",
+             "interval_minutes": 60, "last_run_at": None, "last_run_on": None}
+    assert prescan_runner._is_due(sched, now)[0] is True  # never run, past anchor -> due
+
+    sched["last_run_at"] = now.isoformat()
+    assert prescan_runner._is_due(sched, now)[0] is False  # just ran -> not due
+
+    later = now + datetime.timedelta(minutes=70)
+    assert prescan_runner._is_due(sched, later)[0] is True  # >60min later -> due again
+
+    before_anchor = datetime.datetime(2026, 7, 14, 12, 0, tzinfo=datetime.timezone.utc)  # 08:00 EDT
+    sched2 = {"time_of_day": "09:30", "timezone": "America/New_York",
+              "interval_minutes": 60, "last_run_at": None}
+    assert prescan_runner._is_due(sched2, before_anchor)[0] is False  # before daily anchor
+
+
 def test_prescan_due_logic():
     """A schedule is due once its local time has passed today and it hasn't run."""
     import datetime
