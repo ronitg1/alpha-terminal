@@ -100,6 +100,14 @@ async def _run_for_user(sched: dict, today: str) -> None:
                 "Pre-scan for %s: %d tickers -> %d signals (%s / %dd)",
                 user_id, len(tickers), len(results), timeframe, lookback,
             )
+            # Push Telegram alerts for any high-confidence signal in this scan.
+            # maybe_notify is fully best-effort (never raises) and self-gates on
+            # the user's enabled/threshold/timeframe settings + dedup ledger.
+            from app.backend.services import telegram_alerts
+
+            sent = await telegram_alerts.maybe_notify(user_id, timeframe, results)
+            if sent:
+                logger.info("Telegram: pushed %d high-confidence %s alert(s) for %s", sent, timeframe, user_id)
         else:
             logger.info("Pre-scan for %s skipped: no watchlist tickers", user_id)
 

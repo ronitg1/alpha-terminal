@@ -855,6 +855,26 @@ def test_prescan_file_migrates_legacy_flat_shape(monkeypatch, tmp_path):
     assert scan_schedule_service.get_prescan("1h")["results"] == [{"ticker": "NEW"}]
 
 
+def test_alert_settings_and_dedup_db_backend(db_backend):
+    """Telegram alert prefs + dedup ledger round-trip through the DB repository."""
+    from app.backend.services import telegram_alerts
+    from app.backend.services._storage import current_user_id
+
+    uid = current_user_id()
+    telegram_alerts._save_settings(
+        uid, {"chat_id": "55", "enabled": True, "min_confidence": 85, "timeframes": ["day", "1h"]}
+    )
+    s = telegram_alerts._get_settings(uid)
+    assert s["chat_id"] == "55" and s["enabled"] is True and s["min_confidence"] == 85.0
+    assert sorted(s["timeframes"]) == ["1h", "day"]
+    # dedup: both new, then one recorded
+    assert sorted(telegram_alerts._filter_unnotified(uid, ["k1", "k2"])) == ["k1", "k2"]
+    telegram_alerts._mark_notified(uid, ["k1"])
+    assert telegram_alerts._filter_unnotified(uid, ["k1", "k2"]) == ["k2"]
+    telegram_alerts._mark_notified(uid, ["k1"])  # idempotent (unique constraint)
+    assert telegram_alerts._filter_unnotified(uid, ["k1", "k2"]) == ["k2"]
+
+
 def test_prescan_due_logic():
     """A schedule is due once its local time has passed today and it hasn't run."""
     import datetime

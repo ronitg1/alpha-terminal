@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.backend.database.app_models import (
@@ -19,9 +20,14 @@ from app.backend.database.app_models import (
     DEFAULT_LLM_MODEL_NAME,
     DEFAULT_LLM_MODEL_PROVIDER,
     DEFAULT_USER_ID,
+    NotifiedSignal,
     Portfolio,
     UserSettings,
 )
+
+
+def _csv_to_list(csv: str | None) -> list[str]:
+    return [t.strip() for t in (csv or "").split(",") if t.strip()]
 
 
 class PortfolioRepository:
@@ -173,3 +179,51 @@ class PortfolioRepository:
             "model_name": model_name,
             "preference_saved": True,
         }
+
+    # ─── Telegram alert prefs + dedup ─────────────────────────────────────────
+
+    def get_alert_settings(self) -> dict[str, Any]:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        if row is None:
+            return {"chat_id": None, "enabled": False, "min_confidence": 90.0, "timeframes": ["day", "1h"]}
+        return {
+            "chat_id": row.telegram_chat_id,
+            "enabled": bool(row.telegram_alerts_enabled),
+            "min_confidence": float(row.telegram_min_confidence if row.telegram_min_confidence is not None else 90.0),
+            "timeframes": _csv_to_list(row.telegram_timeframes) or ["day", "1h"],
+        }
+
+    def set_alert_settings(
+        self, *, chat_id: str | None, enabled: bool, min_confidence: float, timeframes: list[str]
+    ) -> dict[str, Any]:
+        row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
+        if row is None:
+            row = UserSettings(user_id=self.user_id)
+            self.db.add(row)
+        row.telegram_chat_id = chat_id
+        row.telegram_alerts_enabled = enabled
+        row.telegram_min_confidence = min_confidence
+        row.telegram_timeframes = ",".join(timeframes)
+        self.db.commit()
+        return self.get_alert_settings()
+
+    def filter_unnotified(self, keys: list[str]) -> list[str]:
+        """Return the subset of ``keys`` not already recorded as notified."""
+        if not keys:
+            return []
+        existing = {
+            r.signal_key
+            for r in self.db.query(NotifiedSignal.signal_key)
+            .filter(NotifiedSignal.user_id == self.user_id, NotifiedSignal.signal_key.in_(keys))
+            .all()
+        }
+        return [k for k in keys if k not in existing]
+
+    def mark_notified(self, keys: list[str]) -> None:
+        for k in keys:
+            self.db.add(NotifiedSignal(user_id=self.user_id, signal_key=k))
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # A concurrent run already recorded one of these — harmless.
+            self.db.rollback()

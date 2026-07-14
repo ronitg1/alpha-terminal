@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API_BASE_URL } from '@/lib/api-base';
 import { ScheduledScansSettings } from './scheduled-scans-settings';
+import { TelegramAlertsSettings } from './telegram-alerts-settings';
 
 type Provider = 'deepseek' | 'openrouter' | 'massive' | 'finnhub' | 'robinhood';
 type LlmProvider = 'DeepSeek' | 'OpenRouter';
@@ -252,6 +253,7 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             <TabsList>
               <TabsTrigger value="keys">API keys</TabsTrigger>
               <TabsTrigger value="scheduled">Scheduled scans</TabsTrigger>
+              <TabsTrigger value="alerts">Alerts</TabsTrigger>
               {access?.is_owner && <TabsTrigger value="access">Access</TabsTrigger>}
             </TabsList>
           </div>
@@ -406,6 +408,13 @@ export function ApiKeysSettings({ trigger }: { trigger: React.ReactNode }) {
             className="mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4"
           >
             <ScheduledScansSettings />
+          </TabsContent>
+
+          <TabsContent
+            value="alerts"
+            className="mt-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4"
+          >
+            <TelegramAlertsSettings />
           </TabsContent>
 
           {access?.is_owner && (

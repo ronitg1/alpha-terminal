@@ -4,6 +4,30 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] — 2026-07-14
+
+### Added
+- **Telegram high-confidence alerts.** When a scheduled scan surfaces a signal at
+  or above your confidence threshold on an enabled timeframe, the terminal pushes
+  it to your phone via Telegram — one batched message per scan (e.g. `NVDA — Bull
+  Flag · 93% 🟢`). Configure in **Settings → Alerts**: connect your own bot (create
+  it with BotFather, paste the token), pair your chat with a one-time code, then set
+  the confidence threshold (default 90%) and which timeframes fire (default Daily +
+  1h). A "Send test" button confirms delivery.
+  - Rides entirely on the existing scheduled pre-scan runner (`prescan_runner` →
+    `telegram_alerts.maybe_notify`), so no new scheduling infra. Fully best-effort:
+    a failed send never breaks a scan.
+  - A dedup ledger (`notified_signals`, keyed `ticker|pattern|timeframe|end_date`)
+    means a recurring 15-min scan won't re-push the same play; a genuinely new
+    breakout on a later bar still fires.
+  - The bot token is a per-user secret (BYOK): Fernet-encrypted in `api_keys` on the
+    cloud/DB backend, and in a gitignored local file on the file backend. The token
+    is never returned to the client — settings expose only a `has_token` flag.
+  - Outbound push is a ~40-line raw Bot API client over the existing `httpx` (no new
+    dependency), honoring Telegram flood-control (429 `retry_after`).
+  - New: `user_settings` alert columns + a `notified_signals` table (Alembic
+    `c9d0e1f2a3b4`, additive/safe defaults); `/alerts/*` routes; the Alerts tab.
+
 ## [1.16.0] — 2026-07-02
 
 ### Added

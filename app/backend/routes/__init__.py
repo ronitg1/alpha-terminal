@@ -22,6 +22,7 @@ from app.backend.routes.snaptrade import router as snaptrade_router
 from app.backend.routes.portfolio import router as portfolio_router
 from app.backend.routes.market import router as market_router
 from app.backend.routes.scheduled import router as scheduled_router
+from app.backend.routes.alerts import router as alerts_router
 
 # Main API router
 api_router = APIRouter()
@@ -63,3 +64,5 @@ api_router.include_router(access_router, tags=["access"], dependencies=_AUTH)
 # own get_current_user_id dependency, while /scheduled/run-due is reached by the
 # external scheduler and is guarded by the shared CRON_SECRET instead.
 api_router.include_router(scheduled_router, tags=["scheduled"])
+# Telegram alert config: user-scoped, each route carries get_current_user_id.
+api_router.include_router(alerts_router, tags=["alerts"])

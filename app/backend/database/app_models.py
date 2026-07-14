@@ -84,6 +84,13 @@ class UserSettings(Base):
     llm_model_provider = Column(String(64), nullable=False, default=DEFAULT_LLM_MODEL_PROVIDER, server_default=DEFAULT_LLM_MODEL_PROVIDER)
     llm_model_name = Column(String(200), nullable=False, default=DEFAULT_LLM_MODEL_NAME, server_default=DEFAULT_LLM_MODEL_NAME)
     llm_preference_saved = Column(Boolean, nullable=False, default=False, server_default=func.false())
+    # Telegram high-confidence alert prefs. The bot TOKEN is a secret and lives in
+    # the encrypted api_keys store (provider="telegram_bot"), not here — only the
+    # non-secret routing/rules live on this row. chat_id null = not paired yet.
+    telegram_chat_id = Column(String(64), nullable=True)
+    telegram_alerts_enabled = Column(Boolean, nullable=False, default=False, server_default=func.false())
+    telegram_min_confidence = Column(Float, nullable=False, default=90.0, server_default="90")
+    telegram_timeframes = Column(String(64), nullable=False, default="day,1h", server_default="day,1h")  # CSV of week|day|1h|15m
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -274,6 +281,24 @@ class PrescanResult(Base):
     results = Column(_JSONList, nullable=False, default=list)  # list[pattern scan result dict]
     ticker_count = Column(Integer, nullable=False, default=0)
     computed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class NotifiedSignal(Base):
+    """Dedup ledger for Telegram alerts — one row per already-notified signal so a
+    15-minute scheduled scan doesn't re-push the same high-confidence play every
+    run. Key = ``ticker|pattern|timeframe|end_date`` (the signal's breakout bar);
+    ``created_at`` lets us prune old rows."""
+
+    __tablename__ = "notified_signals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    signal_key = Column(String(255), nullable=False)  # ticker|pattern|timeframe|end_date
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "signal_key", name="uq_notified_signal"),
+    )
 
 
 class SnapTradeConnection(Base):
