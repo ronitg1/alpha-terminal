@@ -96,3 +96,20 @@ def test_format_message_shape():
     msg = telegram_alerts._format_message([_res("NVDA", 93), _res("TSLA", 91, bullish=False)], "1h")
     assert "high-confidence 1h" in msg
     assert "NVDA" in msg and "93%" in msg and "TSLA" in msg
+
+
+def test_many_hits_capped_to_stay_under_telegram_limit(file_alerts):
+    """A scan with hundreds of qualifying hits must NOT build one giant message
+    (Telegram rejects >4096 chars). Cap to the top N, note the rest, mark all
+    notified so the overflow isn't re-tried forever."""
+    telegram_alerts._save_settings(
+        "big", {"chat_id": "9", "enabled": True, "min_confidence": 70, "timeframes": ["day"]}
+    )
+    results = [_res(f"TK{i:03d}", 70 + (i % 30), pattern="Bull Flag", end="2026-07-14") for i in range(300)]
+    n = asyncio.run(telegram_alerts.maybe_notify("big", "day", results))
+    assert n == telegram_alerts._MAX_ALERT_SIGNALS  # only the top N are shown
+    text = file_alerts[0]["text"]
+    assert len(text) <= 4096  # under Telegram's hard limit
+    assert "and 280 more" in text  # 300 - 20
+    # Everything fresh was marked notified, so a re-run sends nothing (no re-fail loop).
+    assert asyncio.run(telegram_alerts.maybe_notify("big", "day", results)) == 0

@@ -39,6 +39,10 @@ _VALID_TIMEFRAMES = {"week", "day", "1h", "15m"}
 _DEFAULT_TIMEFRAMES = ["day", "1h"]
 _DEFAULT_THRESHOLD = 90.0
 _DEDUP_TTL_DAYS = 30
+# Telegram rejects a message over 4096 chars ("text is too long"). A scan can
+# surface hundreds of hits above the threshold, so we alert only the most
+# confident N and point the rest to the app — keeping the message well under cap.
+_MAX_ALERT_SIGNALS = 20
 
 _SETTINGS_PATH = Path(__file__).resolve().parents[2] / "data" / "alert_settings.json"
 _DEDUP_PATH = Path(__file__).resolve().parents[2] / "data" / "notified_signals.json"
@@ -196,15 +200,19 @@ def _esc(s: Any) -> str:
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _format_message(hits: list[dict], timeframe: str) -> str:
+def _format_message(hits: list[dict], timeframe: str, more_count: int = 0) -> str:
     tf = _TF_LABEL.get(timeframe, timeframe)
-    head = f"<b>Alpha Terminal — {len(hits)} high-confidence {tf} signal(s)</b>"
+    total = len(hits) + max(0, more_count)
+    head = f"<b>Alpha Terminal — {total} high-confidence {tf} signal(s)</b>"
     lines = []
     for r in sorted(hits, key=lambda x: float(x.get("confidence", 0)), reverse=True):
         arrow = "\U0001F7E2" if r.get("bullish") else "\U0001F534"  # green/red circle
         conf = round(float(r.get("confidence", 0)))
         lines.append(f"{arrow} <b>{_esc(r.get('ticker'))}</b> — {_esc(r.get('pattern'))} · {conf}%")
-    return head + "\n" + "\n".join(lines)
+    msg = head + "\n" + "\n".join(lines)
+    if more_count > 0:
+        msg += f"\n…and {more_count} more above your threshold — open the app to see them all."
+    return msg
 
 
 # ─── the dispatch hook (called from prescan_runner) ───────────────────────────
@@ -232,12 +240,20 @@ async def maybe_notify(user_id: str, timeframe: str, results: list[dict]) -> int
         fresh_hits = [(r, k) for r, k in keyed if k in fresh]
         if not fresh_hits:
             return 0
+        # Cap the message to the most confident N — a scan can produce hundreds of
+        # hits above the threshold, and one giant message trips Telegram's 4096-char
+        # limit ("text is too long") and the whole alert is rejected. Mark ALL fresh
+        # as notified (not just the shown N) so the overflow isn't re-tried every run.
+        fresh_hits.sort(key=lambda rk: float(rk[0].get("confidence", 0) or 0), reverse=True)
+        shown = fresh_hits[:_MAX_ALERT_SIGNALS]
+        more = len(fresh_hits) - len(shown)
         ok = await telegram_notify.send_message(
-            token, chat_id, _format_message([r for r, _ in fresh_hits], timeframe)
+            token, chat_id,
+            _format_message([r for r, _ in shown], timeframe, more_count=more),
         )
         if ok:
             _mark_notified(user_id, [k for _, k in fresh_hits])
-            return len(fresh_hits)
+            return len(shown)
         return 0
     except Exception as exc:  # noqa: BLE001 — alerting must never break a scan
         logger.warning("Telegram alert dispatch failed for %s: %s", user_id, type(exc).__name__)

@@ -4,6 +4,18 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1] — 2026-07-14
+
+### Fixed
+- **Telegram alerts silently failed when a scan had many high-confidence signals.**
+  The alert built one message containing every hit above the threshold; a broad scan
+  (e.g. 3188 signals, hundreds ≥70%) produced a message past Telegram's 4096-char
+  limit, so Telegram rejected the whole push ("Bad Request: text is too long") and
+  **no alert arrived**. The alert now sends the top 20 most-confident new signals with
+  an "…and N more" pointer to the app, and marks all fresh signals notified so the
+  overflow isn't retried (and re-failed) every run. This was the real cause of missing
+  scheduled-scan alerts.
+
 ## [1.22.0] — 2026-07-14
 
 ### Added
