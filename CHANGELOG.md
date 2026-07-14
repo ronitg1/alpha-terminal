@@ -4,6 +4,28 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] — 2026-07-14
+
+### Added
+- **Two-way Telegram remote control.** The alert bot now takes commands back: text
+  your own bot from your phone and the app runs it — the agentic research assistant
+  for natural-language questions ("what patterns are on my watchlist?") plus quick
+  commands **/scan SYM…**, **/portfolio**, **/help**, and **/stop** — replying in
+  Telegram. Extends the existing outbound bot (same BYOK token, same pairing); no
+  new secret. **Polling, not a webhook** — a single in-process supervisor
+  long-polls `getUpdates` per remote-enabled user (`telegram_remote.py`), wired into
+  the app lifespan next to the internal cron and gated the same way (on for the
+  db/cloud backend; `ENABLE_TELEGRAM_REMOTE` / `DISABLE_TELEGRAM_REMOTE` to force).
+  **Security:** every message is gated to the user's paired `chat_id` only — any
+  other chat is ignored (but still ACKed via the offset so a stranger can't wedge
+  the queue) — and each command runs bound to the owning user's identity + resolved
+  provider keys, reset after. A first-poll backlog drop means a redeploy never
+  replays old texts. New non-streaming `agent_chat.answer_once` runs the ReAct agent
+  to a single reply; replies chunk to Telegram's 4096-char cap. Toggle it in
+  Settings → Telegram alerts (only once paired). Alembic `e1f2a3b4c5d6`
+  (additive/nullable `telegram_remote_enabled`). Dual-backend, mobile-friendly UI.
+  Single replica only (two pollers on one bot trip Telegram's 409).
+
 ## [1.20.0] — 2026-07-14
 
 ### Documentation

@@ -29,6 +29,7 @@ async def _lifespan(app: FastAPI):
     _check_required_keys()
     _prewarm_catalyst_earnings()
     _start_internal_cron()
+    _start_telegram_remote()
     # The Ollama probe is for local-model users; on a cloud box with no Ollama
     # it just wastes startup time on a connection attempt. Skip it when
     # SKIP_OLLAMA_CHECK is set (recommended in container deploys).
@@ -61,7 +62,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Alpha Terminal API",
     description="Backend API for Alpha Terminal — retail-investor research terminal.",
-    version="1.20.0",
+    version="1.21.0",
     lifespan=_lifespan,
 )
 
@@ -168,6 +169,18 @@ def _start_internal_cron() -> None:
     except RuntimeError:
         # No running loop (shouldn't happen inside lifespan) — skip silently.
         pass
+
+
+def _start_telegram_remote() -> None:
+    """Launch the inbound Telegram remote-control poller (two-way bot).
+
+    Gated inside ``telegram_remote.run_remote_loop`` (on for the db/cloud backend,
+    off locally unless ``ENABLE_TELEGRAM_REMOTE``), so calling it here is safe
+    everywhere. Lazy import keeps the langchain/agent stack off the module-import
+    path and mirrors how the internal cron pulls in ``prescan_runner``."""
+    from app.backend.services import telegram_remote
+
+    telegram_remote.run_remote_loop()
 
 
 def _check_auth_encryption() -> None:

@@ -28,12 +28,17 @@ async def send_message(token: str, chat_id: str, text: str, *, parse_mode: str =
     if not token or not chat_id or not text:
         return False
     url = f"{_API}/bot{token}/sendMessage"
-    payload = {
+    payload: dict[str, object] = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": parse_mode,
         "disable_web_page_preview": True,
     }
+    # Only send parse_mode when a real mode is requested. Remote-control replies
+    # are arbitrary agent text sent as plain (parse_mode=""), and omitting the
+    # field is the unambiguous "no formatting" contract — passing an empty string
+    # risks a 400 on some Bot API versions. HTML alert callers keep their mode.
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             for attempt in range(_MAX_ATTEMPTS):
@@ -68,15 +73,29 @@ async def send_message(token: str, chat_id: str, text: str, *, parse_mode: str =
     return False
 
 
-async def get_updates(token: str) -> list[dict]:
-    """One-shot fetch of recent bot updates, used only for pairing (to discover
-    the chat_id of the user who messaged the bot). Returns [] on any error."""
+async def get_updates(token: str, offset: int | None = None, timeout: int = 0) -> list[dict]:
+    """Fetch bot updates via Telegram ``getUpdates``. Returns [] on any error.
+
+    Two call shapes share this:
+    - Pairing (``offset=None, timeout=0``): a one-shot fetch of the recent backlog
+      to discover the chat_id of the user who messaged the bot.
+    - The remote poller: passes ``offset`` (the next unconsumed update_id — which
+      also ACKs everything below it) and ``timeout`` seconds of server-side long
+      polling so a quiet bot doesn't hammer the API. The HTTP client timeout is
+      kept comfortably above the long-poll window so the socket outlives the wait.
+    """
     if not token:
         return []
     url = f"{_API}/bot{token}/getUpdates"
+    params: dict[str, object] = {"allowed_updates": '["message"]'}
+    if offset is not None:
+        params["offset"] = offset
+    if timeout and timeout > 0:
+        params["timeout"] = timeout
+    client_timeout = max(15.0, float(timeout) + 10.0)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params={"allowed_updates": '["message"]'})
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.get(url, params=params)
             if resp.status_code == 200:
                 return resp.json().get("result", []) or []
             logger.warning("Telegram getUpdates failed: HTTP %s", resp.status_code)

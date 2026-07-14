@@ -107,6 +107,11 @@ The main session model handles whatever it's set to. Most of the cost optimizati
 
 **What auto-routing does NOT exist:** the harness will never pick a model for you based on task complexity. Routing is your responsibility (`/model` mid-session, the `model:` parameter on `Agent` tool calls, or these subagent definitions).
 
+**Owner routing preference (overrides the Sonnet default above):**
+- **Opus 4.8 (`claude-opus-4-8`)** — medium-reasoning and hard tasks, and ALL new-feature work. Any net-new feature is built on Opus, never Sonnet.
+- **Fable 5 (`claude-fable-5`)** — overall guidance, checking, and review passes.
+- **Sonnet 5 (`claude-sonnet-5`)** — easy code ONLY (mechanical edits, glue, test tweaks). Never use Sonnet to build a new feature.
+
 **Tracking usage:** `/usage` shows total session cost + breakdown by subagent. There is no per-model attribution within a single conversation, but you can infer it from which subagents got called heavily.
 
 ## Using ralph-wiggum for iterative work

@@ -141,3 +141,53 @@ async def stream_agent(
         logger.warning("Agent chat stream error: %s", llm_exception_summary(exc))
         yield ("error", {"message": LLM_USER_ERROR})
     yield ("end", {})
+
+
+def _flatten_content(content: Any) -> str:
+    """Collapse a LangChain message ``content`` (str, or a list of content parts)
+    into one plain string."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict) and isinstance(p.get("text"), str):
+                parts.append(p["text"])
+        return "".join(parts)
+    return str(content or "")
+
+
+async def answer_once(
+    messages: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> str:
+    """Run the tool-calling agent to completion and return ONE plain-text reply.
+
+    The non-streaming sibling of :func:`stream_agent`, for callers that can't
+    consume an SSE stream (the Telegram remote poller). Reuses the same model,
+    tools, and system prompt, then concatenates the final answer into a string.
+    Never raises: any model/tool/graph failure returns the user-safe error text.
+    """
+    from langgraph.prebuilt import create_react_agent
+
+    try:
+        agent = create_react_agent(
+            create_agent_chat_model(),
+            build_agent_tools(),
+            state_modifier=_system_prompt(context),
+        )
+        result = await agent.ainvoke(
+            {"messages": _to_lc_messages(messages)},
+            config={"recursion_limit": RECURSION_LIMIT},
+        )
+        for msg in reversed(result.get("messages") or []):
+            if isinstance(msg, AIMessage):
+                text = _flatten_content(msg.content).strip()
+                if text:
+                    return text
+        return "I couldn't produce an answer for that — try rephrasing?"
+    except Exception as exc:  # noqa: BLE001 — best-effort; return user-safe text
+        logger.warning("Agent answer_once error: %s", llm_exception_summary(exc))
+        return LLM_USER_ERROR
