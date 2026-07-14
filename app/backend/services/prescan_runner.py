@@ -40,7 +40,8 @@ def _user_email(user_id: str) -> str | None:
         with session_scope() as db:
             u = db.get(User, user_id)
             return u.email if u else None
-    except Exception:  # noqa: BLE001 — email is best-effort for key approval
+    except Exception as exc:  # noqa: BLE001 — email is best-effort for key approval
+        logger.warning("Pre-scan user email lookup failed for %s: %s", user_id, type(exc).__name__)
         return None
 
 

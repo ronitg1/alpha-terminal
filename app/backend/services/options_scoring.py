@@ -1420,14 +1420,14 @@ def _score_trend_bias(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[str, 
             "trend accelerating",
             "yes" if widening else "no",
             widening,
-            f"50d–200d gap has widened in the trend's direction over the last 10 days. "
-            f"Fires when the trend is gaining strength, not stalling.",
+            "50d–200d gap has widened in the trend's direction over the last 10 days. "
+            "Fires when the trend is gaining strength, not stalling.",
         ),
         _signal(
             "MA separation",
             _fmt_pct(ma_sep),
             ma_sep_fired,
-            f"(50d MA - 200d MA) / 200d MA. Fires when separation > 2% in either direction — meaningful structural gap.",
+            "(50d MA - 200d MA) / 200d MA. Fires when separation > 2% in either direction — meaningful structural gap.",
         ),
         _signal(
             "RSI bias",
@@ -1557,13 +1557,13 @@ def _score_vol_expansion(bars: list, _qqq_bars: list, **_kwargs: Any) -> dict[st
             "5d realized vol",
             f"{_fmt_num((rv5 or 0) * 100, 0)}%",
             rv5 is not None and rv5 > 0.40,
-            f"Annualized 5-day realized vol. Fires when > 40% (premium is rich in absolute terms — good for selling).",
+            "Annualized 5-day realized vol. Fires when > 40% (premium is rich in absolute terms — good for selling).",
         ),
         _signal(
             "today move",
             _fmt_pct(today_return),
             today_return is not None and abs(today_return) > 0.02,
-            f"Today's return vs prior close. Fires when |move| > 2% (the trigger that's driving the vol regime change).",
+            "Today's return vs prior close. Fires when |move| > 2% (the trigger that's driving the vol regime change).",
         ),
         _signal(
             "ATR expansion",
@@ -1779,15 +1779,15 @@ def _score_unusual_options_activity(
             "max vol/OI",
             f"{_fmt_num(max_vol_oi, 2)}×",
             max_vol_oi > 2.0,
-            f"Highest volume-to-open-interest ratio on any contract in the chain. Fires when > 2× — "
-            f"contracts are trading at double their outstanding count, a sign new positions are being opened.",
+            "Highest volume-to-open-interest ratio on any contract in the chain. Fires when > 2× — "
+            "contracts are trading at double their outstanding count, a sign new positions are being opened.",
         ),
         _signal(
             "max contract vol",
             f"{max_contract_vol:,}" if max_contract_vol < 10000 else f"{max_contract_vol / 1000:.1f}k",
             max_contract_vol > 500,
-            f"Single most-traded contract today. Fires when > 500 contracts — real flow, not noise. "
-            f"Open the chain to see which strikes are seeing the action.",
+            "Single most-traded contract today. Fires when > 500 contracts — real flow, not noise. "
+            "Open the chain to see which strikes are seeing the action.",
         ),
         _signal(
             "OTM concentration",

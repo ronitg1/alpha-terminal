@@ -1,16 +1,19 @@
-from typing import List, Optional
+"""Repository layer for CRUD access to persisted hedge-fund flows."""
+
+from __future__ import annotations
+
 from sqlalchemy.orm import Session
 from app.backend.database.models import HedgeFundFlow
 
 
 class FlowRepository:
     """Repository for HedgeFundFlow CRUD operations"""
-    
+
     def __init__(self, db: Session):
         self.db = db
-    
-    def create_flow(self, name: str, nodes: dict, edges: dict, description: str = None, 
-                   viewport: dict = None, data: dict = None, is_template: bool = False, tags: List[str] = None) -> HedgeFundFlow:
+
+    def create_flow(self, name: str, nodes: dict, edges: dict, description: str | None = None,
+                   viewport: dict | None = None, data: dict | None = None, is_template: bool = False, tags: list[str] | None = None) -> HedgeFundFlow:
         """Create a new hedge fund flow"""
         flow = HedgeFundFlow(
             name=name,
@@ -27,26 +30,26 @@ class FlowRepository:
         self.db.refresh(flow)
         return flow
     
-    def get_flow_by_id(self, flow_id: int) -> Optional[HedgeFundFlow]:
+    def get_flow_by_id(self, flow_id: int) -> HedgeFundFlow | None:
         """Get a flow by its ID"""
         return self.db.query(HedgeFundFlow).filter(HedgeFundFlow.id == flow_id).first()
     
-    def get_all_flows(self, include_templates: bool = True) -> List[HedgeFundFlow]:
+    def get_all_flows(self, include_templates: bool = True) -> list[HedgeFundFlow]:
         """Get all flows, optionally excluding templates"""
         query = self.db.query(HedgeFundFlow)
         if not include_templates:
-            query = query.filter(HedgeFundFlow.is_template == False)
+            query = query.filter(HedgeFundFlow.is_template == False)  # noqa: E712 -- SQLAlchemy filter needs `== False`, not `is False`
         return query.order_by(HedgeFundFlow.updated_at.desc()).all()
     
-    def get_flows_by_name(self, name: str) -> List[HedgeFundFlow]:
+    def get_flows_by_name(self, name: str) -> list[HedgeFundFlow]:
         """Search flows by name (case-insensitive partial match)"""
         return self.db.query(HedgeFundFlow).filter(
             HedgeFundFlow.name.ilike(f"%{name}%")
         ).order_by(HedgeFundFlow.updated_at.desc()).all()
     
-    def update_flow(self, flow_id: int, name: str = None, description: str = None,
-                   nodes: dict = None, edges: dict = None, viewport: dict = None, data: dict = None,
-                   is_template: bool = None, tags: List[str] = None) -> Optional[HedgeFundFlow]:
+    def update_flow(self, flow_id: int, name: str | None = None, description: str | None = None,
+                   nodes: dict | None = None, edges: dict | None = None, viewport: dict | None = None, data: dict | None = None,
+                   is_template: bool | None = None, tags: list[str] | None = None) -> HedgeFundFlow | None:
         """Update an existing flow"""
         flow = self.get_flow_by_id(flow_id)
         if not flow:
@@ -83,7 +86,7 @@ class FlowRepository:
         self.db.commit()
         return True
     
-    def duplicate_flow(self, flow_id: int, new_name: str = None) -> Optional[HedgeFundFlow]:
+    def duplicate_flow(self, flow_id: int, new_name: str | None = None) -> HedgeFundFlow | None:
         """Create a copy of an existing flow"""
         original = self.get_flow_by_id(flow_id)
         if not original:

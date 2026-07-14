@@ -1,4 +1,3 @@
-import pytest
 
 from src.data.cache import Cache, get_cache
 

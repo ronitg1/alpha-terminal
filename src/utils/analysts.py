@@ -1,6 +1,5 @@
 """Constants and utilities related to analysts configuration."""
 
-from src.agents import portfolio_manager
 from src.agents.alpha_seeker import alpha_seeker_agent
 from src.agents.aswath_damodaran import aswath_damodaran_agent
 from src.agents.ben_graham import ben_graham_agent

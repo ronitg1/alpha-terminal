@@ -120,7 +120,7 @@ def emerging_tech_agent(state: AgentState, agent_id: str = "emerging_tech_agent"
         )
 
         progress.update_status(agent_id, ticker, "Fetching prices")
-        prices = get_prices(ticker, window_start, end_date, api_key=api_key)
+        prices = get_prices(ticker, window_start, end_date, api_key=api_key)  # noqa: F841 -- fetched to warm the cache for downstream calls
 
         progress.update_status(agent_id, ticker, "Fetching news")
         news = get_company_news(ticker, end_date=end_date, start_date=window_start, limit=300)

@@ -1,0 +1,60 @@
+name: CI
+
+# Backend (Poetry / pytest / ruff) and frontend (Vite / eslint / tsc) checks
+# on every push and pull request.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Ruff lint
+        run: poetry run ruff check .
+
+      - name: Run tests
+        run: poetry run pytest tests/ -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NOTE: `npm run lint` is intentionally not run in CI yet. The repo has
+      # ~130 pre-existing eslint errors (mostly no-mixed-spaces-and-tabs plus
+      # exhaustive-deps / react-refresh) that predate CI; enabling the gate needs
+      # a dedicated `eslint --fix` + review pass (tracked in the cleanup backlog).
+      # Typecheck + build are the enforced correctness gates until then.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

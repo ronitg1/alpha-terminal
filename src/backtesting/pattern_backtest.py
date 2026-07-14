@@ -20,7 +20,6 @@ from typing import Any
 from src.backtesting.vibe_engine.equity import GlobalEquityEngine
 from src.backtesting.vibe_engine.loaders import MassiveLoader
 from src.backtesting.vibe_engine.signals import PatternSignalEngine
-from src.patterns.patterns import PATTERN_DETECTORS
 
 logger = logging.getLogger(__name__)
 

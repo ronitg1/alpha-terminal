@@ -34,7 +34,7 @@ class BacktestService:
         initial_capital: float,
         model_name: str = "gpt-4.1",
         model_provider: str = "OpenAI",
-        request: dict = {},
+        request: dict | None = None,
     ):
         """
         Initialize the backtest service.
@@ -57,7 +57,9 @@ class BacktestService:
         self.initial_capital = initial_capital
         self.model_name = model_name
         self.model_provider = model_provider
-        self.request = request
+        # Preserve the historical empty-dict default without the mutable-default
+        # footgun (a shared {} across instances).
+        self.request = request if request is not None else {}
         self.portfolio_values = []
 
     def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float) -> int:
@@ -385,7 +387,9 @@ class BacktestService:
                 
                 # Parse the decisions from the graph result
                 if result and result.get("messages"):
-                    decisions = parse_hedge_fund_response(result["messages"][-1].content)
+                    # parse_hedge_fund_response returns None on a malformed LLM
+                    # reply; `or {}` keeps the day loop from crashing on None.get().
+                    decisions = parse_hedge_fund_response(result["messages"][-1].content) or {}
                     analyst_signals = result.get("data", {}).get("analyst_signals", {})
                 else:
                     decisions = {}

@@ -1,11 +1,10 @@
 /**
  * Sleeves Dashboard API client.
  *
- * Thin wrapper around the `/sleeves/*` routes in `app/backend/routes/sleeves.py`.
- * Lives alongside the existing `api.ts` / `backtest-api.ts` services.
- *
- * Phase 1 covers read-only endpoints. Mutation + SSE endpoints
- * (`POST /sleeves/scan/run`, `PUT /sleeves/watchlist`) land in Phase 2/3.
+ * Thin wrapper around the `/sleeves/*` routes in `app/backend/routes/sleeves.py`:
+ * config/scan/watchlist/thesis/options CRUD via `sleevesApi`, plus SSE helpers
+ * (`postSse`, `streamChat`, `streamAgentChat`) used by the chat and backtest
+ * panels. `sleeves-context.tsx` is the sole consumer that drives scan runs.
  */
 
 import {

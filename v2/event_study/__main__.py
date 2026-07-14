@@ -9,7 +9,7 @@ import sys
 import time
 
 from v2.data import FDClient
-from v2.event_study import compute_car
+from v2.event_study import compute_car  # noqa: F401 -- re-exported for callers importing from this entrypoint
 
 
 TICKERS = [
@@ -100,7 +100,7 @@ def main() -> None:
 
     # Aggregate
     from v2.event_study.engine import _aggregate
-    aggregates = _aggregate(all_events, 10_000, 42)
+    aggregates = _aggregate(all_events, 10_000, 42)  # noqa: F841 -- computed for validation; not yet rendered in this CLI's output
 
     # Clear progress line
     sys.stdout.write("\r" + " " * 60 + "\r")

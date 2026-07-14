@@ -1,7 +1,10 @@
 """Helper functions for LLM"""
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import Any
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
@@ -11,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def call_llm(
-    prompt: any,
+    prompt: Any,
     pydantic_model: type[BaseModel],
     agent_name: str | None = None,
     state: AgentState | None = None,
@@ -101,13 +104,13 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
     """Creates a safe default response based on the model's fields."""
     default_values = {}
     for field_name, field in model_class.model_fields.items():
-        if field.annotation == str:
+        if field.annotation == str:  # noqa: E721 -- comparing type objects (not isinstance checks) by design
             default_values[field_name] = "Error in analysis, using default"
-        elif field.annotation == float:
+        elif field.annotation == float:  # noqa: E721
             default_values[field_name] = 0.0
-        elif field.annotation == int:
+        elif field.annotation == int:  # noqa: E721
             default_values[field_name] = 0
-        elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ == dict:
+        elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ == dict:  # noqa: E721
             default_values[field_name] = {}
         else:
             # For other types (like Literal), try to use the first allowed value

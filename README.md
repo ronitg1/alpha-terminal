@@ -4,17 +4,17 @@
 
 **A research terminal for retail investors. A live market dashboard with an S&P 500 heatmap and catalyst calendar, AI agent panels that score your book, a brokerage-connected portfolio view with a 13F ownership tracker, a realistic options backtester, and a paper-trading account to practice in — all signals, no execution.**
 
-[![Version: 1.14](https://img.shields.io/badge/version-1.14-blue.svg)](CHANGELOG.md)
+[![Version: 1.21.0](https://img.shields.io/badge/version-1.21.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-489%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-517%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.18 — stable.** Six sections (Market, Screening, Portfolio, Paper Trading, News, Calls), a finviz-style S&P 500 treemap heatmap, a catalyst calendar (earnings + Fed/CPI/policy events), news with per-headline AI thesis-impact tags, SnapTrade brokerage sync with a 13F ownership tracker and an AI thesis backed by a valuation football field, the intraday-capable Pattern Scanner, the 11-strategy options screener + realistic backtester, and a $100k simulated options account. **New:** an **agentic AI assistant** that calls live tools (and can backtest strategies with walk-forward / Monte-Carlo / bootstrap validation and analyse your portfolio), and **Telegram phone alerts** on high-confidence scheduled scans. 489 tests passing. See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.21.0 — stable.** Six sections (Market, Screening, Portfolio, Paper Trading, News, Calls), a finviz-style S&P 500 treemap heatmap, a catalyst calendar (earnings + Fed/CPI/policy events), news with per-headline AI thesis-impact tags, SnapTrade brokerage sync with a 13F ownership tracker and an AI thesis backed by a valuation football field, the intraday-capable Pattern Scanner, the 11-strategy options screener + realistic backtester, and a $100k simulated options account. **New:** an **agentic AI assistant** that calls live tools (and can backtest strategies with walk-forward / Monte-Carlo / bootstrap validation and analyse your portfolio), and **Telegram phone alerts** on high-confidence scheduled scans. 517 tests passing. See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -68,7 +68,7 @@ Alpha Terminal is built for one specific job: **"I'm a serious retail investor w
 git clone https://github.com/ronitg1/alpha-terminal.git
 cd alpha-terminal
 
-# 2. Python deps (3.12 + Poetry)
+# 2. Python deps (3.11 + Poetry)
 poetry install --no-root
 
 # 3. Frontend deps
@@ -346,7 +346,7 @@ alpha-terminal/
 │           ├── contexts/                dashboard + sleeves state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 489 tests, pytest
+├── tests/                   ← 517 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
@@ -354,20 +354,20 @@ alpha-terminal/
 
 ## Detailed setup
 
-### Required: Python 3.12 + Poetry
+### Required: Python 3.11 + Poetry
 
 ```bash
 # macOS
-brew install python@3.12 pipx
+brew install python@3.11 pipx
 pipx install poetry
 
 # Windows
-choco install python --version=3.12
+choco install python --version=3.11
 pip install pipx
 pipx install poetry
 
 # Linux
-sudo apt install python3.12 python3.12-venv
+sudo apt install python3.11 python3.11-venv
 curl -sSL https://install.python-poetry.org | python3 -
 ```
 

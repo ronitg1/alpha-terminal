@@ -15,7 +15,6 @@ from src.tools.finnhub import (
     get_finnhub_client,
     is_finnhub_configured,
 )
-import src.tools.finnhub.client as finnhub_client
 
 
 def test_not_configured_without_key(monkeypatch: pytest.MonkeyPatch) -> None:

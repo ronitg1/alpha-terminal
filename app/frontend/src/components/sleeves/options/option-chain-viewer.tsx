@@ -214,7 +214,7 @@ export function OptionChainViewer({
 
   if (loading) {
     return (
-      <div className="mt-2 grid grid-cols-2 gap-3">
+      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
         <SkeletonTable />
         <SkeletonTable />
       </div>

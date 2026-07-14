@@ -38,7 +38,6 @@ from typing import Iterable
 
 from colorama import Fore, Style, init as colorama_init
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
 
 # Load .env BEFORE importing modules that read API keys at import time.
 load_dotenv()

@@ -43,7 +43,7 @@ def stanley_druckenmiller_agent(state: AgentState, agent_id: str = "stanley_druc
 
     for ticker in tickers:
         progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5, api_key=api_key)
+        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5, api_key=api_key)  # noqa: F841 -- fetched to warm the cache for downstream calls
 
         progress.update_status(agent_id, ticker, "Gathering financial line items")
         # Include relevant line items for Stan Druckenmiller's approach:

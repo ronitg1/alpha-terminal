@@ -32,7 +32,7 @@ class OutputBuilder:
     ) -> List[list]:
         date_rows: List[list] = []
 
-        analyst_signals = agent_output.get("analyst_signals", {})
+        analyst_signals = agent_output.get("analyst_signals", {})  # noqa: F841 -- kept for parity/debugging; not rendered in this table
         decisions = agent_output.get("decisions", {})
 
         for ticker in tickers:

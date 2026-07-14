@@ -7,7 +7,6 @@ gate under auth-on is covered by the key-resolver tests for
 """
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.backend.main import app
