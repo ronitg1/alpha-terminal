@@ -185,16 +185,19 @@ class PortfolioRepository:
     def get_alert_settings(self) -> dict[str, Any]:
         row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
         if row is None:
-            return {"chat_id": None, "enabled": False, "min_confidence": 90.0, "timeframes": ["day", "1h"]}
+            return {"chat_id": None, "enabled": False, "min_confidence": 90.0,
+                    "timeframes": ["day", "1h"], "remote_enabled": False}
         return {
             "chat_id": row.telegram_chat_id,
             "enabled": bool(row.telegram_alerts_enabled),
             "min_confidence": float(row.telegram_min_confidence if row.telegram_min_confidence is not None else 90.0),
             "timeframes": _csv_to_list(row.telegram_timeframes) or ["day", "1h"],
+            "remote_enabled": bool(row.telegram_remote_enabled),
         }
 
     def set_alert_settings(
-        self, *, chat_id: str | None, enabled: bool, min_confidence: float, timeframes: list[str]
+        self, *, chat_id: str | None, enabled: bool, min_confidence: float,
+        timeframes: list[str], remote_enabled: bool = False,
     ) -> dict[str, Any]:
         row = self.db.query(UserSettings).filter(UserSettings.user_id == self.user_id).first()
         if row is None:
@@ -204,6 +207,7 @@ class PortfolioRepository:
         row.telegram_alerts_enabled = enabled
         row.telegram_min_confidence = min_confidence
         row.telegram_timeframes = ",".join(timeframes)
+        row.telegram_remote_enabled = remote_enabled
         self.db.commit()
         return self.get_alert_settings()
 

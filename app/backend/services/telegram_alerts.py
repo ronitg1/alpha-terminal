@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from app.backend.database.app_models import UserSettings
 from app.backend.repositories.api_key_repository import ApiKeyRepository
 from app.backend.repositories.portfolio_repository import PortfolioRepository
 from app.backend.services import telegram_notify
@@ -84,7 +85,7 @@ def _clean_timeframes(tfs: Any) -> list[str]:
 
 def _default_settings() -> dict[str, Any]:
     return {"chat_id": None, "enabled": False, "min_confidence": _DEFAULT_THRESHOLD,
-            "timeframes": list(_DEFAULT_TIMEFRAMES)}
+            "timeframes": list(_DEFAULT_TIMEFRAMES), "remote_enabled": False}
 
 
 # ─── settings (chat_id / enabled / threshold / timeframes) ────────────────────
@@ -102,12 +103,14 @@ def _save_settings(user_id: str, settings: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(settings.get("enabled", False)),
         "min_confidence": float(settings.get("min_confidence", _DEFAULT_THRESHOLD)),
         "timeframes": _clean_timeframes(settings.get("timeframes")),
+        "remote_enabled": bool(settings.get("remote_enabled", False)),
     }
     if use_db():
         with session_scope() as db:
             return PortfolioRepository(db, user_id).set_alert_settings(
                 chat_id=settings["chat_id"], enabled=settings["enabled"],
                 min_confidence=settings["min_confidence"], timeframes=settings["timeframes"],
+                remote_enabled=settings["remote_enabled"],
             )
     store = _read_json(_SETTINGS_PATH)
     store[user_id] = settings
@@ -253,7 +256,7 @@ def get_settings() -> dict[str, Any]:
 
 
 def save_settings(*, enabled: bool | None = None, min_confidence: float | None = None,
-                  timeframes: list[str] | None = None) -> dict[str, Any]:
+                  timeframes: list[str] | None = None, remote_enabled: bool | None = None) -> dict[str, Any]:
     """Update the current user's non-secret alert rules (partial)."""
     uid = current_user_id()
     cur = _get_settings(uid)
@@ -263,9 +266,54 @@ def save_settings(*, enabled: bool | None = None, min_confidence: float | None =
         cur["min_confidence"] = max(0.0, min(100.0, float(min_confidence)))
     if timeframes is not None:
         cur["timeframes"] = _clean_timeframes(timeframes)
+    if remote_enabled is not None:
+        cur["remote_enabled"] = bool(remote_enabled)
     saved = _save_settings(uid, cur)
     saved["has_token"] = bool(_get_token(uid))
     return saved
+
+
+# ─── cross-user helper for the inbound remote poller ──────────────────────────
+
+def all_remote_users() -> list[dict[str, Any]]:
+    """Every user with two-way remote control ready to poll: remote_enabled on,
+    a paired chat_id, and a stored bot token. Returns
+    ``[{user_id, chat_id, token}]``. Best-effort — a user whose token can't be
+    read (e.g. missing encryption key) is skipped, never raised.
+
+    This is the ONLY cross-user read in the alerts layer; it powers the single
+    in-process poller (``telegram_remote.run_remote_loop``)."""
+    out: list[dict[str, Any]] = []
+    if use_db():
+        with session_scope() as db:
+            rows = (
+                db.query(UserSettings)
+                .filter(
+                    UserSettings.telegram_remote_enabled.is_(True),
+                    UserSettings.telegram_chat_id.isnot(None),
+                )
+                .all()
+            )
+            for r in rows:
+                if not r.telegram_chat_id:
+                    continue
+                try:
+                    token = ApiKeyRepository(db, r.user_id).get_decrypted(_TOKEN_PROVIDER)
+                except Exception as exc:  # noqa: BLE001 — skip a user we can't decrypt for
+                    logger.warning("Remote poll: token read failed for %s: %s", r.user_id, type(exc).__name__)
+                    token = None
+                if token:
+                    out.append({"user_id": r.user_id, "chat_id": str(r.telegram_chat_id), "token": token})
+        return out
+    settings_store = _read_json(_SETTINGS_PATH)
+    secrets_store = _read_json(_SECRETS_PATH)
+    for uid, s in settings_store.items():
+        if not isinstance(s, dict) or not s.get("remote_enabled") or not s.get("chat_id"):
+            continue
+        token = secrets_store.get(uid)
+        if token:
+            out.append({"user_id": uid, "chat_id": str(s["chat_id"]), "token": token})
+    return out
 
 
 def set_bot_token(token: str) -> None:

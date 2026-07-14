@@ -91,6 +91,11 @@ class UserSettings(Base):
     telegram_alerts_enabled = Column(Boolean, nullable=False, default=False, server_default=func.false())
     telegram_min_confidence = Column(Float, nullable=False, default=90.0, server_default="90")
     telegram_timeframes = Column(String(64), nullable=False, default="day,1h", server_default="day,1h")  # CSV of week|day|1h|15m
+    # Two-way remote control: when on, the app's inbound Telegram poller runs the
+    # user's texted commands (agentic assistant + /scan, /portfolio, /help) and
+    # replies in Telegram. Gated to the paired telegram_chat_id ONLY. Off by
+    # default — one-way high-confidence alerts do not require it.
+    telegram_remote_enabled = Column(Boolean, nullable=False, default=False, server_default=func.false())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

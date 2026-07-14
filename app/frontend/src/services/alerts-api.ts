@@ -10,6 +10,7 @@ export interface AlertSettings {
   min_confidence: number;
   timeframes: string[];
   has_token: boolean;
+  remote_enabled: boolean;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -31,7 +32,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const alertsApi = {
   getSettings: () => req<AlertSettings>('/alerts/settings'),
 
-  saveSettings: (patch: { enabled?: boolean; min_confidence?: number; timeframes?: string[] }) =>
+  saveSettings: (patch: { enabled?: boolean; min_confidence?: number; timeframes?: string[]; remote_enabled?: boolean }) =>
     req<AlertSettings>('/alerts/settings', { method: 'PUT', body: JSON.stringify(patch) }),
 
   setToken: (token: string) =>

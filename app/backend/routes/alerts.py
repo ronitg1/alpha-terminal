@@ -20,6 +20,7 @@ class SaveSettingsBody(BaseModel):
     enabled: bool | None = None
     min_confidence: float | None = Field(None, ge=0, le=100)
     timeframes: list[str] | None = None
+    remote_enabled: bool | None = None
 
 
 class TokenBody(BaseModel):
@@ -38,7 +39,8 @@ async def get_settings(user_id: str = Depends(get_current_user_id)) -> dict:
 @router.put("/settings")
 async def save_settings(body: SaveSettingsBody, user_id: str = Depends(get_current_user_id)) -> dict:
     return telegram_alerts.save_settings(
-        enabled=body.enabled, min_confidence=body.min_confidence, timeframes=body.timeframes
+        enabled=body.enabled, min_confidence=body.min_confidence, timeframes=body.timeframes,
+        remote_enabled=body.remote_enabled,
     )
 
 

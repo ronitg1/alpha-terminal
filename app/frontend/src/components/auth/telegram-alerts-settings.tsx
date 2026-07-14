@@ -77,7 +77,7 @@ export function TelegramAlertsSettings() {
     }
   };
 
-  const patch = async (p: { enabled?: boolean; min_confidence?: number; timeframes?: string[] }) => {
+  const patch = async (p: { enabled?: boolean; min_confidence?: number; timeframes?: string[]; remote_enabled?: boolean }) => {
     try {
       setSettings(await alertsApi.saveSettings(p));
     } catch (e) {
@@ -224,6 +224,26 @@ export function TelegramAlertsSettings() {
                 );
               })}
             </div>
+          </div>
+
+          {/* Two-way remote control — text the bot to run the assistant + commands */}
+          <div className="space-y-1.5 border-t border-border pt-3">
+            <label className="flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={settings.remote_enabled}
+                onChange={(e) => void patch({ remote_enabled: e.target.checked })}
+                className="mt-0.5 accent-primary"
+              />
+              <span>
+                <span className="font-medium">Remote control</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Let this paired chat text the bot to run the assistant and quick commands
+                  (<span className="font-mono">/scan</span>, <span className="font-mono">/portfolio</span>,{' '}
+                  <span className="font-mono">/help</span>). Only your paired chat is obeyed.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
       )}
