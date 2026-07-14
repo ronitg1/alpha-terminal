@@ -763,8 +763,8 @@ export function OptionsBacktestPanel() {
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
             Trades ({trades.length})
           </div>
-          <div className="max-h-80 overflow-y-auto rounded border border-border">
-            <table className="w-full text-[10px] font-mono">
+          <div className="max-h-80 overflow-y-auto overflow-x-auto rounded border border-border">
+            <table className="w-full min-w-max text-[10px] font-mono">
               <thead className="sticky top-0 bg-background border-b border-border">
                 <tr className="text-muted-foreground">
                   <th className="text-left px-2 py-1">Ticker</th>

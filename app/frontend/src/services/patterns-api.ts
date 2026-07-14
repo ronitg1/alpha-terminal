@@ -59,16 +59,6 @@ export function scanTickers(
   });
 }
 
-export function scanWatchlist(
-  patterns: string[],
-  lookbackDays: number,
-  timeframe: PatternTimeframe = 'day'
-): Promise<ScanResult[]> {
-  const params = new URLSearchParams({ lookback_days: String(lookbackDays), timeframe });
-  if (patterns.length) params.set('patterns', patterns.join(','));
-  return _get<ScanResult[]>(`/watchlist/scan?${params}`);
-}
-
 export function getChart(
   ticker: string,
   lookbackDays = 365,

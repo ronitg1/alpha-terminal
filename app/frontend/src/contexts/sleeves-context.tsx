@@ -559,7 +559,7 @@ export function SleevesProvider({ children }: { children: ReactNode }) {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 /** Parse one SSE frame ("event: foo\ndata: {...}") into { event, data }. */
-function parseSseFrame(frame: string): { event: string; data: any } | null {
+function parseSseFrame(frame: string): { event: string; data: unknown } | null {
   let event = 'message';
   const dataLines: string[] = [];
   for (const line of frame.split('\n')) {

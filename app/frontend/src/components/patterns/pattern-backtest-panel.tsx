@@ -627,8 +627,8 @@ function Results({
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
             All combinations (ranked by expectancy)
           </div>
-          <div className="max-h-72 overflow-y-auto rounded border border-border">
-            <table className="w-full text-[11px] font-mono">
+          <div className="max-h-72 overflow-y-auto overflow-x-auto rounded border border-border">
+            <table className="w-full min-w-max text-[11px] font-mono">
               <thead className="sticky top-0 bg-background border-b border-border text-muted-foreground">
                 <tr>
                   <Th>Δ</Th>
@@ -712,8 +712,8 @@ function Results({
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
             Trades ({trades.length})
           </div>
-          <div className="max-h-80 overflow-y-auto rounded border border-border">
-            <table className="w-full text-[10px] font-mono">
+          <div className="max-h-80 overflow-y-auto overflow-x-auto rounded border border-border">
+            <table className="w-full min-w-max text-[10px] font-mono">
               <thead className="sticky top-0 bg-background border-b border-border text-muted-foreground">
                 <tr>
                   <Th>Ticker</Th>

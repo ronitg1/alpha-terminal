@@ -32,7 +32,8 @@ export function SleeveAttributionTable({ attribution }: SleeveAttributionTablePr
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
           Per-portfolio performance
         </div>
-        <table className="w-full text-[11px] font-mono">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-max text-[11px] font-mono">
           <thead>
             <tr className="text-muted-foreground border-b border-border">
               <th className="text-left px-2 py-1">Portfolio</th>
@@ -68,13 +69,15 @@ export function SleeveAttributionTable({ attribution }: SleeveAttributionTablePr
               ))}
           </tbody>
         </table>
+        </div>
       </section>
 
       <section>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
           Agent attribution
         </div>
-        <table className="w-full text-[11px] font-mono">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-max text-[11px] font-mono">
           <thead>
             <tr className="text-muted-foreground border-b border-border">
               <th className="text-left px-2 py-1">Agent</th>
@@ -106,6 +109,7 @@ export function SleeveAttributionTable({ attribution }: SleeveAttributionTablePr
               ))}
           </tbody>
         </table>
+        </div>
       </section>
 
       {attribution.warnings.length > 0 && (
