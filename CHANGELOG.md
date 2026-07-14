@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.20.0] — 2026-07-14
 
+### Documentation
+- **Tracked roadmap** at [`docs/roadmap.md`](docs/roadmap.md) — secret-free feature
+  specs (starting with the in-flight **two-way Telegram remote control** plan) so any
+  clone on any machine has the plan. The local `HANDOFF.md` stays gitignored for
+  volatile session state; durable specs now live in-repo.
+
 ### Added
 - **Recurring "every N hours" scheduled scans.** Schedules were once-a-day at a set
   time; now each can instead run **Every 1h / 2h / 4h** (from a daily start anchor).
