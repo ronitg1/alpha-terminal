@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import argparse

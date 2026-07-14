@@ -283,9 +283,9 @@ def analyze_margins_stability(financial_line_items: list) -> dict:
             details.append(f"Operating margin stable or improving ({oldest_op_margin:.1%} -> {newest_op_margin:.1%})")
         elif newest_op_margin > 0:
             raw_score += 1
-            details.append(f"Operating margin positive but slightly declined")
+            details.append("Operating margin positive but slightly declined")
         else:
-            details.append(f"Operating margin may be negative or uncertain")
+            details.append("Operating margin may be negative or uncertain")
     else:
         details.append("Not enough operating margin data points")
 
@@ -393,7 +393,7 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
             raw_score += 1
             details.append(f"Majority of periods have positive FCF ({positive_fcf_count}/{len(fcf_values)})")
         else:
-            details.append(f"Free cash flow is inconsistent or often negative")
+            details.append("Free cash flow is inconsistent or often negative")
     else:
         details.append("Insufficient or no FCF data to check consistency")
 

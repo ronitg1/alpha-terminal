@@ -72,7 +72,6 @@ from app.backend.services.llm_preferences import (
 from src.tools.key_context import massive_api_key
 from app.backend.database import get_db
 from app.backend.repositories.scan_repository import ScanRepository
-import src.config.portfolio_config as _portfolio_config_module
 
 
 def _live_sleeves() -> dict:
@@ -1906,7 +1905,7 @@ def _build_chat_context_text(ctx: _ChatContext) -> str:
         if results:
             top = results[:8]
             lines = [f"  - {r.get('ticker')} {r.get('pattern')} {r.get('confidence', 0)*100:.0f}%" for r in top if isinstance(r, dict)]
-            parts.append(f"Pattern scan (top 8):\n" + "\n".join(lines))
+            parts.append("Pattern scan (top 8):\n" + "\n".join(lines))
 
     if ctx.scanSnapshot:
         rows = ctx.scanSnapshot.get("rows") or []
@@ -2079,7 +2078,6 @@ async def chat_stream(req: _ChatRequest) -> StreamingResponse:
 
     Hard-caps: max 20 messages history, 50KB total context.
     """
-    import os as _os
 
     # Trim to last 20 turns to cap token cost.
     messages = req.messages[-20:]

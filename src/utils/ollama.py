@@ -116,7 +116,7 @@ def install_ollama() -> bool:
     system = platform.system().lower()
     if system not in OLLAMA_DOWNLOAD_URL:
         print(f"{Fore.RED}Unsupported operating system for automatic installation: {system}{Style.RESET_ALL}")
-        print(f"Please visit https://ollama.com/download to install Ollama manually.")
+        print("Please visit https://ollama.com/download to install Ollama manually.")
         return False
 
     if system == "darwin":  # macOS

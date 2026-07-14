@@ -23,7 +23,6 @@ Retries mirror the Massive client: exponential backoff with jitter on 429 and
 from __future__ import annotations
 
 import logging
-import os
 import random
 import threading
 import time
