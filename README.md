@@ -8,13 +8,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-434%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-489%20passing-brightgreen.svg)](tests/)
 [![Signals only](https://img.shields.io/badge/execution-none-lightgrey.svg)](#what-this-is-not)
 
 </div>
 
 > [!NOTE]
-> **Version 1.14 — stable.** Six sections (Market, Screening, Portfolio, Paper Trading, News, Calls), a finviz-style S&P 500 treemap heatmap, a catalyst calendar (earnings + Fed/CPI/policy events), news with per-headline AI thesis-impact tags, SnapTrade brokerage sync with a 13F ownership tracker and an AI thesis backed by a valuation football field, the intraday-capable Pattern Scanner, the 11-strategy options screener + realistic backtester, and a $100k simulated options account. 434 tests passing. See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
+> **Version 1.18 — stable.** Six sections (Market, Screening, Portfolio, Paper Trading, News, Calls), a finviz-style S&P 500 treemap heatmap, a catalyst calendar (earnings + Fed/CPI/policy events), news with per-headline AI thesis-impact tags, SnapTrade brokerage sync with a 13F ownership tracker and an AI thesis backed by a valuation football field, the intraday-capable Pattern Scanner, the 11-strategy options screener + realistic backtester, and a $100k simulated options account. **New:** an **agentic AI assistant** that calls live tools (and can backtest strategies with walk-forward / Monte-Carlo / bootstrap validation and analyse your portfolio), and **Telegram phone alerts** on high-confidence scheduled scans. 489 tests passing. See the [changelog](CHANGELOG.md) for what shipped and the [Roadmap](#roadmap) for what's next.
 
 > **Signals only — no trading execution.** Alpha Terminal generates ideas. You decide what to do with them.
 
@@ -189,6 +189,8 @@ Each strategy ships a **strike + expiry recommendation** that **adapts to your p
 
 **Sleeves mode** — wraps the LLM agent panel into a backtest. Each trading day, the full agent panel votes; portfolio positions follow the consensus. Equity curve with trade markers, closed-trades table with per-agent attribution.
 
+**Strategy backtest with statistical validation** (`src/backtesting/vibe_engine/`, an event-driven engine ported from the MIT-licensed [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) — turns chart-pattern detections into a next-bar-open long/short strategy and reports Sharpe / Sortino / Calmar / max-drawdown / win-rate **plus walk-forward consistency, a Monte-Carlo permutation p-value, and a bootstrap Sharpe confidence interval**. Look-ahead-safe (signals fill on the next bar's open). Driven from the AI assistant (`backtest_strategy` / `backtest_portfolio`); daily bars today.
+
 ### 🛠 Custom agents
 
 Three custom agents written specifically for this project, in addition to the 19 upstream investor-persona agents:
@@ -207,9 +209,13 @@ Three news scopes — **Market** (auto-categorized macro: Monetary / Geopolitics
 
 Paste a transcript, paste a URL, or upload a PDF; the analysis returns a 9-section structured read: sentiment vs prior quarter, tone delta, key themes with quotes, **hedging-language flags**, **dodged-question detection**, competitive + regulatory (IRA 45X / FEOC / tariff) mentions, and an explicit **thesis-impact verdict** (confirms / strengthens / weakens / breaks). URL extraction uses httpx + BeautifulSoup; PDF parsing uses pypdf.
 
-### 🤖 AI research assistant
+### 🤖 Agentic AI research assistant
 
-A context-aware chat panel that knows which stock you're looking at. Ask "what's driving NVDA's recent price movement?", "summarise the latest news", "what does the options flow say?" — answers are grounded in the app's own data (quotes, fundamentals, news, scan signals). Bring your own LLM key: DeepSeek by default, or any OpenRouter model.
+A **tool-calling agent** (LangGraph `create_react_agent`) — not a one-shot chat. It grounds answers by calling the app's own tools live: quotes, pattern scans, signal win-rates, trade plans, market movers/indices, the catalyst calendar, ticker news, your portfolio overview + Sharpe stats, 13F ownership, valuations — and it can **run backtests** and **analyse your whole portfolio** on request. Ask "what patterns are firing on my watchlist?", "backtest a bull-flag strategy on NVDA and AMD", or "analyse my portfolio", and it runs the scan / backtest / analytics and synthesizes the result. Tool activity streams into the chat as small "using…" chips; answers stream token-by-token. The loop runs on DeepSeek **V3** (a saved R1 preference is auto-swapped for reliable tool-calling); bring your own key (DeepSeek or any OpenRouter model). Signals only — it never places trades.
+
+### 🔔 Telegram alerts
+
+Get high-confidence signals **pushed to your phone**. When a scheduled scan turns up a signal at or above your confidence threshold on an enabled timeframe, the terminal messages you via your own Telegram bot — one batched message per scan (e.g. "NVDA — Bull Flag · 93% 🟢"). Set it up in **Settings → Alerts**: connect your bot (BotFather), pair with a one-time code, then pick the threshold (default 90%) and timeframes (default Daily + 1h). A dedup ledger keeps the recurring cron from re-pinging you for the same play. The bot token is BYOK, encrypted at rest.
 
 ### 🔌 Finnhub free-tier fallback (optional)
 
@@ -340,7 +346,7 @@ alpha-terminal/
 │           ├── contexts/                dashboard + sleeves state
 │           └── services/                typed API clients
 │
-├── tests/                   ← 434 tests, pytest
+├── tests/                   ← 489 tests, pytest
 └── outputs/                 ← scan CSVs + JSON sidecars (gitignored)
 ```
 
@@ -489,6 +495,9 @@ Track via [GitHub issues](https://github.com/ronitg1/alpha-terminal/issues).
 
 **Recently shipped**
 
+- [x] **1.18** — **agentic AI assistant** (LangGraph tool-calling over the app's live data); **backtesting with statistical validation** (walk-forward / Monte-Carlo / bootstrap, ported from the MIT-licensed HKUDS/Vibe-Trading) driven from chat; an **"analyse my portfolio"** agent tool
+- [x] **1.17** — **Telegram phone alerts** on high-confidence scheduled scans (BYOK bot, per-user threshold + timeframes, dedup)
+- [x] **1.16** — **per-schedule timeframe + lookback** on scheduled scans; pre-scans kept **per timeframe** (in-process scheduler replaces the external cron)
 - [x] **1.15** — **approximate Sharpe ratio** on the Portfolio summary (current weights × 1y of daily returns) and the Paper Trading account bar (realized equity curve)
 - [x] **1.14** — finviz-style **S&P 500 treemap heatmap**; notable-mover earnings folded into the **catalyst calendar**; refreshed onboarding walkthrough
 - [x] **1.13** — **13F institutional-ownership tracker** (live SEC EDGAR, quarter-over-quarter fund moves); broker-style **BSM(IV) option marks** for illiquid contracts

@@ -171,13 +171,22 @@ export const WELCOME_SLIDES: WelcomeSlide[] = [
     body: (
       <>
         <p>
-          The panel on the right is an <strong>AI assistant</strong> that knows
-          about the stock you are looking at. Ask it things like &ldquo;what does
-          this pattern mean?&rdquo;, &ldquo;summarise the latest earnings
-          call&rdquo;, or &ldquo;what are the risks here?&rdquo;
+          The panel on the right is an <strong>AI assistant</strong> that pulls{' '}
+          <strong>live data with tools</strong> to answer you — quotes, pattern
+          scans, news, your portfolio, valuations, and more — so answers are
+          grounded, not guesses. You&apos;ll see small &ldquo;using&hellip;&rdquo;
+          chips as it works.
+        </p>
+        <p className="mt-2">
+          Ask things like &ldquo;what patterns are firing on my watchlist?&rdquo;,{' '}
+          &ldquo;<strong>backtest</strong> a bull-flag strategy on NVDA and AMD&rdquo;,
+          or &ldquo;<strong>analyse my portfolio</strong>&rdquo; — it can run the
+          scan, the backtest (with walk-forward / Monte-Carlo validation), and the
+          portfolio analytics for you.
         </p>
         <p className="mt-2 text-muted-foreground">
           Toggle it on or off with the chat icon at the top of the left sidebar.
+          Signals only — it never places trades.
         </p>
       </>
     ),
