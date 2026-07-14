@@ -110,6 +110,14 @@ async def get_prescan(
     return {"prescan": scan_schedule_service.get_prescan(timeframe)}
 
 
+@router.post("/run-now")
+async def run_now(user_id: str = Depends(get_current_user_id)) -> dict:
+    """Run this user's pre-scan immediately across their scheduled timeframes and
+    fire any qualifying Telegram alerts — the same path as the automatic runner,
+    but on demand (no waiting for the next cron tick). User-authed, per-user."""
+    return await prescan_runner.run_now_for_user(user_id)
+
+
 @router.post("/run-due")
 async def run_due(x_cron_secret: str | None = Header(default=None)) -> dict:
     """Run all due pre-scans. Guarded by the shared CRON_SECRET, not user auth."""

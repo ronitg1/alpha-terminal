@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] — 2026-07-14
+
+### Added
+- **"Run now" for scheduled scans.** Settings → Scheduled scans has a Run now button
+  that runs your pre-scan immediately across your scheduled timeframes and fires any
+  qualifying Telegram alerts — the exact same path as the automatic runner, so you can
+  test alerts (or refresh results) on demand instead of waiting for the next cron tick.
+  New `POST /scheduled/run-now` (user-authed) + `prescan_runner.run_now_for_user`. The
+  toast reports signals found and alerts sent per timeframe.
+
 ## [1.21.2] — 2026-07-14
 
 ### Changed

@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Clock, Plus, Trash2, Play } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,7 +44,34 @@ export function ScheduledScansSettings() {
   const [newLookback, setNewLookback] = useState(180);
   const [newInterval, setNewInterval] = useState(0); // 0 = daily
   const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState(false);
   const tz = browserTimezone();
+
+  // Run the user's pre-scan immediately (all their timeframes) and fire alerts —
+  // handy to test Telegram alerts or refresh results without waiting for the next
+  // scheduled tick.
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const res = await scheduledApi.runNow();
+      if (res.error === 'no_watchlist_tickers') {
+        toast.error('Add tickers to a watchlist first — nothing to scan.');
+        return;
+      }
+      const parts = Object.entries(res.timeframes ?? {}).map(
+        ([tf, r]) => `${tf}: ${r.signals} signals, ${r.alerts_sent} alert${r.alerts_sent === 1 ? '' : 's'}`,
+      );
+      const totalAlerts = Object.values(res.timeframes ?? {}).reduce((n, r) => n + r.alerts_sent, 0);
+      toast[totalAlerts > 0 ? 'success' : 'info'](
+        parts.length ? `Scan complete — ${parts.join(' · ')}` : 'Scan complete.',
+        { description: totalAlerts > 0 ? 'Check your phone for the Telegram alert.' : 'No new signals above your alert threshold (or already sent).' },
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to run scan');
+    } finally {
+      setRunning(false);
+    }
+  };
 
   // Picking a timeframe resets the lookback to that timeframe's default (the old
   // value is usually out of range for the new bar size).
@@ -121,10 +148,17 @@ export function ScheduledScansSettings() {
 
   return (
     <div className="space-y-2 rounded-md border border-border p-3">
-      <p className="text-sm font-medium">Scheduled scans</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">Scheduled scans</p>
+        <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => void runNow()} disabled={running}>
+          <Play className="mr-1 h-3.5 w-3.5" />
+          {running ? 'Running…' : 'Run now'}
+        </Button>
+      </div>
       <p className="text-xs text-muted-foreground">
         Auto-run your Pattern Scanner in the background at set times so results are ready when you
-        open it. Scans your watchlists. Times are in your timezone ({tz}).
+        open it. Scans your watchlists. Times are in your timezone ({tz}). <strong>Run now</strong>{' '}
+        scans immediately and sends any Telegram alerts at/above your threshold.
       </p>
 
       {loading ? (

@@ -158,6 +158,58 @@ async def _run_for_user(sched: dict, today: str) -> None:
         context.reset_current_user_identity(id_tokens)
 
 
+async def run_now_for_user(user_id: str) -> dict:
+    """On-demand pre-scan for one user, right now — across the timeframes they've
+    scheduled (or ``day`` if none), storing each result and firing Telegram alerts.
+
+    This is the exact same path as an automatic scheduled run (scan -> store ->
+    ``maybe_notify``), just triggered manually from the app so the user doesn't
+    have to wait for the next cron tick. Returns a per-timeframe summary so the UI
+    can confirm how many signals and alerts were produced. Runs bound to the
+    user's identity + keys, mirroring :func:`_run_for_user`."""
+    from app.backend.routes.patterns import PATTERN_DETECTORS, run_pattern_scan
+    from app.backend.services import telegram_alerts
+
+    # Distinct timeframe -> lookback from this user's enabled schedules (so a manual
+    # run mirrors what their automation does); fall back to a daily scan.
+    tf_lookback: dict[str, int] = {}
+    for s in scan_schedule_service.all_enabled_schedules():
+        if s.get("user_id") != user_id:
+            continue
+        tf = s.get("timeframe") or _DEFAULT_TIMEFRAME
+        tf_lookback.setdefault(tf, int(s.get("lookback_days") or _DEFAULT_LOOKBACK_DAYS))
+    if not tf_lookback:
+        tf_lookback[_DEFAULT_TIMEFRAME] = _DEFAULT_LOOKBACK_DAYS
+
+    email = _user_email(user_id)
+    id_tokens = context.set_current_user_identity(user_id, email, True)
+    key_tokens = None
+    if auth_enabled():
+        massive, finnhub, fds = key_resolver.provider_keys_for_request(user_id, email, True)
+        key_tokens = key_context.set_provider_keys(
+            massive=massive, finnhub=finnhub, financial_datasets=fds
+        )
+    summary: dict[str, dict] = {}
+    try:
+        tickers = _user_tickers()
+        if not tickers:
+            return {"error": "no_watchlist_tickers", "timeframes": {}, "tickers": 0}
+        for tf, lookback in tf_lookback.items():
+            results = await run_pattern_scan(tickers, list(PATTERN_DETECTORS.keys()), tf, lookback)
+            scan_schedule_service.set_prescan_for(user_id, results, tf, len(tickers))
+            sent = await telegram_alerts.maybe_notify(user_id, tf, results)
+            summary[tf] = {"signals": len(results), "alerts_sent": sent}
+            logger.info(
+                "Run-now for %s: %s/%dd -> %d signals, %d alert(s)",
+                user_id, tf, lookback, len(results), sent,
+            )
+    finally:
+        if key_tokens is not None:
+            key_context.reset_provider_keys(key_tokens)
+        context.reset_current_user_identity(id_tokens)
+    return {"timeframes": summary, "tickers": len(tickers)}
+
+
 async def run_due(now_utc: datetime.datetime | None = None) -> dict:
     """Run every due schedule. Returns a small summary for the caller/logs."""
     now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)

@@ -93,4 +93,14 @@ export const scheduledApi = {
     req<{ prescan: PrescanResult | null }>(
       `/scheduled/prescan${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ''}`,
     ).then((r) => r.prescan),
+
+  /** Run the user's pre-scan now (all their timeframes) and fire any alerts. */
+  runNow: () =>
+    req<RunNowResult>('/scheduled/run-now', { method: 'POST' }),
 };
+
+export interface RunNowResult {
+  timeframes: Record<string, { signals: number; alerts_sent: number }>;
+  tickers?: number;
+  error?: string;
+}
