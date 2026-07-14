@@ -39,15 +39,16 @@ _AUTH = [Depends(get_current_user_id)]
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router, tags=["auth"])
 api_router.include_router(hedge_fund_router, tags=["hedge-fund"], dependencies=_AUTH)
-api_router.include_router(storage_router, tags=["storage"])
+api_router.include_router(storage_router, tags=["storage"], dependencies=_AUTH)
 api_router.include_router(flows_router, tags=["flows"], dependencies=_AUTH)
 api_router.include_router(flow_runs_router, tags=["flow-runs"], dependencies=_AUTH)
-api_router.include_router(ollama_router, tags=["ollama"])
-api_router.include_router(language_models_router, tags=["language-models"])
-# api_keys is user-scoped + encrypted in Phase 3 step 3; gated now so it is never
-# reachable unauthenticated once auth is on. NOTE: flows/flow_runs/api_keys still
-# use the legacy single-tenant tables (no user_id column) — they are globally
-# shared across users until step 3 migrates them. Tracked in HANDOFF.
+# Ollama + language-model routes control a server-side process and its model
+# downloads; gate them so they are never reachable unauthenticated once auth is on.
+api_router.include_router(ollama_router, tags=["ollama"], dependencies=_AUTH)
+api_router.include_router(language_models_router, tags=["language-models"], dependencies=_AUTH)
+# api_keys is user-scoped + encrypted (migration b2c3d4e5f6a7). NOTE: flows/flow_runs
+# still use the legacy single-tenant tables (no user_id column) — they are globally
+# shared across users until a future migration scopes them.
 api_router.include_router(api_keys_router, tags=["api-keys"], dependencies=_AUTH)
 api_router.include_router(user_settings_router, tags=["user-settings"], dependencies=_AUTH)
 api_router.include_router(sleeves_router, tags=["sleeves"], dependencies=_AUTH)

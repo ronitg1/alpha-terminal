@@ -599,7 +599,7 @@ def get_market_cap(ticker: str, end_date: str, api_key: str | None = None) -> fl
                     if mcap is not None:
                         return mcap
                 except Exception as exc:
-                    logger.warning("Failed to parse FDS company facts for %s: %s", exc, ticker)
+                    logger.warning("Failed to parse FDS company facts for %s: %s", ticker, exc)
 
         # Final fallback: try Massive even if primary was FDS, in case it
         # wasn't tried above.

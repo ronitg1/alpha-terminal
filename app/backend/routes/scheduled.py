@@ -16,6 +16,7 @@ The external scheduler (a GitHub Actions cron) calls /scheduled/run-due with the
 """
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -61,7 +62,9 @@ async def add_schedule(body: AddScheduleBody, user_id: str = Depends(get_current
             body.time_of_day, body.timezone, body.timeframe, body.lookback_days, body.interval_minutes
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        # A duplicate (user, time) is a uniqueness conflict — 409, matching the
+        # _storage.py seam convention used by the sleeve/watchlist create routes.
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.patch("/schedules/{schedule_id}")
@@ -113,6 +116,6 @@ async def run_due(x_cron_secret: str | None = Header(default=None)) -> dict:
     secret = os.environ.get("CRON_SECRET", "").strip()
     if not secret:
         raise HTTPException(status_code=503, detail="Scheduler not configured (CRON_SECRET unset).")
-    if not x_cron_secret or x_cron_secret != secret:
+    if not x_cron_secret or not hmac.compare_digest(x_cron_secret, secret):
         raise HTTPException(status_code=403, detail="Invalid or missing cron secret.")
     return await prescan_runner.run_due()
