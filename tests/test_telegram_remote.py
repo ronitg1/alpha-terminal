@@ -91,17 +91,21 @@ def test_scan_command_routes_and_formats(file_settings, monkeypatch):
             }
         return None
 
+    async def _fake_account():
+        return 25000.0
+
     monkeypatch.setattr("app.backend.routes.patterns.run_pattern_scan", _fake_scan)
     monkeypatch.setattr("app.backend.routes.patterns.signal_context", _fake_context)
+    monkeypatch.setattr("app.backend.services.telegram_alerts._account_value", _fake_account)
     out = asyncio.run(telegram_remote.process_text("u1", "/scan NVDA amd"))
     assert "NVDA" in out and "Ascending Triangle" in out and "91%" in out
     assert "AMD" in out and "Double Top" in out
-    # Signal date + entry render for both (NVDA from live ctx, AMD from levels fallback).
-    assert "2026-07-13" in out and "2026-07-11" in out
-    assert "94.29" in out and "entry" in out.lower()
-    # NVDA carries live stock price + option contract with expiry.
-    assert "92.10" in out and "stock" in out.lower()
-    assert "CALL" in out and "$95" in out and "exp 2026-08-15" in out and "27 DTE" in out
+    # Shared alert format: day-grouped headers ("Mon DD"), not raw ISO dates.
+    assert "Jul 13" in out and "Jul 11" in out
+    # entry renders for both (NVDA from live ctx, AMD from levels fallback).
+    assert "94.29" in out and "131.54" in out and "entry" in out.lower()
+    # NVDA carries the recommended option contract with expiry (same as alerts).
+    assert "CALL $95" in out and "exp 2026-08-15" in out and "(27d)" in out
 
 
 def test_scan_without_tickers_shows_usage(file_settings):

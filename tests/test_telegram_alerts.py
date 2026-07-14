@@ -110,12 +110,14 @@ def test_save_settings_clamps_confidence(file_alerts, monkeypatch):
     assert out["has_token"] is True  # from the stubbed _get_token
 
 
-def test_format_message_shape():
-    msg = telegram_alerts._format_message(
-        [(_res("NVDA", 93), None), (_res("TSLA", 91, bullish=False), None)], "1h"
+def test_render_signal_report_shape():
+    msg = telegram_alerts.render_signal_report(
+        [(_res("NVDA", 93), None), (_res("TSLA", 91, bullish=False), None)],
+        header="Alpha Terminal — 2 high-confidence 1h signal(s) this week",
     )
     assert "high-confidence 1h" in msg and "this week" in msg
     assert "NVDA" in msg and "93%" in msg and "TSLA" in msg
+    assert "<b>" not in msg  # plain text — no HTML (shared with /scan)
 
 
 def test_many_hits_capped_to_stay_under_telegram_limit(file_alerts):

@@ -89,13 +89,6 @@ def _fmt_pct(v: object) -> str | None:
         return None
 
 
-def _fmt_price(v: object) -> str | None:
-    try:
-        return f"${float(v):,.2f}"  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
 def _chunk(text: str, limit: int = _TELEGRAM_MAX_CHARS) -> list[str]:
     """Split ``text`` into <=limit pieces, preferring newline boundaries."""
     out: list[str] = []
@@ -127,66 +120,39 @@ async def _cmd_scan(rest: str) -> str:
     symbols = _parse_tickers(rest, cap=10)
     if not symbols:
         return "Usage: /scan NVDA AMD TSLA — I'll scan those tickers for daily chart patterns."
-    from app.backend.routes.patterns import (
-        format_option_contract,
-        run_pattern_scan,
-        signal_context,
-    )
+    from app.backend.routes.patterns import run_pattern_scan, signal_context
     from src.patterns.patterns import PATTERN_DETECTORS
-    # The pattern's own breakout level is the suggested entry trigger — reuse the
-    # same level map the in-app trade plan uses when the live context is missing.
+    # Fall back to the pattern's own breakout/target levels when the live plan is
+    # unavailable (no chain / off-hours), so entry/target still render.
     from src.patterns.trade_plan import _levels
 
     results = await run_pattern_scan(symbols, list(PATTERN_DETECTORS), "day", 180)
     if not results:
         return f"No chart patterns found on {', '.join(symbols)} (daily)."
 
-    # Enrich the top hits with live price + recommended option contract, concurrently.
+    # Same ordering + enrichment as the alerts: day first, then confidence.
+    results.sort(key=lambda r: telegram_alerts._sort_key(r), reverse=True)
     top = results[:8]
-    contexts = await asyncio.gather(
+    raw_ctx = await asyncio.gather(
         *[signal_context(str(r.get("ticker")), str(r.get("pattern")), "day") for r in top],
         return_exceptions=True,
     )
-
-    lines = [f"Chart patterns — {', '.join(symbols)} (daily):", ""]
-    for r, ctx in zip(top, contexts):
+    items: list[tuple[dict, dict | None]] = []
+    for r, ctx in zip(top, raw_ctx):
         ctx = ctx if isinstance(ctx, dict) else None
-        bullish = bool(r.get("bullish"))
-        arrow = "\U0001F7E2" if bullish else "\U0001F534"  # green/red circle
-        conf = round(float(r.get("confidence") or 0))
-        lines.append(f"{arrow} {r.get('ticker')} — {r.get('pattern')} · {conf}%")
+        if ctx is None or ctx.get("entry") is None:
+            brk, _inv, tgt = _levels(str(r.get("pattern") or ""), r.get("key_levels") or {})
+            if brk is not None or tgt is not None:
+                ctx = {"entry": brk, "target": tgt, "option": (ctx or {}).get("option")}
+        items.append((r, ctx))
 
-        # Entry/target: prefer the live trade plan; fall back to the pattern's levels.
-        if ctx and ctx.get("entry") is not None:
-            entry_val, target_val = ctx.get("entry"), ctx.get("target")
-        else:
-            entry_val, _inv, target_val = _levels(str(r.get("pattern") or ""), r.get("key_levels") or {})
-
-        meta: list[str] = []
-        if r.get("end_date"):
-            meta.append(str(r["end_date"]))
-        price = _fmt_price(ctx.get("current_price")) if ctx else None
-        if price:
-            meta.append(f"stock {price} now")
-        entry = _fmt_price(entry_val)
-        if entry:
-            meta.append(f"entry {entry} on break {'above' if bullish else 'below'}")
-        tgt = _fmt_price(target_val)
-        if tgt:
-            meta.append(f"target {tgt}")
-        if meta:
-            lines.append("   " + " · ".join(meta))
-
-        contract = format_option_contract(ctx.get("option")) if ctx else None
-        if contract:
-            lines.append(f"   \U0001F4C4 {contract}")  # page emoji
-
-    if len(results) > len(top):
-        lines.append("")
-        lines.append(f"(showing top {len(top)} of {len(results)} by confidence)")
-    lines.append("")
-    lines.append("Entry = breakout trigger; option = suggested contract, not advice.")
-    return "\n".join(lines)
+    account = await telegram_alerts._account_value()
+    more = len(results) - len(top)
+    header = f"Chart patterns — {', '.join(symbols)} (daily)"
+    # Shared renderer → identical formatting to the alert messages.
+    return telegram_alerts.render_signal_report(
+        items, header=header, account=account, more_count=more, more_label="more by confidence"
+    )
 
 
 async def _cmd_portfolio() -> str:

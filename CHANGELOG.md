@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.4] — 2026-07-14
+
+### Changed
+- **`/scan` in the Telegram bot now renders identically to the alerts.** Both share
+  one plain-text renderer (`render_signal_report`): day-grouped (most recent first),
+  sorted by day then confidence, each signal with entry → target, the recommended
+  0.40Δ/30-DTE option contract (expiry + R/R), and position sizing. `/scan` keeps its
+  own header/footer ("Chart patterns — …", "N more by confidence") but every signal
+  line matches an alert. Plain text (no HTML) so an odd ticker can't trip Telegram's
+  parser.
+
 ## [1.22.3] — 2026-07-14
 
 ### Changed

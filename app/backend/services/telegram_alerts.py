@@ -310,25 +310,31 @@ def _contract_suffix(opt: dict | None, account: float) -> str | None:
     return " · ".join(parts)
 
 
-def _format_message(
-    items: list[tuple[dict, dict | None]], timeframe: str, more_count: int = 0, account: float = _DEFAULT_ACCOUNT
+def render_signal_report(
+    items: list[tuple[dict, dict | None]],
+    *,
+    header: str,
+    account: float = _DEFAULT_ACCOUNT,
+    more_count: int = 0,
+    more_label: str = "more",
 ) -> str:
-    """Render the alert. ``items`` are (signal, context) pairs already sorted by day
-    then confidence; ``context`` is the enriched signal_context (entry/target/option)
-    or None. Grouped under a per-day header."""
-    tf = _TF_LABEL.get(timeframe, timeframe)
-    total = len(items) + max(0, more_count)
-    lines = [f"<b>Alpha Terminal — {total} high-confidence {tf} signal(s) this week</b>"]
+    """Plain-text signal report shared by Telegram alerts AND the /scan command, so
+    the two look identical. Grouped under a per-day header (most recent first), each
+    signal carrying entry → target, the recommended option contract (expiry + R/R),
+    and position sizing. ``items`` are (signal, context) pairs already sorted by day
+    then confidence; ``context`` is the enriched signal_context or None. Plain text
+    (no HTML) so an arbitrary ticker/pattern can never trip Telegram's parser."""
+    lines = [header]
     last_day: str | None = None
     for row, ctx in items:
         d = _signal_date(row)
         day_label = d.strftime("%b %d") if d else "—"
         if day_label != last_day:
-            lines.append(f"\n<b>{day_label}</b>")
+            lines.append(f"\n{day_label}")
             last_day = day_label
         arrow = "\U0001F7E2" if row.get("bullish") else "\U0001F534"  # green/red circle
-        conf = round(float(row.get("confidence", 0)))
-        lines.append(f"{arrow} <b>{_esc(row.get('ticker'))}</b> {_esc(row.get('pattern'))} · {conf}%")
+        conf = round(float(row.get("confidence", 0) or 0))
+        lines.append(f"{arrow} {row.get('ticker')} {row.get('pattern')} · {conf}%")
         ctx = ctx if isinstance(ctx, dict) else None
         entry = _fmt_price((ctx or {}).get("entry"))
         target = _fmt_price((ctx or {}).get("target"))
@@ -340,7 +346,7 @@ def _format_message(
             lines.append(f"   \U0001F4C4 {contract}")  # page emoji
     msg = "\n".join(lines)
     if more_count > 0:
-        msg += f"\n\n…and {more_count} more this week — open the app to see them all."
+        msg += f"\n\n…and {more_count} {more_label} — open the app to see them all."
     return msg
 
 
@@ -393,9 +399,14 @@ async def maybe_notify(user_id: str, timeframe: str, results: list[dict]) -> int
         account = await _account_value()
         items = list(zip([r for r, _ in shown], contexts))
 
-        ok = await telegram_notify.send_message(
-            token, chat_id, _format_message(items, timeframe, more_count=more, account=account)
+        tf = _TF_LABEL.get(timeframe, timeframe)
+        total = len(items) + more
+        header = f"Alpha Terminal — {total} high-confidence {tf} signal(s) this week"
+        text = render_signal_report(
+            items, header=header, account=account, more_count=more, more_label="more this week"
         )
+        # Plain text (parse_mode "") — the shared renderer emits no HTML.
+        ok = await telegram_notify.send_message(token, chat_id, text, parse_mode="")
         if ok:
             _mark_notified(user_id, [k for _, k in fresh_hits])
             return len(shown)
