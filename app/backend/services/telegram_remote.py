@@ -89,6 +89,13 @@ def _fmt_pct(v: object) -> str | None:
         return None
 
 
+def _fmt_price(v: object) -> str | None:
+    try:
+        return f"${float(v):,.2f}"  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _chunk(text: str, limit: int = _TELEGRAM_MAX_CHARS) -> list[str]:
     """Split ``text`` into <=limit pieces, preferring newline boundaries."""
     out: list[str] = []
@@ -122,15 +129,40 @@ async def _cmd_scan(rest: str) -> str:
         return "Usage: /scan NVDA AMD TSLA — I'll scan those tickers for daily chart patterns."
     from app.backend.routes.patterns import run_pattern_scan
     from src.patterns.patterns import PATTERN_DETECTORS
+    # The pattern's own breakout level is the suggested entry trigger — reuse the
+    # same level map the in-app trade plan uses so the bot and the UI agree.
+    from src.patterns.trade_plan import _levels
 
     results = await run_pattern_scan(symbols, list(PATTERN_DETECTORS), "day", 180)
     if not results:
         return f"No chart patterns found on {', '.join(symbols)} (daily)."
-    lines = [f"Chart patterns — {', '.join(symbols)} (daily):"]
+
+    lines = [f"Chart patterns — {', '.join(symbols)} (daily):", ""]
     for r in results[:10]:
-        arrow = "\U0001F7E2" if r.get("bullish") else "\U0001F534"  # green/red circle
+        bullish = bool(r.get("bullish"))
+        arrow = "\U0001F7E2" if bullish else "\U0001F534"  # green/red circle
         conf = round(float(r.get("confidence") or 0))
         lines.append(f"{arrow} {r.get('ticker')} — {r.get('pattern')} · {conf}%")
+
+        # Second line: signal date + suggested entry (breakout) + measured-move target.
+        breakout, _inv, target = _levels(str(r.get("pattern") or ""), r.get("key_levels") or {})
+        meta: list[str] = []
+        if r.get("end_date"):
+            meta.append(str(r["end_date"]))
+        entry = _fmt_price(breakout)
+        if entry:
+            meta.append(f"entry {entry} on break {'above' if bullish else 'below'}")
+        tgt = _fmt_price(target)
+        if tgt:
+            meta.append(f"target {tgt}")
+        if meta:
+            lines.append("   " + " · ".join(meta))
+
+    if len(results) > 10:
+        lines.append("")
+        lines.append(f"(showing top 10 of {len(results)} by confidence)")
+    lines.append("")
+    lines.append("Entry is the breakout trigger — not confirmed until price closes through it.")
     return "\n".join(lines)
 
 

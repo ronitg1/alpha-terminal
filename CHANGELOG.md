@@ -4,6 +4,17 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1] — 2026-07-14
+
+### Fixed
+- **`/scan` in the Telegram bot now shows the signal date and a suggested entry.**
+  The reply previously listed only ticker · pattern · confidence, which read as
+  context-free noise. Each hit now carries a second line — the signal date, the
+  suggested entry (the pattern's own breakout trigger, from the same level map the
+  in-app trade plan uses), and the measured-move target — plus a one-line reminder
+  that the entry is a trigger, not a confirmed fill. Backend-only; re-text `/scan`
+  after deploy (no app refresh needed).
+
 ## [1.21.0] — 2026-07-14
 
 ### Added

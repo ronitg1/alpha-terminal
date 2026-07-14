@@ -72,14 +72,21 @@ def test_scan_command_routes_and_formats(file_settings, monkeypatch):
     async def _fake_scan(tickers, detectors, timeframe, lookback):
         assert tickers == ["NVDA", "AMD"]
         return [
-            {"ticker": "NVDA", "pattern": "Bull Flag", "confidence": 91, "bullish": True},
+            {
+                "ticker": "NVDA", "pattern": "Ascending Triangle", "confidence": 91,
+                "bullish": True, "end_date": "2026-07-13",
+                "key_levels": {"resistance": 94.29, "support_at_start": 80.0},
+            },
             {"ticker": "AMD", "pattern": "Double Top", "confidence": 88, "bullish": False},
         ]
 
     monkeypatch.setattr("app.backend.routes.patterns.run_pattern_scan", _fake_scan)
     out = asyncio.run(telegram_remote.process_text("u1", "/scan NVDA amd"))
-    assert "NVDA" in out and "Bull Flag" in out and "91%" in out
+    assert "NVDA" in out and "Ascending Triangle" in out and "91%" in out
     assert "AMD" in out and "Double Top" in out
+    # Signal date + suggested entry (breakout trigger) now render for a real pattern.
+    assert "2026-07-13" in out
+    assert "94.29" in out and "entry" in out.lower()
 
 
 def test_scan_without_tickers_shows_usage(file_settings):
