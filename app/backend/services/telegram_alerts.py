@@ -18,6 +18,7 @@ can never break a scan.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -39,10 +40,16 @@ _VALID_TIMEFRAMES = {"week", "day", "1h", "15m"}
 _DEFAULT_TIMEFRAMES = ["day", "1h"]
 _DEFAULT_THRESHOLD = 90.0
 _DEDUP_TTL_DAYS = 30
-# Telegram rejects a message over 4096 chars ("text is too long"). A scan can
-# surface hundreds of hits above the threshold, so we alert only the most
-# confident N and point the rest to the app — keeping the message well under cap.
-_MAX_ALERT_SIGNALS = 20
+# Telegram rejects a message over 4096 chars ("text is too long"). Each alerted
+# signal now carries entry/target/contract/sizing (several lines), so cap lower.
+_MAX_ALERT_SIGNALS = 15
+# Only alert on signals whose breakout is within the last N days ("this week") —
+# a 180d scan surfaces months-old patterns the user doesn't want pinged about.
+_ALERT_RECENT_DAYS = 7
+# Position sizing mirrors the Pattern Scanner's sizer: risk this % of the account
+# per trade, sized in whole contracts off the option's per-contract risk.
+_ALERT_RISK_PCT = 1.0
+_DEFAULT_ACCOUNT = 25000.0
 
 _SETTINGS_PATH = Path(__file__).resolve().parents[2] / "data" / "alert_settings.json"
 _DEDUP_PATH = Path(__file__).resolve().parents[2] / "data" / "notified_signals.json"
@@ -200,18 +207,140 @@ def _esc(s: Any) -> str:
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _format_message(hits: list[dict], timeframe: str, more_count: int = 0) -> str:
+def _fmt_price(v: Any) -> str | None:
+    try:
+        return f"${float(v):,.2f}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _signal_date(row: dict) -> datetime.date | None:
+    raw = row.get("end_date")
+    if not raw:
+        return None
+    try:
+        return datetime.date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
+def _within_recent(row: dict, days: int = _ALERT_RECENT_DAYS) -> bool:
+    """True when the signal's breakout is within the last ``days`` (and not future)."""
+    d = _signal_date(row)
+    if d is None:
+        return False
+    return 0 <= (datetime.date.today() - d).days <= days
+
+
+def _sort_key(row: dict) -> tuple[int, float]:
+    """Day first (most recent), then confidence — both descending via reverse=True."""
+    d = _signal_date(row) or datetime.date.min
+    return (d.toordinal(), float(row.get("confidence", 0) or 0))
+
+
+async def _account_value() -> float:
+    """Account size for position sizing — the user's connected portfolio value when
+    available, else the Pattern Scanner's default. Best-effort; never raises."""
+    try:
+        from app.backend.services import portfolio_overview
+
+        data = await portfolio_overview.build_overview()
+        if isinstance(data, dict) and data.get("connected"):
+            acct = data.get("combined") or (data.get("accounts") or [{}])[0]
+            tv = acct.get("total_value") if isinstance(acct, dict) else None
+            if tv and float(tv) > 0:
+                return float(tv)
+    except Exception as exc:  # noqa: BLE001 — sizing basis is best-effort
+        logger.warning("Alert account-value lookup failed: %s", type(exc).__name__)
+    return _DEFAULT_ACCOUNT
+
+
+def _sizing_suffix(opt: dict, account: float) -> str | None:
+    """Position size in whole contracts risking ~1% of the account, mirroring the
+    Pattern Scanner sizer (contracts = account × risk% ÷ risk-per-contract). When
+    even one contract exceeds the 1% budget, show the single-contract economics
+    instead of a useless '0'."""
+    try:
+        rpc = float(opt.get("risk_per_contract"))
+    except (TypeError, ValueError):
+        return None
+    if rpc <= 0 or account <= 0:
+        return None
+    prem_per = float(opt.get("entry_premium") or 0) * 100
+    try:
+        maxloss_per = float(opt.get("max_loss_per_contract"))
+    except (TypeError, ValueError):
+        maxloss_per = rpc
+    n = int((account * _ALERT_RISK_PCT / 100.0) // rpc)
+    if n >= 1:
+        return f"size {n} ct (~${n * prem_per:,.0f}, max -${n * maxloss_per:,.0f})"
+    # One contract already exceeds the 1% risk budget — show what a single costs/risks.
+    return f"1 ct ~${prem_per:,.0f} (risks ${rpc:,.0f}, {rpc / account * 100:.1f}% acct)"
+
+
+def _contract_suffix(opt: dict | None, account: float) -> str | None:
+    """One-line option contract + R/R + sizing, e.g.
+    'CALL $95 · exp 2026-08-15 (27d) · ~$3.20 · R/R 2.1 · size 3 ct (~$960, max -$960)'."""
+    if not opt:
+        return None
+    typ = str(opt.get("type") or "").upper()
+    strike = opt.get("strike")
+    exp = opt.get("expiration")
+    if not (typ and strike and exp):
+        return None
+    try:
+        parts = [f"{typ} ${float(strike):g}", f"exp {exp}"]
+    except (TypeError, ValueError):
+        return None
+    dte = opt.get("dte")
+    if isinstance(dte, (int, float)):
+        parts[-1] += f" ({int(dte)}d)"
+    mid = opt.get("current_mid")
+    try:
+        if mid:
+            parts.append(f"~${float(mid):.2f}")
+    except (TypeError, ValueError):
+        pass
+    rr = opt.get("risk_reward")
+    if rr:
+        parts.append(f"R/R {rr}")
+    sizing = _sizing_suffix(opt, account)
+    if sizing:
+        parts.append(sizing)
+    return " · ".join(parts)
+
+
+def _format_message(
+    items: list[tuple[dict, dict | None]], timeframe: str, more_count: int = 0, account: float = _DEFAULT_ACCOUNT
+) -> str:
+    """Render the alert. ``items`` are (signal, context) pairs already sorted by day
+    then confidence; ``context`` is the enriched signal_context (entry/target/option)
+    or None. Grouped under a per-day header."""
     tf = _TF_LABEL.get(timeframe, timeframe)
-    total = len(hits) + max(0, more_count)
-    head = f"<b>Alpha Terminal — {total} high-confidence {tf} signal(s)</b>"
-    lines = []
-    for r in sorted(hits, key=lambda x: float(x.get("confidence", 0)), reverse=True):
-        arrow = "\U0001F7E2" if r.get("bullish") else "\U0001F534"  # green/red circle
-        conf = round(float(r.get("confidence", 0)))
-        lines.append(f"{arrow} <b>{_esc(r.get('ticker'))}</b> — {_esc(r.get('pattern'))} · {conf}%")
-    msg = head + "\n" + "\n".join(lines)
+    total = len(items) + max(0, more_count)
+    lines = [f"<b>Alpha Terminal — {total} high-confidence {tf} signal(s) this week</b>"]
+    last_day: str | None = None
+    for row, ctx in items:
+        d = _signal_date(row)
+        day_label = d.strftime("%b %d") if d else "—"
+        if day_label != last_day:
+            lines.append(f"\n<b>{day_label}</b>")
+            last_day = day_label
+        arrow = "\U0001F7E2" if row.get("bullish") else "\U0001F534"  # green/red circle
+        conf = round(float(row.get("confidence", 0)))
+        lines.append(f"{arrow} <b>{_esc(row.get('ticker'))}</b> {_esc(row.get('pattern'))} · {conf}%")
+        ctx = ctx if isinstance(ctx, dict) else None
+        entry = _fmt_price((ctx or {}).get("entry"))
+        target = _fmt_price((ctx or {}).get("target"))
+        if entry or target:
+            seg = ([f"entry {entry}"] if entry else []) + ([f"target {target}"] if target else [])
+            lines.append("   " + " → ".join(seg))  # → arrow
+        contract = _contract_suffix((ctx or {}).get("option"), account) if ctx else None
+        if contract:
+            lines.append(f"   \U0001F4C4 {contract}")  # page emoji
+    msg = "\n".join(lines)
     if more_count > 0:
-        msg += f"\n…and {more_count} more above your threshold — open the app to see them all."
+        msg += f"\n\n…and {more_count} more this week — open the app to see them all."
     return msg
 
 
@@ -229,6 +358,9 @@ async def maybe_notify(user_id: str, timeframe: str, results: list[dict]) -> int
             return 0
         threshold = float(settings.get("min_confidence", _DEFAULT_THRESHOLD))
         hits = [r for r in results if float(r.get("confidence", 0) or 0) >= threshold]
+        # Only this week's breakouts — a long-lookback scan surfaces months-old
+        # patterns that would spam the alert with stale plays.
+        hits = [r for r in hits if _within_recent(r)]
         if not hits:
             return 0
         token = _get_token(user_id)
@@ -240,16 +372,29 @@ async def maybe_notify(user_id: str, timeframe: str, results: list[dict]) -> int
         fresh_hits = [(r, k) for r, k in keyed if k in fresh]
         if not fresh_hits:
             return 0
-        # Cap the message to the most confident N — a scan can produce hundreds of
-        # hits above the threshold, and one giant message trips Telegram's 4096-char
-        # limit ("text is too long") and the whole alert is rejected. Mark ALL fresh
-        # as notified (not just the shown N) so the overflow isn't re-tried every run.
-        fresh_hits.sort(key=lambda rk: float(rk[0].get("confidence", 0) or 0), reverse=True)
+        # Sort by day (most recent first), then confidence. Cap the shown set —
+        # each signal now carries entry/target/contract/sizing, and one giant
+        # message trips Telegram's 4096-char limit. Mark ALL fresh as notified
+        # (not just the shown N) so the overflow isn't re-tried every run.
+        fresh_hits.sort(key=lambda rk: _sort_key(rk[0]), reverse=True)
         shown = fresh_hits[:_MAX_ALERT_SIGNALS]
         more = len(fresh_hits) - len(shown)
+
+        # Enrich the shown signals with the same live price / entry / target /
+        # option-contract the Pattern Scanner's Contract panel uses (concurrent,
+        # best-effort), plus the account basis for sizing.
+        from app.backend.routes.patterns import signal_context
+
+        raw_ctx = await asyncio.gather(
+            *[signal_context(str(r.get("ticker")), str(r.get("pattern")), timeframe) for r, _ in shown],
+            return_exceptions=True,
+        )
+        contexts = [c if isinstance(c, dict) else None for c in raw_ctx]
+        account = await _account_value()
+        items = list(zip([r for r, _ in shown], contexts))
+
         ok = await telegram_notify.send_message(
-            token, chat_id,
-            _format_message([r for r, _ in shown], timeframe, more_count=more),
+            token, chat_id, _format_message(items, timeframe, more_count=more, account=account)
         )
         if ok:
             _mark_notified(user_id, [k for _, k in fresh_hits])

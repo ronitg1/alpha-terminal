@@ -6,10 +6,13 @@ scan's signals turn into a push (the part that matters for correctness/spam).
 from __future__ import annotations
 
 import asyncio
+import datetime
 
 import pytest
 
 from app.backend.services import telegram_alerts, telegram_notify
+
+_TODAY = datetime.date.today().isoformat()
 
 
 @pytest.fixture
@@ -18,6 +21,18 @@ def file_alerts(monkeypatch, tmp_path):
     monkeypatch.setattr(telegram_alerts, "_SETTINGS_PATH", tmp_path / "alert_settings.json")
     monkeypatch.setattr(telegram_alerts, "_DEDUP_PATH", tmp_path / "notified_signals.json")
     monkeypatch.setattr(telegram_alerts, "_get_token", lambda uid: "TOKEN")
+
+    # Enrichment + account lookup hit the network / portfolio; stub them off so
+    # these tests stay focused on the gating/dedup/format logic.
+    async def _no_ctx(ticker, pattern, timeframe="day"):
+        return None
+
+    async def _acct():
+        return 25000.0
+
+    monkeypatch.setattr("app.backend.routes.patterns.signal_context", _no_ctx)
+    monkeypatch.setattr(telegram_alerts, "_account_value", _acct)
+
     sent: list[dict] = []
 
     async def _fake_send(token, chat_id, text, **kw):
@@ -28,8 +43,9 @@ def file_alerts(monkeypatch, tmp_path):
     return sent
 
 
-def _res(ticker, conf, *, bullish=True, pattern="Bull Flag", end="2026-07-14"):
-    return {"ticker": ticker, "pattern": pattern, "confidence": conf, "bullish": bullish, "end_date": end}
+def _res(ticker, conf, *, bullish=True, pattern="Bull Flag", end=None):
+    return {"ticker": ticker, "pattern": pattern, "confidence": conf,
+            "bullish": bullish, "end_date": end or _TODAY}
 
 
 def test_alerts_fire_above_threshold_batched_and_dedup(file_alerts):
@@ -51,9 +67,11 @@ def test_new_signal_next_day_still_fires(file_alerts):
     telegram_alerts._save_settings(
         "u1b", {"chat_id": "1", "enabled": True, "min_confidence": 90, "timeframes": ["day"]}
     )
-    assert asyncio.run(telegram_alerts.maybe_notify("u1b", "day", [_res("NVDA", 95, end="2026-07-14")])) == 1
+    today = datetime.date.today()
+    yday = (today - datetime.timedelta(days=1)).isoformat()
+    assert asyncio.run(telegram_alerts.maybe_notify("u1b", "day", [_res("NVDA", 95, end=yday)])) == 1
     # Same ticker/pattern but a NEW breakout date is a distinct signal.
-    assert asyncio.run(telegram_alerts.maybe_notify("u1b", "day", [_res("NVDA", 95, end="2026-07-15")])) == 1
+    assert asyncio.run(telegram_alerts.maybe_notify("u1b", "day", [_res("NVDA", 95, end=today.isoformat())])) == 1
 
 
 def test_alerts_gate_on_timeframe_and_enabled(file_alerts):
@@ -93,8 +111,10 @@ def test_save_settings_clamps_confidence(file_alerts, monkeypatch):
 
 
 def test_format_message_shape():
-    msg = telegram_alerts._format_message([_res("NVDA", 93), _res("TSLA", 91, bullish=False)], "1h")
-    assert "high-confidence 1h" in msg
+    msg = telegram_alerts._format_message(
+        [(_res("NVDA", 93), None), (_res("TSLA", 91, bullish=False), None)], "1h"
+    )
+    assert "high-confidence 1h" in msg and "this week" in msg
     assert "NVDA" in msg and "93%" in msg and "TSLA" in msg
 
 
@@ -105,11 +125,50 @@ def test_many_hits_capped_to_stay_under_telegram_limit(file_alerts):
     telegram_alerts._save_settings(
         "big", {"chat_id": "9", "enabled": True, "min_confidence": 70, "timeframes": ["day"]}
     )
-    results = [_res(f"TK{i:03d}", 70 + (i % 30), pattern="Bull Flag", end="2026-07-14") for i in range(300)]
+    results = [_res(f"TK{i:03d}", 70 + (i % 30)) for i in range(300)]
     n = asyncio.run(telegram_alerts.maybe_notify("big", "day", results))
     assert n == telegram_alerts._MAX_ALERT_SIGNALS  # only the top N are shown
     text = file_alerts[0]["text"]
     assert len(text) <= 4096  # under Telegram's hard limit
-    assert "and 280 more" in text  # 300 - 20
+    assert f"and {300 - telegram_alerts._MAX_ALERT_SIGNALS} more this week" in text
     # Everything fresh was marked notified, so a re-run sends nothing (no re-fail loop).
     assert asyncio.run(telegram_alerts.maybe_notify("big", "day", results)) == 0
+
+
+def test_week_filter_drops_old_signals(file_alerts):
+    """Only this week's breakouts alert; a months-old pattern is dropped."""
+    telegram_alerts._save_settings(
+        "wk", {"chat_id": "1", "enabled": True, "min_confidence": 70, "timeframes": ["day"]}
+    )
+    old = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+    results = [_res("OLD", 95, end=old), _res("NEW", 95)]
+    n = asyncio.run(telegram_alerts.maybe_notify("wk", "day", results))
+    assert n == 1
+    text = file_alerts[0]["text"]
+    assert "NEW" in text and "OLD" not in text
+
+
+def test_alert_includes_entry_target_contract_and_sizing(file_alerts, monkeypatch):
+    """When enrichment is available, the alert carries entry/target + the option
+    contract with R/R and the Pattern-Scanner-style position size."""
+    telegram_alerts._save_settings(
+        "rich", {"chat_id": "1", "enabled": True, "min_confidence": 70, "timeframes": ["day"]}
+    )
+
+    async def _ctx(ticker, pattern, timeframe="day"):
+        return {
+            "current_price": 92.10, "entry": 94.29, "target": 108.58,
+            "option": {"type": "call", "strike": 95.0, "expiration": "2026-08-15",
+                       "dte": 27, "current_mid": 1.20, "risk_reward": 2.1,
+                       "risk_per_contract": 120.0, "entry_premium": 1.20,
+                       "max_loss_per_contract": 120.0},
+        }
+
+    monkeypatch.setattr("app.backend.routes.patterns.signal_context", _ctx)
+    n = asyncio.run(telegram_alerts.maybe_notify("rich", "day", [_res("NVDA", 91)]))
+    assert n == 1
+    text = file_alerts[0]["text"]
+    assert "entry $94.29" in text and "target $108.58" in text
+    assert "CALL $95" in text and "exp 2026-08-15" in text and "R/R 2.1" in text
+    # $25k account, 1% risk = $250; $250 // $120 risk/contract = 2 contracts.
+    assert "size 2 ct" in text
