@@ -418,13 +418,14 @@ _PLAN_DTE: dict[str, int] = {"week": 90, "day": 30, "1h": 14, "15m": 7}
 _PLAN_HOLD_DAYS: dict[str, float] = {"week": 45.0, "day": 10.0, "1h": 3.0, "15m": 1.0}
 
 
-# Contract-recommendation band: among 0.40–0.50 delta (magnitude) options
-# expiring in 25–30 days, recommend the one with the best payoff-per-dollar if
-# the pattern reaches its measured-move target. The delta floor avoids cheap
-# far-OTM lottery tickets; the cap avoids paying up for deep-ITM stock proxies;
-# the DTE window keeps theta manageable while giving the move room.
-_REC_DELTA_LO, _REC_DELTA_HI = 0.40, 0.50
-_REC_DTE_LO, _REC_DTE_HI = 25, 30
+# Contract recommendation targets ~0.40 delta (magnitude) and ~30 days to expiry:
+# 0.40Δ balances directional exposure against cost (not a far-OTM lottery ticket,
+# not a deep-ITM stock proxy), and 30 DTE keeps theta manageable while giving the
+# move room. We pick the listed contract closest to that target, fetching a window
+# around it so a real expiry lands near 30 DTE even on a sparse chain.
+_REC_DELTA_TARGET = 0.40
+_REC_DTE_TARGET = 30
+_REC_DTE_MIN, _REC_DTE_MAX = 15, 45
 
 
 def _collect_chain_candidates(ticker: str, bullish: bool) -> list[dict]:
@@ -439,10 +440,10 @@ def _collect_chain_candidates(ticker: str, bullish: bool) -> list[dict]:
         raw = client.get_options_chain(
             ticker,
             contract_type="call" if bullish else "put",
-            # Pull a slightly wider expiry window than 25–30 so we have a
-            # graceful fallback when no listed expiry lands exactly in-band.
-            expiration_date_gte=(today + _dt.timedelta(days=_REC_DTE_LO - 7)).isoformat(),
-            expiration_date_lte=(today + _dt.timedelta(days=_REC_DTE_HI + 10)).isoformat(),
+            # Pull a window bracketing the ~30 DTE target so a listed expiry lands
+            # near it even when the chain's expiries are sparse.
+            expiration_date_gte=(today + _dt.timedelta(days=_REC_DTE_MIN)).isoformat(),
+            expiration_date_lte=(today + _dt.timedelta(days=_REC_DTE_MAX)).isoformat(),
             limit=250,
         )
     except MassiveError as exc:
@@ -495,69 +496,33 @@ def _choose_best_contract(
 ) -> dict | None:
     """Pick the recommended contract from chain candidates (pure, testable).
 
-    Preference order:
-      1. In-band: |delta| in [0.40, 0.50] AND DTE in [25, 30]. Among these,
-         pick the highest payoff-per-dollar if the pattern reaches target —
-         i.e. max (target_premium − entry_premium) / entry_premium from the
-         repriced option plan. Ties / non-viable contracts still rank by that
-         ratio (least-bad wins), so we always recommend the best available.
-      2. Fallback (nothing in-band, e.g. a name with sparse strikes/expiries):
-         the candidate closest to 0.45 delta at the DTE nearest 27, priced.
+    Recommends the listed contract **closest to ~0.40 delta and ~30 DTE**. Delta is
+    the primary driver (it sets moneyness); DTE is weighted alongside it via
+    normalized distance so the pick sits near both targets. Contracts with no delta
+    are ranked last (DTE-only). The nearest one that prices wins.
 
     Returns the option-plan dict (from build_option_plan, which carries the
     contract's strike/expiry/delta + premium-space entry/stop/target), or None
     when no candidate can be priced.
     """
-    mid_delta = (_REC_DELTA_LO + _REC_DELTA_HI) / 2.0
-    mid_dte = (_REC_DTE_LO + _REC_DTE_HI) / 2.0
+    def target_distance(c: dict) -> float:
+        # Normalized distance to (0.40Δ, 30 DTE) — delta and DTE weighted equally.
+        delta_term = abs(abs(c["delta"]) - _REC_DELTA_TARGET) / _REC_DELTA_TARGET
+        dte_term = abs((c.get("dte") or 0) - _REC_DTE_TARGET) / _REC_DTE_TARGET
+        return delta_term + dte_term
 
-    def in_band(c: dict) -> bool:
-        d = c.get("delta")
-        return (
-            d is not None
-            and _REC_DELTA_LO <= abs(d) <= _REC_DELTA_HI
-            and _REC_DTE_LO <= c["dte"] <= _REC_DTE_HI
-        )
-
-    def payoff_ratio(plan: dict | None) -> float:
-        if not plan:
-            return float("-inf")
-        entry = plan.get("entry_premium") or 0.0
-        if entry <= 0:
-            return float("-inf")
-        return (plan.get("target_premium", 0.0) - entry) / entry
-
-    in_band_cands = [c for c in candidates if in_band(c)]
-    if in_band_cands:
-        best_plan, best_score = None, float("-inf")
-        for c in in_band_cands:
-            plan = build_option_plan(
-                underlying_plan=underlying_plan, spot=spot, contract=c, hold_days=hold_days
-            )
-            score = payoff_ratio(plan)
-            if score > best_score:
-                best_score, best_plan = score, plan
-        if best_plan is not None:
-            best_plan["recommendation_basis"] = (
-                f"best payoff-per-dollar in the {_REC_DELTA_LO:.2f}-{_REC_DELTA_HI:.2f}Δ, "
-                f"{_REC_DTE_LO}-{_REC_DTE_HI} DTE band if the pattern reaches its target"
-            )
-            return best_plan
-
-    # Fallback: no contract in-band — get as close to the band as the chain
-    # allows (nearest 0.45 delta at the DTE nearest 27), then price it.
+    # Delta-based target, so a contract with no delta can't be assessed — skip it.
     priceable = [c for c in candidates if c.get("delta") is not None]
     if not priceable:
         return None
-    priceable.sort(key=lambda c: (abs(c["dte"] - mid_dte), abs(abs(c["delta"]) - mid_delta)))
-    for c in priceable:
+    for c in sorted(priceable, key=target_distance):
         plan = build_option_plan(
             underlying_plan=underlying_plan, spot=spot, contract=c, hold_days=hold_days
         )
         if plan is not None:
             plan["recommendation_basis"] = (
-                f"closest available to the {_REC_DELTA_LO:.2f}-{_REC_DELTA_HI:.2f}Δ / "
-                f"{_REC_DTE_LO}-{_REC_DTE_HI} DTE band (none listed exactly in-band)"
+                f"closest listed contract to the {_REC_DELTA_TARGET:.2f}Δ / "
+                f"{_REC_DTE_TARGET}-DTE target"
             )
             return plan
     return None

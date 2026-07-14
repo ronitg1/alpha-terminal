@@ -4,6 +4,16 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.3] — 2026-07-14
+
+### Changed
+- **Option contract recommendation now targets ~0.40 delta and ~30 DTE.** Previously
+  it scanned a 0.40–0.50Δ / 25–30 DTE band and picked the best payoff-per-dollar; now
+  it recommends the listed contract **closest to 0.40 delta and 30 days to expiry**
+  (normalized delta+DTE distance, delta-based so contracts without a delta are
+  skipped). Applies everywhere the recommendation appears — the Pattern Scanner
+  Contract panel, `/scan`, and Telegram alerts.
+
 ## [1.22.2] — 2026-07-14
 
 ### Changed
