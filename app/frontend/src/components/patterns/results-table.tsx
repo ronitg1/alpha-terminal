@@ -398,6 +398,9 @@ export function ResultsTable({
                             {days <= 1 && (
                               <span className="text-[9px] font-bold uppercase text-indigo-400 flex-shrink-0">{days <= 0 ? 'new' : '1d'}</span>
                             )}
+                            {r.forming && (
+                              <span className="text-[9px] font-bold uppercase text-amber-400 flex-shrink-0" title="Forms on the current, not-yet-closed candle — can change before it closes">⏳ forming</span>
+                            )}
                           </div>
                           <ConfidenceBadge confidence={r.confidence} />
                         </div>
@@ -503,6 +506,9 @@ export function ResultsTable({
                           <span className="ml-1.5 text-[9px] font-sans font-bold uppercase text-indigo-400">
                             {days <= 0 ? 'new' : '1d'}
                           </span>
+                        )}
+                        {r.forming && (
+                          <span className="ml-1.5 text-[9px] font-sans font-bold uppercase text-amber-400" title="Forms on the current, not-yet-closed candle — can change before it closes">⏳ forming</span>
                         )}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">

@@ -137,9 +137,48 @@ class ScanResult(BaseModel):
     description: str
     key_levels: dict
     bullish: bool
+    # True when the signal completes on the CURRENT, not-yet-closed bar (e.g. a
+    # daily signal mid-session) — i.e. it's early/unconfirmed and can still change
+    # by the bar's close. False for signals on fully closed candles.
+    forming: bool = False
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
+
+_MARKET_TZ = ZoneInfo("America/New_York")
+
+
+def is_forming_signal(end_date: str, timeframe: str, now: datetime | None = None) -> bool:
+    """True when the signal's completion bar is the CURRENT, still-open period — an
+    intraday/same-session signal that can still change before the bar closes.
+
+    Bar closes: daily at 16:00 ET, weekly at Friday 16:00 ET, intraday at the end of
+    the hour / 15-min block. Conservative: on a parse failure it returns False
+    (treat as confirmed rather than mislabel a closed signal)."""
+    et = (now or datetime.now(timezone.utc)).astimezone(_MARKET_TZ)
+    today = et.date()
+    s = str(end_date or "")
+    try:
+        if timeframe in ("day", "week"):
+            d = date.fromisoformat(s[:10])
+        else:
+            dt = datetime.fromisoformat(s)
+            dt = dt.replace(tzinfo=_MARKET_TZ) if dt.tzinfo is None else dt.astimezone(_MARKET_TZ)
+    except (ValueError, TypeError):
+        return False
+
+    if timeframe == "day":
+        return d == today and et.hour < 16
+    if timeframe == "week":
+        monday = today - timedelta(days=today.weekday())
+        before_friday_close = et.weekday() < 4 or (et.weekday() == 4 and et.hour < 16)
+        return d >= monday and before_friday_close
+    if timeframe == "1h":
+        return dt.date() == today and dt.hour == et.hour
+    if timeframe == "15m":
+        return dt.date() == today and dt.hour == et.hour and (dt.minute // 15) == (et.minute // 15)
+    return False
+
 
 def _date_range(lookback_days: int) -> tuple[str, str]:
     to_dt = date.today()
@@ -223,6 +262,10 @@ async def run_pattern_scan(
     ]
     nested = await asyncio.gather(*tasks)
     results = [item for sublist in nested for item in sublist]
+    # Flag signals whose completion bar is the current, not-yet-closed period so the
+    # UI + alerts can mark them early/unconfirmed ("forming").
+    for r in results:
+        r["forming"] = is_forming_signal(r.get("end_date", ""), timeframe)
     results.sort(key=lambda x: -x["confidence"])
     return results
 
@@ -269,6 +312,10 @@ async def watchlist_scan(
     ]
     nested = await asyncio.gather(*tasks)
     results = [item for sublist in nested for item in sublist]
+    # Flag signals whose completion bar is the current, not-yet-closed period so the
+    # UI + alerts can mark them early/unconfirmed ("forming").
+    for r in results:
+        r["forming"] = is_forming_signal(r.get("end_date", ""), timeframe)
     results.sort(key=lambda x: -x["confidence"])
     return results
 

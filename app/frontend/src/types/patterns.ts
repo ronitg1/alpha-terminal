@@ -34,6 +34,9 @@ export interface ScanResult {
   description: string;
   key_levels: Record<string, number>;
   bullish: boolean;
+  /** True when the signal completes on the current, not-yet-closed bar — early and
+   *  unconfirmed (it can still change before the bar closes). */
+  forming?: boolean;
   trendlines?: Trendline[];
 }
 

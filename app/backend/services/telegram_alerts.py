@@ -334,7 +334,8 @@ def render_signal_report(
             last_day = day_label
         arrow = "\U0001F7E2" if row.get("bullish") else "\U0001F534"  # green/red circle
         conf = round(float(row.get("confidence", 0) or 0))
-        lines.append(f"{arrow} {row.get('ticker')} {row.get('pattern')} · {conf}%")
+        forming = " · ⏳ forming" if row.get("forming") else ""  # hourglass = unconfirmed bar
+        lines.append(f"{arrow} {row.get('ticker')} {row.get('pattern')} · {conf}%{forming}")
         ctx = ctx if isinstance(ctx, dict) else None
         entry = _fmt_price((ctx or {}).get("entry"))
         target = _fmt_price((ctx or {}).get("target"))

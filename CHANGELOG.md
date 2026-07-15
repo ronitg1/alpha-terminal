@@ -4,6 +4,19 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] — 2026-07-15
+
+### Added
+- **"Forming" (unconfirmed) label on same-session signals.** The scanner evaluates
+  patterns on the latest bar, which — mid-session — is the current *still-forming*
+  candle (a daily signal at 11am uses today's live bar, not a closed one), so it can
+  change before the bar closes. Signals whose completion bar is the current, not-yet-
+  closed period (daily before 16:00 ET, the current hour/15-min block, the in-progress
+  weekly bar) are now flagged `forming` and shown with a **⏳ forming** badge in the
+  Pattern Scanner and an **⏳ forming** marker in the Telegram `/scan` + alert messages.
+  Signals on fully closed candles are unmarked (confirmed). `patterns.is_forming_signal`
+  computes it; the flag rides on each scan result.
+
 ## [1.22.7] — 2026-07-14
 
 ### Fixed
