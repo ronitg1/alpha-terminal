@@ -4,6 +4,22 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.6] — 2026-07-14
+
+### Fixed
+- **iOS: AI chat and watchlist management were unreachable — real root cause.** The
+  mobile top bar used a fixed `h-12` height *together with* `safe-top`
+  (`padding-top: env(safe-area-inset-top)`); the fixed height couldn't contain the
+  notch inset, so the ☰ menu button rendered ~18px under the notch and overflowed the
+  bar. Since both the AI chat toggle and the watchlist live inside the drawer that ☰
+  opens, both were effectively blocked. Verified with a simulated 59px notch: buttons
+  moved from y=41 (under the notch) to y=59 (fully below it). Fixes:
+  - Top bar uses `min-h-12` so it grows to fit the safe-area inset.
+  - Added a **direct AI-chat toggle to the mobile top bar** (36px), so chat no longer
+    requires opening the drawer.
+  - Enlarged the watchlist **New / Manage** buttons from 12px → 32px tap targets, and
+    the chat **close** button to a proper 32px target.
+
 ## [1.22.5] — 2026-07-14
 
 ### Fixed

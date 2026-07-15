@@ -321,9 +321,10 @@ export function RightChatPanel({ screenerSnapshot, patternSnapshot }: RightChatP
         <button
           type="button"
           onClick={toggleChat}
-          className="text-muted-foreground hover:text-foreground transition-colors"
+          className="rounded p-2 -mr-2 text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Close chat"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-4 w-4" />
         </button>
       </div>
 

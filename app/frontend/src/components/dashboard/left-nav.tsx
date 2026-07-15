@@ -534,18 +534,20 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
             <button
               type="button"
               onClick={() => { setCreatingWatchlist(true); setWatchlistsOpen(true); }}
-              className="mr-2 text-muted-foreground hover:text-foreground transition-colors"
+              className="mr-0.5 rounded p-2 text-muted-foreground hover:text-foreground transition-colors"
               title="New watchlist"
+              aria-label="New watchlist"
             >
-              <Plus className="h-3 w-3" />
+              <Plus className="h-4 w-4" />
             </button>
             <button
               type="button"
               onClick={() => { setSection('market'); setSelectedTicker(null); onNavigate?.(); }}
-              className="mr-2 text-muted-foreground hover:text-foreground transition-colors"
+              className="mr-1 rounded p-2 text-muted-foreground hover:text-foreground transition-colors"
               title="Manage watchlists"
+              aria-label="Manage watchlists"
             >
-              <Settings className="h-3 w-3" />
+              <Settings className="h-4 w-4" />
             </button>
           </div>
 

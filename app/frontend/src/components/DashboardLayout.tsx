@@ -16,7 +16,7 @@
  */
 
 import { useState } from 'react';
-import { Menu } from 'lucide-react';
+import { Menu, MessageSquare } from 'lucide-react';
 
 import { DashboardProvider, useDashboard } from '@/contexts/dashboard-context';
 import { PatternScanProvider } from '@/contexts/pattern-scan-context';
@@ -36,11 +36,12 @@ const SECTION_LABELS: Record<DashboardSection, string> = {
   transcripts: 'Calls',
 };
 
-/** Thin top bar shown only on phones: ☰ opens the nav drawer + section title. */
+/** Thin top bar shown only on phones: ☰ opens the nav drawer, section title, and
+ *  a direct AI-chat toggle (so chat doesn't require digging into the drawer). */
 function MobileTopBar({ onMenu }: { onMenu: () => void }) {
-  const { section } = useDashboard();
+  const { section, chatOpen, toggleChat } = useDashboard();
   return (
-    <div className="md:hidden safe-top sticky top-0 z-30 flex h-12 flex-shrink-0 items-center gap-1 border-b border-border bg-background/95 px-2 backdrop-blur">
+    <div className="md:hidden safe-top sticky top-0 z-30 flex min-h-12 flex-shrink-0 items-center gap-1 border-b border-border bg-background/95 px-2 backdrop-blur">
       <button
         type="button"
         onClick={onMenu}
@@ -49,8 +50,20 @@ function MobileTopBar({ onMenu }: { onMenu: () => void }) {
       >
         <Menu className="h-5 w-5" />
       </button>
+      {/* Direct AI-chat toggle — a proper tap target, always reachable in the bar. */}
+      <button
+        type="button"
+        onClick={toggleChat}
+        aria-label="Toggle AI assistant"
+        className={cn(
+          'rounded-md p-2 transition-colors',
+          chatOpen ? 'text-primary' : 'text-foreground/80 hover:text-foreground',
+        )}
+      >
+        <MessageSquare className="h-5 w-5" />
+      </button>
       {/* pr keeps the title clear of the floating account controls (top-right). */}
-      <span className="truncate pr-28 text-sm font-semibold">{SECTION_LABELS[section]}</span>
+      <span className="truncate pr-24 text-sm font-semibold">{SECTION_LABELS[section]}</span>
     </div>
   );
 }
