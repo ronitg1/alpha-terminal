@@ -80,7 +80,7 @@ export function NewsView() {
   }, [feed, macroCat]);
 
   return (
-    <div className="app-vh flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-4 py-3 sm:px-6">
         <Newspaper className="h-4 w-4 text-primary" />

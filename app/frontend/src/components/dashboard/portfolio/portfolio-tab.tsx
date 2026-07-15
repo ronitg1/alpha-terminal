@@ -114,7 +114,7 @@ export function PortfolioTab() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-3 sm:p-4">
+    <div className="h-full overflow-y-auto p-3 sm:p-4 safe-bottom">
       <div className="mx-auto max-w-6xl space-y-3">
         {/* Header (pr reserves space for the fixed top-right account menu) */}
         <div className="flex flex-wrap items-center gap-2 pr-28">

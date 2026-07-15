@@ -4,6 +4,21 @@ All notable changes to Alpha Terminal are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.7] — 2026-07-14
+
+### Fixed
+- **iOS: couldn't scroll to the bottom of Market/News (and content cut off).** The
+  Market and News views set their scroll container's height to `app-vh` (100dvh =
+  full viewport) even though they render *below* the mobile top bar — so the container
+  extended ~96px past the bottom of the screen, hiding its last content with no way to
+  scroll to it (measured: container bottom at y=908 vs viewport 812). Changed them to
+  `h-full` (fill the available space under the top bar), so the bottom now lands exactly
+  at the viewport edge (y=812).
+- **iOS: bottom rows hidden under the home indicator.** Added `safe-bottom`
+  (`padding-bottom: env(safe-area-inset-bottom)`) to the scroll areas — the nav drawer
+  (watchlist management), Market, Portfolio, and Paper Trading — so their last items
+  clear the home indicator / browser chrome and are fully reachable.
+
 ## [1.22.6] — 2026-07-14
 
 ### Fixed

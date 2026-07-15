@@ -519,7 +519,7 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
       <TickerSearch onPick={(t) => { setSelectedTicker(t); onNavigate?.(); }} />
 
       {/* Scrollable list area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto safe-bottom">
         {/* ── Watchlists ── */}
         <div data-tour="watchlists" className="pt-2">
           <div className="flex items-center">

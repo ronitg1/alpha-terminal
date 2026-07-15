@@ -808,7 +808,7 @@ function MarketDashboard() {
   const bottom = ranked.slice(-8).reverse();
 
   return (
-    <div className="app-vh overflow-y-auto">
+    <div className="h-full overflow-y-auto safe-bottom">
       <div className="mx-auto max-w-5xl space-y-5 px-4 py-4 sm:px-6 sm:py-6">
         {/* Header + watchlist selector */}
         <div className="flex flex-wrap items-center gap-2">
