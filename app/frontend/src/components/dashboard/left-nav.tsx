@@ -454,8 +454,10 @@ export function LeftNav({ onNavigate }: { onNavigate?: () => void } = {}) {
 
   return (
     <div className="flex flex-col h-full bg-background border-r border-border select-none">
-      {/* App header */}
-      <div data-tour="app-logo" className="flex items-center gap-2 px-4 py-3 border-b border-border">
+      {/* App header. safe-top insets it below the iOS status bar/notch when this
+          nav is the slide-in drawer — without it the top row (refresh + AI chat
+          toggle) sits under the status bar and can't be tapped. No-op off iOS. */}
+      <div data-tour="app-logo" className="safe-top flex items-center gap-2 px-4 py-3 border-b border-border">
         <div className="w-6 h-6 rounded bg-primary/20 flex items-center justify-center flex-shrink-0">
           <LineChart className="h-3.5 w-3.5 text-primary" />
         </div>
